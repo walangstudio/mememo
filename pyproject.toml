@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mememo"
+version = "0.1.0"
+description = "Code-aware memory MCP server with multi-language support and semantic search"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "mememo contributors" }
+]
+keywords = [
+    "mcp",
+    "memory",
+    "vector-search",
+    "codebase-analysis",
+    "local-ai",
+    "code-aware",
+    "semantic-search"
+]
+license = { text = "MIT" }
+
+dependencies = [
+    "fastmcp>=0.2.0",
+    "pydantic>=2.0",
+    "sentence-transformers>=2.2.0",
+    "faiss-cpu>=1.7.0",
+    "tree-sitter>=0.20.0",
+    "tree-sitter-languages>=1.7.0",
+    "GitPython>=3.1.0",
+    "numpy>=1.24.0,<2.0.0",
+    "torch>=2.0.0",
+    "tiktoken>=0.5.0",
+]
+
+[project.optional-dependencies]
+gpu = ["faiss-gpu>=1.7.0"]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "black>=24.0.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+    "psutil>=5.9.0",           # Memory profiling for benchmarks
+    "matplotlib>=3.7.0",       # Chart generation for reports
+    "build>=1.0.0",            # Package building
+    "twine>=5.0.0",            # PyPI uploads
+]
+
+[project.scripts]
+mememo = "mememo.server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mememo*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39', 'py310', 'py311', 'py312']
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]  # Line too long (handled by black)
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "performance: performance benchmarking tests",
+    "integration: integration tests",
+]
