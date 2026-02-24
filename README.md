@@ -1,6 +1,6 @@
 # mememo 🧠
 
-[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](tests/)
@@ -71,7 +71,7 @@ Unlike general-purpose AI memory solutions, mememo is **purpose-built for code**
 
 ## 📦 Installation
 
-**Prerequisites**: Python 3.9+
+**Prerequisites**: Python 3.10+
 
 ### Quick Install
 

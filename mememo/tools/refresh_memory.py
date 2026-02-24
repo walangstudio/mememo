@@ -9,8 +9,8 @@ Updates memory with:
 """
 
 import logging
-from typing import TYPE_CHECKING
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from .schemas import RefreshMemoryParams, RefreshMemoryResponse
 

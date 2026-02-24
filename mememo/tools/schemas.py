@@ -4,18 +4,14 @@ Pydantic schemas for MCP tool parameters and responses.
 All tool inputs/outputs are validated using these models.
 """
 
-from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, Field
-from typing import Optional, List, Literal
 
 from ..types.memory import (
-    MemoryContentType,
     Memory,
-    MemoryContent,
-    MemoryMetadata,
-    MemorySummary,
+    MemoryContentType,
 )
-
 
 # ============================================================================
 # store_memory tool
@@ -30,33 +26,27 @@ class StoreMemoryParams(BaseModel):
         default="code_snippet",
         description="Type of memory: code_snippet, context, summary, or relationship",
     )
-    language: Optional[str] = Field(
+    language: str | None = Field(
         default=None, description="Programming language (auto-detected if not provided)"
     )
-    file_path: Optional[str] = Field(
-        default=None, description="File path for code snippets"
-    )
-    line_range: Optional[tuple[int, int]] = Field(
+    file_path: str | None = Field(default=None, description="File path for code snippets")
+    line_range: tuple[int, int] | None = Field(
         default=None, description="Line range tuple (start, end)"
     )
-    tags: Optional[List[str]] = Field(
-        default=None, description="Tags for categorization"
-    )
+    tags: list[str] | None = Field(default=None, description="Tags for categorization")
 
     # Code-aware metadata (optional - auto-extracted if not provided)
-    function_name: Optional[str] = Field(
+    function_name: str | None = Field(
         default=None, description="Function name (auto-extracted from code)"
     )
-    class_name: Optional[str] = Field(
+    class_name: str | None = Field(
         default=None, description="Class name (auto-extracted from code)"
     )
-    docstring: Optional[str] = Field(
-        default=None, description="Docstring (auto-extracted from code)"
-    )
-    decorators: Optional[List[str]] = Field(
+    docstring: str | None = Field(default=None, description="Docstring (auto-extracted from code)")
+    decorators: list[str] | None = Field(
         default=None, description="Decorators (auto-extracted from code)"
     )
-    parent_class: Optional[str] = Field(
+    parent_class: str | None = Field(
         default=None, description="Parent class (auto-extracted from code)"
     )
 
@@ -86,7 +76,7 @@ class RetrieveMemoryResponse(BaseModel):
     """Response from retrieving a memory."""
 
     success: bool = Field(description="Whether retrieval was successful")
-    memory: Optional[Memory] = Field(default=None, description="Retrieved memory")
+    memory: Memory | None = Field(default=None, description="Retrieved memory")
     message: str = Field(description="Success or error message")
 
 
@@ -99,21 +89,15 @@ class SearchSimilarParams(BaseModel):
     """Parameters for semantic similarity search."""
 
     query: str = Field(description="Search query text")
-    top_k: int = Field(
-        default=5, ge=1, le=50, description="Number of results to return (1-50)"
-    )
+    top_k: int = Field(default=5, ge=1, le=50, description="Number of results to return (1-50)")
     min_similarity: float = Field(
         default=0.3,
         ge=0.0,
         le=1.0,
         description="Minimum similarity threshold (0.0-1.0)",
     )
-    type: Optional[MemoryContentType] = Field(
-        default=None, description="Filter by memory type"
-    )
-    language: Optional[str] = Field(
-        default=None, description="Filter by programming language"
-    )
+    type: MemoryContentType | None = Field(default=None, description="Filter by memory type")
+    language: str | None = Field(default=None, description="Filter by programming language")
 
 
 class SearchResult(BaseModel):
@@ -127,7 +111,7 @@ class SearchSimilarResponse(BaseModel):
     """Response from similarity search."""
 
     success: bool = Field(description="Whether search was successful")
-    results: List[SearchResult] = Field(description="List of search results")
+    results: list[SearchResult] = Field(description="List of search results")
     message: str = Field(description="Success or error message")
     count: int = Field(description="Number of results returned")
 
@@ -140,20 +124,12 @@ class SearchSimilarResponse(BaseModel):
 class ListMemoriesParams(BaseModel):
     """Parameters for listing memories with filters."""
 
-    type: Optional[MemoryContentType] = Field(
-        default=None, description="Filter by memory type"
-    )
-    language: Optional[str] = Field(
-        default=None, description="Filter by programming language"
-    )
-    tags: Optional[List[str]] = Field(default=None, description="Filter by tags")
-    file_path: Optional[str] = Field(default=None, description="Filter by file path")
-    function_name: Optional[str] = Field(
-        default=None, description="Filter by function name"
-    )
-    class_name: Optional[str] = Field(
-        default=None, description="Filter by class name"
-    )
+    type: MemoryContentType | None = Field(default=None, description="Filter by memory type")
+    language: str | None = Field(default=None, description="Filter by programming language")
+    tags: list[str] | None = Field(default=None, description="Filter by tags")
+    file_path: str | None = Field(default=None, description="Filter by file path")
+    function_name: str | None = Field(default=None, description="Filter by function name")
+    class_name: str | None = Field(default=None, description="Filter by class name")
     limit: int = Field(default=50, ge=1, le=500, description="Max results (1-500)")
 
 
@@ -161,7 +137,7 @@ class ListMemoriesResponse(BaseModel):
     """Response from listing memories."""
 
     success: bool = Field(description="Whether listing was successful")
-    memories: List[Memory] = Field(description="List of memories")
+    memories: list[Memory] = Field(description="List of memories")
     message: str = Field(description="Success or error message")
     count: int = Field(description="Number of memories returned")
     total: int = Field(description="Total matching memories (before limit)")
@@ -175,7 +151,7 @@ class ListMemoriesResponse(BaseModel):
 class SummarizeContextParams(BaseModel):
     """Parameters for summarizing memories."""
 
-    memory_ids: List[str] = Field(description="List of memory IDs to summarize")
+    memory_ids: list[str] = Field(description="List of memory IDs to summarize")
     max_tokens: int = Field(
         default=500, ge=100, le=2000, description="Max tokens in summary (100-2000)"
     )
@@ -203,9 +179,7 @@ class DeleteMemoryParams(BaseModel):
     """Parameters for deleting a memory."""
 
     memory_id: str = Field(description="Memory ID to delete")
-    confirm: bool = Field(
-        default=False, description="Confirmation flag (must be True)"
-    )
+    confirm: bool = Field(default=False, description="Confirmation flag (must be True)")
 
 
 class DeleteMemoryResponse(BaseModel):
@@ -225,16 +199,14 @@ class IndexRepositoryParams(BaseModel):
     """Parameters for indexing a repository."""
 
     repo_path: str = Field(description="Path to repository root")
-    file_patterns: List[str] = Field(
+    file_patterns: list[str] = Field(
         default=["**/*.py", "**/*.ts", "**/*.js", "**/*.go", "**/*.rs"],
         description="Glob patterns for files to index",
     )
     incremental: bool = Field(
         default=True, description="Use incremental indexing (only changed files)"
     )
-    max_files: int = Field(
-        default=1000, ge=1, le=10000, description="Max files to index (1-10000)"
-    )
+    max_files: int = Field(default=1000, ge=1, le=10000, description="Max files to index (1-10000)")
 
 
 class IndexRepositoryResponse(BaseModel):
@@ -256,9 +228,7 @@ class IndexRepositoryResponse(BaseModel):
 class CheckMemoryParams(BaseModel):
     """Parameters for checking memory statistics."""
 
-    include_git_info: bool = Field(
-        default=True, description="Include git repository info"
-    )
+    include_git_info: bool = Field(default=True, description="Include git repository info")
 
 
 class CheckMemoryResponse(BaseModel):
@@ -267,9 +237,7 @@ class CheckMemoryResponse(BaseModel):
     success: bool = Field(description="Whether check was successful")
     message: str = Field(description="Success or error message")
     statistics: dict = Field(description="Memory statistics")
-    git_context: Optional[dict] = Field(
-        default=None, description="Current git context"
-    )
+    git_context: dict | None = Field(default=None, description="Current git context")
 
 
 # ============================================================================
@@ -281,12 +249,8 @@ class RefreshMemoryParams(BaseModel):
     """Parameters for refreshing a memory."""
 
     memory_id: str = Field(description="Memory ID to refresh")
-    new_content: Optional[str] = Field(
-        default=None, description="New content (if updating content)"
-    )
-    tags: Optional[List[str]] = Field(
-        default=None, description="New tags (if updating tags)"
-    )
+    new_content: str | None = Field(default=None, description="New content (if updating content)")
+    tags: list[str] | None = Field(default=None, description="New tags (if updating tags)")
 
 
 class RefreshMemoryResponse(BaseModel):
@@ -294,4 +258,4 @@ class RefreshMemoryResponse(BaseModel):
 
     success: bool = Field(description="Whether refresh was successful")
     message: str = Field(description="Success or error message")
-    memory: Optional[Memory] = Field(default=None, description="Updated memory")
+    memory: Memory | None = Field(default=None, description="Updated memory")

@@ -5,8 +5,9 @@ Defines configuration structure for mememo with validation.
 """
 
 from pathlib import Path
-from typing import Literal, Optional
-from pydantic import BaseModel, Field, field_validator, HttpUrl
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class StorageConfig(BaseModel):
@@ -29,14 +30,14 @@ class EmbeddingConfig(BaseModel):
     """Embedding model configuration."""
 
     model_name: Literal["minilm", "gemma"] = Field(
-        default="minilm",
-        description="Embedding model: minilm (384-dim) or gemma (768-dim)"
+        default="minilm", description="Embedding model: minilm (384-dim) or gemma (768-dim)"
     )
     device: Literal["auto", "cpu", "cuda", "mps"] = Field(
-        default="auto",
-        description="Device for embeddings: auto, cpu, cuda, or mps"
+        default="auto", description="Device for embeddings: auto, cpu, cuda, or mps"
     )
-    batch_size: int = Field(default=32, gt=0, le=128, description="Batch size for embedding generation")
+    batch_size: int = Field(
+        default=32, gt=0, le=128, description="Batch size for embedding generation"
+    )
 
 
 class ChunkingConfig(BaseModel):
@@ -44,25 +45,35 @@ class ChunkingConfig(BaseModel):
 
     max_tokens: int = Field(default=500, gt=0, description="Max tokens per chunk")
     overlap_tokens: int = Field(default=50, ge=0, description="Overlap tokens between chunks")
-    enable_code_aware: bool = Field(default=True, description="Enable code-aware chunking (AST/tree-sitter)")
-    preserve_structure: bool = Field(default=True, description="Preserve code structure (functions, classes)")
+    enable_code_aware: bool = Field(
+        default=True, description="Enable code-aware chunking (AST/tree-sitter)"
+    )
+    preserve_structure: bool = Field(
+        default=True, description="Preserve code structure (functions, classes)"
+    )
 
 
 class SearchConfig(BaseModel):
     """Search configuration."""
 
     top_k: int = Field(default=5, gt=0, le=100, description="Default number of search results")
-    min_similarity: float = Field(default=0.7, ge=0.0, le=1.0, description="Minimum similarity threshold")
-    shard_size: int = Field(default=50000, gt=0, description="Vectors per FAISS shard (matches VectorIndex.SHARD_SIZE)")
+    min_similarity: float = Field(
+        default=0.7, ge=0.0, le=1.0, description="Minimum similarity threshold"
+    )
+    shard_size: int = Field(
+        default=50000, gt=0, description="Vectors per FAISS shard (matches VectorIndex.SHARD_SIZE)"
+    )
 
 
 class SecurityConfig(BaseModel):
     """Security configuration."""
 
     enable_encryption: bool = Field(default=False, description="Enable content encryption")
-    encryption_key: Optional[str] = Field(None, description="Encryption key (never commit!)")
+    encryption_key: str | None = Field(None, description="Encryption key (never commit!)")
     enable_audit_log: bool = Field(default=False, description="Enable audit logging")
-    network_detection: bool = Field(default=False, description="Detect/block external network calls")
+    network_detection: bool = Field(
+        default=False, description="Detect/block external network calls"
+    )
     secrets_detection: bool = Field(default=True, description="Scan for secrets before storing")
     auto_sanitize: bool = Field(default=False, description="Auto-redact secrets vs reject")
 
@@ -80,19 +91,31 @@ class IndexingConfig(BaseModel):
 
     enable_incremental: bool = Field(default=True, description="Enable incremental indexing")
     auto_reindex_age_minutes: float = Field(
-        default=5.0,
-        gt=0,
-        description="Auto-reindex if snapshot older than this"
+        default=5.0, gt=0, description="Auto-reindex if snapshot older than this"
     )
     ignored_dirs: list[str] = Field(
         default_factory=lambda: [
-            "__pycache__", ".git", ".hg", ".svn",
-            ".venv", "venv", "env", "node_modules",
-            ".pytest_cache", ".mypy_cache", ".ruff_cache",
-            "build", "dist", ".next", ".nuxt", "target",
-            ".idea", ".vscode", ".coverage"
+            "__pycache__",
+            ".git",
+            ".hg",
+            ".svn",
+            ".venv",
+            "venv",
+            "env",
+            "node_modules",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            "build",
+            "dist",
+            ".next",
+            ".nuxt",
+            "target",
+            ".idea",
+            ".vscode",
+            ".coverage",
         ],
-        description="Directories to ignore during indexing"
+        description="Directories to ignore during indexing",
     )
 
 
@@ -114,10 +137,12 @@ class Config(BaseModel):
 
         return cls(
             storage=StorageConfig(
-                base_dir=Path(os.getenv(
-                    "MEMEMO_STORAGE_DIR",
-                    os.getenv("MEMEMO_DATA_DIR", "~/.mememo/data")  # Backward compatibility
-                )),
+                base_dir=Path(
+                    os.getenv(
+                        "MEMEMO_STORAGE_DIR",
+                        os.getenv("MEMEMO_DATA_DIR", "~/.mememo/data"),  # Backward compatibility
+                    )
+                ),
                 max_memory_size_mb=int(os.getenv("MEMEMO_MAX_MEMORY_SIZE_MB", "10")),
                 max_total_memories=int(os.getenv("MEMEMO_MAX_TOTAL_MEMORIES", "10000")),
             ),

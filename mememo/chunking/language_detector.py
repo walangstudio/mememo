@@ -5,8 +5,6 @@ Maps file extensions to programming languages.
 """
 
 from pathlib import Path
-from typing import Optional
-
 
 # Comprehensive language mapping
 LANGUAGE_MAP = {
@@ -15,33 +13,25 @@ LANGUAGE_MAP = {
     ".pyw": "python",
     ".pyx": "python",
     ".pyi": "python",
-
     # JavaScript
     ".js": "javascript",
     ".mjs": "javascript",
     ".cjs": "javascript",
-
     # JSX (React)
     ".jsx": "javascript",
-
     # TypeScript
     ".ts": "typescript",
     ".mts": "typescript",
     ".cts": "typescript",
-
     # TSX (React)
     ".tsx": "typescript",
-
     # Go
     ".go": "go",
-
     # Rust
     ".rs": "rust",
-
     # C
     ".c": "c",
     ".h": "c",
-
     # C++
     ".cpp": "cpp",
     ".cc": "cpp",
@@ -51,35 +41,25 @@ LANGUAGE_MAP = {
     ".hh": "cpp",
     ".hxx": "cpp",
     ".h++": "cpp",
-
     # C#
     ".cs": "csharp",
-
     # Java
     ".java": "java",
-
     # Kotlin
     ".kt": "kotlin",
     ".kts": "kotlin",
-
     # Scala
     ".scala": "scala",
-
     # Ruby
     ".rb": "ruby",
-
     # PHP
     ".php": "php",
-
     # Swift
     ".swift": "swift",
-
     # Svelte
     ".svelte": "svelte",
-
     # Vue
     ".vue": "vue",
-
     # Markdown
     ".md": "markdown",
     ".markdown": "markdown",
@@ -141,7 +121,7 @@ LANGUAGE_CATEGORIES = {
 }
 
 
-def detect_language(file_path: str) -> Optional[str]:
+def detect_language(file_path: str) -> str | None:
     """
     Detect programming language from file extension.
 
@@ -204,7 +184,7 @@ def get_supported_extensions() -> list[str]:
     return sorted(LANGUAGE_MAP.keys())
 
 
-def get_language_info(language: str) -> Optional[dict]:
+def get_language_info(language: str) -> dict | None:
     """
     Get detailed information about a language.
 

@@ -10,19 +10,17 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from ..types import (
+    BranchContext,
+    GitContext,
     Memory,
     MemoryContent,
+    MemoryFilters,
     MemoryMetadata,
     MemoryRelationships,
     MemorySummary,
-    GitContext,
     RepoContext,
-    BranchContext,
-    MemoryFilters,
-    MemoryContentType,
 )
 
 
@@ -35,7 +33,7 @@ class StorageManager:
     - JSON blobs for content (deduplicated by checksum)
     """
 
-    def __init__(self, base_dir: Path, encryption_key: Optional[str] = None):
+    def __init__(self, base_dir: Path, encryption_key: str | None = None):
         """
         Initialize storage manager.
 
@@ -188,7 +186,7 @@ class StorageManager:
         content_blob = {
             "text": memory.content.text,
             "language": memory.content.language,
-            "summary": memory.summary.dict(),
+            "summary": memory.summary.model_dump(),
             # NEW in v0.3.0: Code-aware metadata
             "function_name": memory.content.function_name,
             "class_name": memory.content.class_name,
@@ -203,7 +201,8 @@ class StorageManager:
 
         # Insert into SQLite
         cursor = self.conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO memories (
                 id, repo_id, repo_name, repo_path, branch_name, commit_hash,
                 content_type, file_path, line_start, line_end,
@@ -211,49 +210,51 @@ class StorageManager:
                 checksum, content_ref, token_count, created_at, updated_at,
                 embedding_shard, embedding_index
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            memory.id,
-            memory.repo.id,
-            memory.repo.name,
-            memory.repo.path,
-            memory.branch.name,
-            memory.branch.commit_hash,
-            memory.content.type,
-            memory.content.file_path,
-            memory.content.line_range[0] if memory.content.line_range else None,
-            memory.content.line_range[1] if memory.content.line_range else None,
-            # NEW in v0.3.0
-            memory.content.function_name,
-            memory.content.class_name,
-            memory.content.language,
-            self._infer_chunk_type(memory.content),
-            memory.metadata.checksum,
-            content_ref,
-            memory.metadata.token_count,
-            int(memory.metadata.created_at.timestamp()),
-            int(memory.metadata.updated_at.timestamp()),
-            memory.metadata.embedding_shard,
-            memory.metadata.embedding_index,
-        ))
+        """,
+            (
+                memory.id,
+                memory.repo.id,
+                memory.repo.name,
+                memory.repo.path,
+                memory.branch.name,
+                memory.branch.commit_hash,
+                memory.content.type,
+                memory.content.file_path,
+                memory.content.line_range[0] if memory.content.line_range else None,
+                memory.content.line_range[1] if memory.content.line_range else None,
+                # NEW in v0.3.0
+                memory.content.function_name,
+                memory.content.class_name,
+                memory.content.language,
+                self._infer_chunk_type(memory.content),
+                memory.metadata.checksum,
+                content_ref,
+                memory.metadata.token_count,
+                int(memory.metadata.created_at.timestamp()),
+                int(memory.metadata.updated_at.timestamp()),
+                memory.metadata.embedding_shard,
+                memory.metadata.embedding_index,
+            ),
+        )
 
         # Insert tags
         if memory.metadata.tags:
             cursor.executemany(
                 "INSERT INTO tags (memory_id, tag) VALUES (?, ?)",
-                [(memory.id, tag) for tag in memory.metadata.tags]
+                [(memory.id, tag) for tag in memory.metadata.tags],
             )
 
         # Insert relationships
         if memory.relationships.depends_on:
             cursor.executemany(
                 "INSERT INTO relationships (from_memory_id, to_memory_id, relationship_type) VALUES (?, ?, ?)",
-                [(memory.id, dep_id, "depends_on") for dep_id in memory.relationships.depends_on]
+                [(memory.id, dep_id, "depends_on") for dep_id in memory.relationships.depends_on],
             )
 
         if memory.relationships.related_to:
             cursor.executemany(
                 "INSERT INTO relationships (from_memory_id, to_memory_id, relationship_type) VALUES (?, ?, ?)",
-                [(memory.id, rel_id, "related_to") for rel_id in memory.relationships.related_to]
+                [(memory.id, rel_id, "related_to") for rel_id in memory.relationships.related_to],
             )
 
         self.conn.commit()
@@ -282,10 +283,13 @@ class StorageManager:
             ValueError: If memory not found
         """
         cursor = self.conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT * FROM memories
             WHERE id = ? AND repo_id = ? AND branch_name = ?
-        """, (id, context.repo.id, context.branch.name))
+        """,
+            (id, context.repo.id, context.branch.name),
+        )
 
         row = cursor.fetchone()
         if not row:
@@ -315,13 +319,13 @@ class StorageManager:
         # Load relationships
         cursor.execute(
             "SELECT to_memory_id FROM relationships WHERE from_memory_id = ? AND relationship_type = ?",
-            (row["id"], "depends_on")
+            (row["id"], "depends_on"),
         )
         depends_on = [r["to_memory_id"] for r in cursor.fetchall()]
 
         cursor.execute(
             "SELECT to_memory_id FROM relationships WHERE from_memory_id = ? AND relationship_type = ?",
-            (row["id"], "related_to")
+            (row["id"], "related_to"),
         )
         related_to = [r["to_memory_id"] for r in cursor.fetchall()]
 
@@ -342,7 +346,9 @@ class StorageManager:
                 text=content_blob["text"],
                 language=content_blob.get("language"),
                 file_path=row["file_path"],
-                line_range=(row["line_start"], row["line_end"]) if row["line_start"] is not None else None,
+                line_range=(
+                    (row["line_start"], row["line_end"]) if row["line_start"] is not None else None
+                ),
                 # NEW in v0.3.0
                 function_name=content_blob.get("function_name"),
                 class_name=content_blob.get("class_name"),
@@ -447,7 +453,7 @@ class StorageManager:
         cursor = self.conn.cursor()
         cursor.execute(
             "DELETE FROM memories WHERE id = ? AND repo_id = ? AND branch_name = ?",
-            (id, context.repo.id, context.branch.name)
+            (id, context.repo.id, context.branch.name),
         )
         self.conn.commit()
 

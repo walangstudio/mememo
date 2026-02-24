@@ -12,7 +12,7 @@ Indexes repository with:
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 from ..chunking import ChunkerFactory
 from ..types.memory import CreateMemoryParams, MemoryRelationships
@@ -63,9 +63,7 @@ async def index_repository(
             )
 
         # Find matching files
-        files_to_index = _find_matching_files(
-            repo_path, params.file_patterns, params.max_files
-        )
+        files_to_index = _find_matching_files(repo_path, params.file_patterns, params.max_files)
 
         logger.info(f"Found {len(files_to_index)} files matching patterns")
 
@@ -73,13 +71,9 @@ async def index_repository(
         if params.incremental:
             from ..indexing.merkle_dag import MerkleDAG
 
-            merkle = MerkleDAG(
-                memory_manager.storage_manager.base_dir / "merkle"
-            )
+            merkle = MerkleDAG(memory_manager.storage_manager.base_dir / "merkle")
             files_to_index = merkle.get_changed_files(files_to_index)
-            logger.info(
-                f"Incremental: {len(files_to_index)} files changed since last index"
-            )
+            logger.info(f"Incremental: {len(files_to_index)} files changed since last index")
 
         # Initialize chunker factory
         chunker_factory = ChunkerFactory()
@@ -104,9 +98,7 @@ async def index_repository(
                         type="code_snippet",
                         language=chunk.language,
                         file_path=str(file_path.relative_to(repo_path)),
-                        line_range=(chunk.start_line, chunk.end_line)
-                        if chunk.start_line
-                        else None,
+                        line_range=(chunk.start_line, chunk.end_line) if chunk.start_line else None,
                         # Code-aware metadata
                         function_name=chunk.function_name,
                         class_name=chunk.class_name,
@@ -122,9 +114,7 @@ async def index_repository(
                     chunks_created += 1
 
                 files_indexed += 1
-                logger.debug(
-                    f"Indexed {file_path.relative_to(repo_path)} ({len(chunks)} chunks)"
-                )
+                logger.debug(f"Indexed {file_path.relative_to(repo_path)} ({len(chunks)} chunks)")
 
             except UnicodeDecodeError:
                 # Binary file - skip
@@ -160,9 +150,7 @@ async def index_repository(
         )
 
 
-def _find_matching_files(
-    repo_path: Path, patterns: List[str], max_files: int
-) -> List[Path]:
+def _find_matching_files(repo_path: Path, patterns: list[str], max_files: int) -> list[Path]:
     """
     Find files matching glob patterns.
 

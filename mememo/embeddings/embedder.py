@@ -5,7 +5,8 @@ Provides local, offline embedding generation with multiple model support.
 """
 
 import logging
-from typing import Union, List, Literal
+from typing import Literal
+
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
@@ -107,8 +108,7 @@ class Embedder:
         """Load the embedding model."""
         if self.model_name not in MODEL_REGISTRY:
             raise ValueError(
-                f"Unknown model: {self.model_name}. "
-                f"Available: {list(MODEL_REGISTRY.keys())}"
+                f"Unknown model: {self.model_name}. " f"Available: {list(MODEL_REGISTRY.keys())}"
             )
 
         model_info = MODEL_REGISTRY[self.model_name]
@@ -138,7 +138,7 @@ class Embedder:
             _ = self.model
         return self._dimension
 
-    def embed(self, text: Union[str, List[str]]) -> np.ndarray:
+    def embed(self, text: str | list[str]) -> np.ndarray:
         """
         Generate embeddings for text.
 
@@ -162,7 +162,7 @@ class Embedder:
 
         return embeddings
 
-    def embed_batch(self, texts: List[str]) -> np.ndarray:
+    def embed_batch(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for a batch of texts.
 

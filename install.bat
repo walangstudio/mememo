@@ -10,9 +10,8 @@ REM
 
 setlocal enabledelayedexpansion
 
-set VERSION=0.1.0
 set VENV_DIR=.venv
-set PYTHON_MIN=3.9
+set PYTHON_MIN=3.10
 
 REM Parse arguments
 set MODE=production
@@ -34,7 +33,7 @@ goto parse_args
 :end_parse
 
 echo ======================================
-echo mememo v%VERSION% Installer
+echo mememo Installer
 echo ======================================
 echo.
 
@@ -69,23 +68,23 @@ goto end
     goto install_prod
 
 :install_dev
-    echo [INFO] Installing mememo v%VERSION% with dev dependencies...
+    echo [INFO] Installing mememo with dev dependencies...
     pip install -e ".[dev]"
     if errorlevel 1 (
         echo [ERROR] Installation failed
         exit /b 1
     )
-    echo [OK] mememo installed with dev/test tools
+    for /f %%v in ('python -c "import mememo; print(mememo.__version__)"') do echo [OK] mememo %%v installed with dev/test tools
     goto install_done
 
 :install_prod
-    echo [INFO] Installing mememo v%VERSION% (production)...
+    echo [INFO] Installing mememo (production)...
     pip install -e .
     if errorlevel 1 (
         echo [ERROR] Installation failed
         exit /b 1
     )
-    echo [OK] mememo installed
+    for /f %%v in ('python -c "import mememo; print(mememo.__version__)"') do echo [OK] mememo %%v installed
     goto install_done
 
 :install_done
@@ -184,12 +183,15 @@ goto end
         goto :eof
     )
 
+    REM Remove existing entry first so re-installs and path changes always apply
+    claude mcp remove mememo --scope user >nul 2>&1
+
     claude mcp add --scope user mememo -- "%PYTHON_PATH%" -m mememo
     if errorlevel 1 (
         echo [WARN] Auto-configuration failed. Add manually:
         echo        claude mcp add --scope user mememo -- "%PYTHON_PATH%" -m mememo
     ) else (
-        echo [OK] Claude CLI MCP server configured (user scope - available in all projects)!
+        echo [OK] Claude CLI MCP server configured (user scope)
         echo [INFO] Verify with: claude mcp list
     )
 

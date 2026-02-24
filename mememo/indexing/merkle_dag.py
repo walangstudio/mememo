@@ -13,7 +13,6 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Set
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +34,9 @@ class MerkleDAG:
         self.storage_path = storage_path
         self.storage_path.mkdir(parents=True, exist_ok=True)
         self.hashes_file = self.storage_path / "file_hashes.json"
-        self.hashes: Dict[str, str] = self._load_hashes()
+        self.hashes: dict[str, str] = self._load_hashes()
 
-    def _load_hashes(self) -> Dict[str, str]:
+    def _load_hashes(self) -> dict[str, str]:
         """
         Load file hashes from disk.
 
@@ -49,7 +48,7 @@ class MerkleDAG:
             return {}
 
         try:
-            with open(self.hashes_file, "r", encoding="utf-8") as f:
+            with open(self.hashes_file, encoding="utf-8") as f:
                 hashes = json.load(f)
             logger.debug(f"Loaded {len(hashes)} file hashes from {self.hashes_file}")
             return hashes
@@ -84,7 +83,7 @@ class MerkleDAG:
             # Return empty hash on error (will be treated as changed)
             return ""
 
-    def get_changed_files(self, file_paths: List[Path]) -> Set[Path]:
+    def get_changed_files(self, file_paths: list[Path]) -> set[Path]:
         """
         Detect which files have changed since last indexing.
 

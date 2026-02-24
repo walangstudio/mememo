@@ -7,7 +7,7 @@ Multi-language support:
 - Other files: Token-based text chunking (fallback)
 """
 
-from .base_chunker import BaseChunker, Chunk, ChunkType, ChunkingConfig
+from .base_chunker import BaseChunker, Chunk, ChunkingConfig, ChunkType
 from .factory import ChunkerFactory
 from .language_detector import (
     detect_language,
@@ -22,7 +22,7 @@ from .text_chunker import TextChunker
 
 # Only import tree-sitter chunker if available
 try:
-    from .tree_sitter_chunker import TreeSitterChunker, TREE_SITTER_AVAILABLE
+    from .tree_sitter_chunker import TREE_SITTER_AVAILABLE, TreeSitterChunker
 except ImportError:
     TreeSitterChunker = None
     TREE_SITTER_AVAILABLE = False

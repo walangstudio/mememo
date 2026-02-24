@@ -7,7 +7,6 @@ with rich metadata (docstrings, decorators, type hints).
 
 import ast
 import logging
-from typing import List, Optional
 
 from .base_chunker import BaseChunker, Chunk
 
@@ -25,7 +24,7 @@ class PythonASTChunker(BaseChunker):
     - Module-level code
     """
 
-    def chunk(self, code: str, file_path: str) -> List[Chunk]:
+    def chunk(self, code: str, file_path: str) -> list[Chunk]:
         """
         Chunk Python code using AST parsing.
 
@@ -69,10 +68,10 @@ class PythonASTChunker(BaseChunker):
     def _extract_function(
         self,
         node: ast.FunctionDef,
-        lines: List[str],
+        lines: list[str],
         file_path: str,
         is_async: bool = False,
-    ) -> Optional[Chunk]:
+    ) -> Chunk | None:
         """
         Extract function definition with metadata.
 
@@ -89,7 +88,7 @@ class PythonASTChunker(BaseChunker):
         end_line = node.end_lineno or start_line
 
         # Extract text
-        text = "\n".join(lines[start_line - 1:end_line])
+        text = "\n".join(lines[start_line - 1 : end_line])
 
         # Extract docstring
         docstring = ast.get_docstring(node)
@@ -125,9 +124,9 @@ class PythonASTChunker(BaseChunker):
     def _extract_class(
         self,
         node: ast.ClassDef,
-        lines: List[str],
+        lines: list[str],
         file_path: str,
-    ) -> Optional[Chunk]:
+    ) -> Chunk | None:
         """
         Extract class definition with metadata.
 
@@ -143,7 +142,7 @@ class PythonASTChunker(BaseChunker):
         end_line = node.end_lineno or start_line
 
         # Extract text
-        text = "\n".join(lines[start_line - 1:end_line])
+        text = "\n".join(lines[start_line - 1 : end_line])
 
         # Extract docstring
         docstring = ast.get_docstring(node)

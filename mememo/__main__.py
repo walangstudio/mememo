@@ -6,28 +6,29 @@ Usage:
     python -m mememo --version    # Show version
 """
 
-import sys
 import argparse
+
+from mememo import __version__
+
 from .server import run
 
 
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="mememo v0.1.0 - Code-aware memory server",
+        description=f"mememo v{__version__} - Code-aware memory server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     parser.add_argument(
         "--version",
         action="version",
-        version="mememo v0.1.0",
+        version=f"mememo v{__version__}",
     )
 
-    args = parser.parse_args()
+    parser.parse_args()
 
-    # Run MCP server
-    print("Starting mememo v0.1.0...")
+    print(f"Starting mememo v{__version__}...")
     run()
 
 

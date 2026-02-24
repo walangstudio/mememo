@@ -1,6 +1,6 @@
 """Embedding modules for mememo."""
 
-from .embedder import Embedder, MODEL_REGISTRY
+from .embedder import MODEL_REGISTRY, Embedder
 
 __all__ = [
     "Embedder",

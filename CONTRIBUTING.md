@@ -9,14 +9,14 @@ This project was developed with assistance from [Claude AI](https://claude.ai) f
 ## Development Setup
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.10+
 - Git
 
 ### Setup Instructions
 
 1. **Fork and clone the repository**
 ```bash
-git clone https://github.com/YOUR_USERNAME/mememo.git
+git clone https://github.com/scr1p7k177y/mememo.git
 cd mememo
 ```
 
@@ -170,8 +170,8 @@ We are committed to providing a welcoming and inclusive environment for all cont
 
 ## Questions?
 
-- Open a [GitHub Discussion](https://github.com/YOUR_USERNAME/mememo/discussions)
-- Check existing [Issues](https://github.com/YOUR_USERNAME/mememo/issues)
+- Open a [GitHub Discussion](https://github.com/scr1p7k177y/mememo/discussions)
+- Check existing [Issues](https://github.com/scr1p7k177y/mememo/issues)
 
 ## License
 

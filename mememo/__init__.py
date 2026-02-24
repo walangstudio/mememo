@@ -1,5 +1,5 @@
 """
-mememo v0.1.0 - Code-aware memory for Claude
+mememo - Code-aware memory for Claude
 
 All-Python MCP server with:
 - Multi-language code parsing (Python, TypeScript, Go, Rust, Java, C/C++, C#)
@@ -9,7 +9,12 @@ All-Python MCP server with:
 - Incremental indexing (Merkle DAG)
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("mememo")
+except PackageNotFoundError:
+    __version__ = "unknown"
 
 from .server import mcp, run
 

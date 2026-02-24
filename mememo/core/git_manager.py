@@ -8,11 +8,10 @@ Provides repo/branch detection and context management.
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Literal
 
-from ..types import GitContext, RepoContext, BranchContext
+from ..types import BranchContext, GitContext, RepoContext
 from ..utils.hashing import hash_path
-
 
 # Whitelist of allowed git commands for security
 ALLOWED_GIT_COMMANDS = [
@@ -39,10 +38,7 @@ class GitManager:
     """
 
     async def _exec_git(
-        self,
-        command: AllowedGitCommand,
-        args: list[str],
-        cwd: Optional[str] = None
+        self, command: AllowedGitCommand, args: list[str], cwd: str | None = None
     ) -> str:
         """
         Execute a git command safely with whitelist validation.
@@ -75,9 +71,9 @@ class GitManager:
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Git command failed: {e.stderr}")
         except subprocess.TimeoutExpired:
-            raise RuntimeError(f"Git command timed out after 30s")
+            raise RuntimeError("Git command timed out after 30s")
 
-    async def find_repo_root(self, cwd: Optional[str] = None) -> str:
+    async def find_repo_root(self, cwd: str | None = None) -> str:
         """
         Find the root directory of the git repository.
 
@@ -100,7 +96,7 @@ class GitManager:
                 f"Current directory: {current_dir}"
             )
 
-    async def get_current_branch(self, cwd: Optional[str] = None) -> str:
+    async def get_current_branch(self, cwd: str | None = None) -> str:
         """
         Get the current branch name.
 
@@ -129,7 +125,7 @@ class GitManager:
         except RuntimeError as e:
             raise RuntimeError(f"Failed to get current branch: {e}")
 
-    async def get_latest_commit(self, cwd: Optional[str] = None) -> str:
+    async def get_latest_commit(self, cwd: str | None = None) -> str:
         """
         Get the latest commit SHA.
 
@@ -145,7 +141,7 @@ class GitManager:
         except RuntimeError as e:
             raise RuntimeError(f"Failed to get latest commit: {e}")
 
-    async def get_remote_url(self, cwd: Optional[str] = None) -> Optional[str]:
+    async def get_remote_url(self, cwd: str | None = None) -> str | None:
         """
         Get the git remote URL (if configured).
 
@@ -156,17 +152,13 @@ class GitManager:
             Remote URL or None if not configured
         """
         try:
-            remote_url = await self._exec_git(
-                "config",
-                ["--get", "remote.origin.url"],
-                cwd
-            )
+            remote_url = await self._exec_git("config", ["--get", "remote.origin.url"], cwd)
             return remote_url if remote_url else None
         except RuntimeError:
             # No remote configured - that's okay
             return None
 
-    async def detect_context(self, cwd: Optional[str] = None) -> GitContext:
+    async def detect_context(self, cwd: str | None = None) -> GitContext:
         """
         Detect the current git context (repo + branch).
 
@@ -214,11 +206,9 @@ class GitManager:
 
             return GitContext(repo=repo, branch=branch)
         except Exception as e:
-            raise RuntimeError(
-                f"Failed to detect git context: {str(e)}"
-            )
+            raise RuntimeError(f"Failed to detect git context: {str(e)}")
 
-    async def is_git_repo(self, cwd: Optional[str] = None) -> bool:
+    async def is_git_repo(self, cwd: str | None = None) -> bool:
         """
         Check if a directory is inside a git repository.
 
@@ -234,7 +224,7 @@ class GitManager:
         except RuntimeError:
             return False
 
-    async def get_repo_id(self, cwd: Optional[str] = None) -> str:
+    async def get_repo_id(self, cwd: str | None = None) -> str:
         """
         Get repository ID for a given path.
 
@@ -248,10 +238,7 @@ class GitManager:
         return hash_path(repo_path)
 
     async def get_changed_files(
-        self,
-        from_commit: str,
-        to_commit: str,
-        cwd: Optional[str] = None
+        self, from_commit: str, to_commit: str, cwd: str | None = None
     ) -> list[str]:
         """
         Get list of changed files between two commits.
@@ -268,9 +255,7 @@ class GitManager:
         """
         try:
             output = await self._exec_git(
-                "diff",
-                ["--name-only", f"{from_commit}..{to_commit}"],
-                cwd
+                "diff", ["--name-only", f"{from_commit}..{to_commit}"], cwd
             )
 
             if not output:
