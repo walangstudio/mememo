@@ -15,8 +15,6 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
-_VERSION = pkg_version("mememo")
-
 from .core.git_manager import GitManager
 from .core.memory_manager import MemoryManager
 from .core.storage_manager import StorageManager
@@ -70,6 +68,8 @@ from .tools.schemas import (
     SummarizeContextResponse,
 )
 from .types.config import MemoConfig
+
+_VERSION = pkg_version("mememo")
 
 # Initialize logger
 logging.basicConfig(
