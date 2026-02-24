@@ -13,9 +13,9 @@ This script:
   4. Compileall on the mememo package → ensures our own code is cached too
 """
 
+import compileall
 import sys
 import time
-import compileall
 from pathlib import Path
 
 
