@@ -79,6 +79,16 @@ install_dev() {
     log_success "mememo installed with dev/test tools"
 }
 
+run_warmup() {
+    log_info "Pre-warming bytecode cache and embedding model (this runs once)..."
+    python warmup.py
+    if [ $? -eq 0 ]; then
+        log_success "Warmup complete"
+    else
+        log_warn "Warmup had a non-fatal error — first MCP startup may be slow"
+    fi
+}
+
 upgrade_installation() {
     if [ ! -d "$VENV_DIR" ]; then
         log_error "No installation found. Run 'bash install.sh' first"
@@ -90,6 +100,8 @@ upgrade_installation() {
     pip install --upgrade pip
     pip install --upgrade -e ".[dev]"
     log_success "mememo upgraded"
+    echo ""
+    run_warmup
 }
 
 configure_claude_cli() {
@@ -347,6 +359,9 @@ EOF
             else
                 install_production
             fi
+
+            echo ""
+            run_warmup
 
             # Auto-configure MCP if requested
             if [ -n "$AUTO_CONFIGURE" ]; then

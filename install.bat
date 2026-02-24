@@ -89,6 +89,9 @@ goto end
     goto install_done
 
 :install_done
+    echo.
+    call :run_warmup
+
     REM Auto-configure MCP if requested
     if "%AUTO_CONFIGURE%"=="" goto configure_tip
     if /i "%AUTO_CONFIGURE%"=="claude" goto do_configure_claude
@@ -233,6 +236,8 @@ goto end
     python -m pip install --upgrade pip
     pip install --upgrade -e ".[dev]"
     echo [OK] mememo upgraded
+    echo.
+    call :run_warmup
     goto end
 
 :do_uninstall
@@ -263,6 +268,16 @@ goto end
     echo        %APPDATA%\Claude\claude_desktop_config.json
     echo        (Remove the "mememo" entry from mcpServers section)
     goto end
+
+:run_warmup
+    echo [INFO] Pre-warming bytecode cache and embedding model (this runs once)...
+    python warmup.py
+    if errorlevel 1 (
+        echo [WARN] Warmup had a non-fatal error -- first MCP startup may be slow
+    ) else (
+        echo [OK] Warmup complete
+    )
+    goto :eof
 
 :show_help
     echo Usage: install.bat [OPTIONS]
