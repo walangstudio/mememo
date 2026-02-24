@@ -5,45 +5,38 @@ Scans content for common secret patterns (API keys, passwords, tokens).
 """
 
 import re
-from typing import List, Tuple
-
 
 # Common secret patterns
 SECRET_PATTERNS = [
     # API Keys
     (r'(?i)api[_-]?key[_-]?(?:=|:)\s*["\']?([a-zA-Z0-9]{20,})["\']?', "API Key"),
     (r'(?i)apikey[_-]?(?:=|:)\s*["\']?([a-zA-Z0-9]{20,})["\']?', "API Key"),
-
     # AWS
-    (r'AKIA[0-9A-Z]{16}', "AWS Access Key"),
-    (r'(?i)aws[_-]?secret[_-]?(?:access)?[_-]?key[_-]?(?:=|:)\s*["\']?([a-zA-Z0-9/+=]{40})["\']?', "AWS Secret"),
-
+    (r"AKIA[0-9A-Z]{16}", "AWS Access Key"),
+    (
+        r'(?i)aws[_-]?secret[_-]?(?:access)?[_-]?key[_-]?(?:=|:)\s*["\']?([a-zA-Z0-9/+=]{40})["\']?',
+        "AWS Secret",
+    ),
     # GitHub
-    (r'ghp_[a-zA-Z0-9]{36}', "GitHub Personal Access Token"),
-    (r'gho_[a-zA-Z0-9]{36}', "GitHub OAuth Token"),
-    (r'ghu_[a-zA-Z0-9]{36}', "GitHub User-to-Server Token"),
-    (r'ghs_[a-zA-Z0-9]{36}', "GitHub Server-to-Server Token"),
-    (r'ghr_[a-zA-Z0-9]{36}', "GitHub Refresh Token"),
-
+    (r"ghp_[a-zA-Z0-9]{36}", "GitHub Personal Access Token"),
+    (r"gho_[a-zA-Z0-9]{36}", "GitHub OAuth Token"),
+    (r"ghu_[a-zA-Z0-9]{36}", "GitHub User-to-Server Token"),
+    (r"ghs_[a-zA-Z0-9]{36}", "GitHub Server-to-Server Token"),
+    (r"ghr_[a-zA-Z0-9]{36}", "GitHub Refresh Token"),
     # Generic tokens
     (r'(?i)token[_-]?(?:=|:)\s*["\']?([a-zA-Z0-9]{20,})["\']?', "Generic Token"),
-    (r'(?i)bearer\s+([a-zA-Z0-9\-._~+/]+=*)', "Bearer Token"),
-
+    (r"(?i)bearer\s+([a-zA-Z0-9\-._~+/]+=*)", "Bearer Token"),
     # Passwords (basic detection)
     (r'(?i)password[_-]?(?:=|:)\s*["\']([^"\']{8,})["\']', "Password"),
     (r'(?i)passwd[_-]?(?:=|:)\s*["\']([^"\']{8,})["\']', "Password"),
-
     # Private keys
-    (r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----', "Private Key"),
-
+    (r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", "Private Key"),
     # Database connection strings
-    (r'(?i)(?:mysql|postgres|mongodb)://[^\s]+:[^\s]+@[^\s]+', "Database Connection String"),
-
+    (r"(?i)(?:mysql|postgres|mongodb)://[^\s]+:[^\s]+@[^\s]+", "Database Connection String"),
     # Slack tokens
-    (r'xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24,}', "Slack Token"),
-
+    (r"xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24,}", "Slack Token"),
     # JWT tokens
-    (r'eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+', "JWT Token"),
+    (r"eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+", "JWT Token"),
 ]
 
 
@@ -52,11 +45,9 @@ class SecretsDetector:
 
     def __init__(self):
         """Initialize secrets detector with compiled patterns."""
-        self.patterns = [
-            (re.compile(pattern), name) for pattern, name in SECRET_PATTERNS
-        ]
+        self.patterns = [(re.compile(pattern), name) for pattern, name in SECRET_PATTERNS]
 
-    def scan(self, text: str) -> List[Tuple[str, str, str]]:
+    def scan(self, text: str) -> list[tuple[str, str, str]]:
         """
         Scan text for potential secrets.
 
@@ -67,17 +58,13 @@ class SecretsDetector:
             List of tuples (secret_type, matched_text, line_number)
         """
         findings = []
-        lines = text.split('\n')
+        lines = text.split("\n")
 
         for line_num, line in enumerate(lines, start=1):
             for pattern, secret_type in self.patterns:
                 matches = pattern.finditer(line)
                 for match in matches:
-                    findings.append((
-                        secret_type,
-                        match.group(0),
-                        str(line_num)
-                    ))
+                    findings.append((secret_type, match.group(0), str(line_num)))
 
         return findings
 
@@ -106,7 +93,7 @@ class SecretsDetector:
         sanitized = text
 
         for pattern, secret_type in self.patterns:
-            sanitized = pattern.sub(f'[REDACTED:{secret_type}]', sanitized)
+            sanitized = pattern.sub(f"[REDACTED:{secret_type}]", sanitized)
 
         return sanitized
 

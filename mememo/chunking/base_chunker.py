@@ -6,8 +6,7 @@ Defines the abstract interface for all code chunkers.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Literal
-
+from typing import Literal
 
 ChunkType = Literal["function", "method", "class", "module", "import", "text"]
 
@@ -27,16 +26,16 @@ class Chunk:
     chunk_type: ChunkType
 
     # Code-aware metadata (NEW in v0.3.0)
-    function_name: Optional[str] = None
-    class_name: Optional[str] = None
-    docstring: Optional[str] = None
-    decorators: Optional[List[str]] = None
-    parent_class: Optional[str] = None
-    language: Optional[str] = None
+    function_name: str | None = None
+    class_name: str | None = None
+    docstring: str | None = None
+    decorators: list[str] | None = None
+    parent_class: str | None = None
+    language: str | None = None
 
     # Additional context
-    file_path: Optional[str] = None
-    complexity: Optional[int] = None  # Cyclomatic complexity (future)
+    file_path: str | None = None
+    complexity: int | None = None  # Cyclomatic complexity (future)
 
     def __repr__(self) -> str:
         if self.function_name:
@@ -58,7 +57,7 @@ class BaseChunker(ABC):
     """
 
     @abstractmethod
-    def chunk(self, code: str, file_path: str) -> List[Chunk]:
+    def chunk(self, code: str, file_path: str) -> list[Chunk]:
         """
         Chunk code into semantic units.
 
@@ -74,7 +73,7 @@ class BaseChunker(ABC):
         """
         pass
 
-    def chunk_with_fallback(self, code: str, file_path: str) -> List[Chunk]:
+    def chunk_with_fallback(self, code: str, file_path: str) -> list[Chunk]:
         """
         Chunk code with automatic fallback to text chunking on error.
 
@@ -87,9 +86,10 @@ class BaseChunker(ABC):
         """
         try:
             return self.chunk(code, file_path)
-        except Exception as e:
+        except Exception:
             # Fallback to text chunking
             from .text_chunker import TextChunker
+
             text_chunker = TextChunker()
             return text_chunker.chunk(code, file_path)
 

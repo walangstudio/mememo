@@ -1,5 +1,5 @@
 """
-mememo v0.1.0 - FastMCP Server
+mememo - FastMCP Server
 
 All-Python code-aware memory server with:
 - Multi-language code parsing (Python, TypeScript, Go, Rust, Java, C/C++, C#)
@@ -9,50 +9,67 @@ All-Python code-aware memory server with:
 - Hybrid storage (SQLite + JSON blobs)
 """
 
-import asyncio
 import logging
+from importlib.metadata import version as pkg_version
 from pathlib import Path
-from typing import Optional
 
 from fastmcp import FastMCP
 
-from .types.config import MemoConfig
+_VERSION = pkg_version("mememo")
+
 from .core.git_manager import GitManager
+from .core.memory_manager import MemoryManager
 from .core.storage_manager import StorageManager
 from .core.vector_index import VectorIndex
-from .core.memory_manager import MemoryManager
 from .embeddings.embedder import Embedder
+from .tools import (
+    check_memory as check_memory_impl,
+)
+from .tools import (
+    delete_memory as delete_memory_impl,
+)
+from .tools import (
+    index_repository as index_repository_impl,
+)
+from .tools import (
+    list_memories as list_memories_impl,
+)
+from .tools import (
+    refresh_memory as refresh_memory_impl,
+)
+from .tools import (
+    retrieve_memory as retrieve_memory_impl,
+)
+from .tools import (
+    search_similar as search_similar_impl,
+)
+from .tools import (
+    store_memory as store_memory_impl,
+)
+from .tools import (
+    summarize_context as summarize_context_impl,
+)
 from .tools.schemas import (
-    StoreMemoryParams,
-    StoreMemoryResponse,
-    RetrieveMemoryParams,
-    RetrieveMemoryResponse,
-    SearchSimilarParams,
-    SearchSimilarResponse,
-    ListMemoriesParams,
-    ListMemoriesResponse,
-    SummarizeContextParams,
-    SummarizeContextResponse,
+    CheckMemoryParams,
+    CheckMemoryResponse,
     DeleteMemoryParams,
     DeleteMemoryResponse,
     IndexRepositoryParams,
     IndexRepositoryResponse,
-    CheckMemoryParams,
-    CheckMemoryResponse,
+    ListMemoriesParams,
+    ListMemoriesResponse,
     RefreshMemoryParams,
     RefreshMemoryResponse,
+    RetrieveMemoryParams,
+    RetrieveMemoryResponse,
+    SearchSimilarParams,
+    SearchSimilarResponse,
+    StoreMemoryParams,
+    StoreMemoryResponse,
+    SummarizeContextParams,
+    SummarizeContextResponse,
 )
-from .tools import (
-    store_memory as store_memory_impl,
-    retrieve_memory as retrieve_memory_impl,
-    search_similar as search_similar_impl,
-    list_memories as list_memories_impl,
-    summarize_context as summarize_context_impl,
-    delete_memory as delete_memory_impl,
-    index_repository as index_repository_impl,
-    check_memory as check_memory_impl,
-    refresh_memory as refresh_memory_impl,
-)
+from .types.config import MemoConfig
 
 # Initialize logger
 logging.basicConfig(
@@ -62,11 +79,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server
-mcp = FastMCP("mememo", version="0.1.0")
+mcp = FastMCP("mememo", version=_VERSION)
 
 # Global state (initialized on startup)
-config: Optional[MemoConfig] = None
-memory_manager: Optional[MemoryManager] = None
+config: MemoConfig | None = None
+memory_manager: MemoryManager | None = None
 
 
 @mcp.resource("config://mememo")
@@ -78,7 +95,7 @@ async def get_config() -> str:
     """
     await ensure_initialized()
 
-    return f"""mememo v0.1.0 Configuration:
+    return f"""mememo Configuration:
 
 Storage:
   Base directory: {config.storage.base_dir}
@@ -114,7 +131,7 @@ async def get_statistics() -> str:
 
     stats = memory_manager.get_statistics()
 
-    return f"""mememo v0.1.0 Statistics:
+    return f"""mememo Statistics:
 
 Storage:
   Total memories: {stats.get('total_memories', 0)}
@@ -146,7 +163,7 @@ async def initialize_mememo():
     global config, memory_manager
 
     logger.info("=" * 60)
-    logger.info("Initializing mememo v0.1.0")
+    logger.info("Initializing mememo v%s", _VERSION)
     logger.info("=" * 60)
 
     # Load configuration from environment
@@ -208,7 +225,7 @@ async def initialize_mememo():
     )
     logger.info("Memory manager initialized")
 
-    logger.info("mememo v0.1.0 initialized successfully!")
+    logger.info("mememo v%s initialized successfully", _VERSION)
 
 
 async def ensure_initialized():

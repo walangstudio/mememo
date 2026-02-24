@@ -8,13 +8,12 @@ Routes to the best chunker based on file type:
 """
 
 import logging
-from typing import List, Optional
 
 from .base_chunker import BaseChunker, Chunk
 from .language_detector import detect_language, get_chunker_type
 from .python_ast_chunker import PythonASTChunker
-from .tree_sitter_chunker import TreeSitterChunker, TREE_SITTER_AVAILABLE
 from .text_chunker import TextChunker
+from .tree_sitter_chunker import TREE_SITTER_AVAILABLE, TreeSitterChunker
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +30,9 @@ class ChunkerFactory:
 
     def __init__(self):
         """Initialize chunker factory with lazy-loaded chunkers."""
-        self._python_chunker: Optional[PythonASTChunker] = None
-        self._tree_sitter_chunker: Optional[TreeSitterChunker] = None
-        self._text_chunker: Optional[TextChunker] = None
+        self._python_chunker: PythonASTChunker | None = None
+        self._tree_sitter_chunker: TreeSitterChunker | None = None
+        self._text_chunker: TextChunker | None = None
 
     def get_chunker(self, file_path: str) -> BaseChunker:
         """
@@ -68,9 +67,7 @@ class ChunkerFactory:
                 return self._get_tree_sitter_chunker()
             else:
                 # Tree-sitter not available - fallback to text
-                logger.warning(
-                    f"Tree-sitter not available for {file_path}, using text chunker"
-                )
+                logger.warning(f"Tree-sitter not available for {file_path}, using text chunker")
                 return self._get_text_chunker()
 
         else:
@@ -78,9 +75,7 @@ class ChunkerFactory:
             logger.debug(f"Using text chunker for {file_path}")
             return self._get_text_chunker()
 
-    def chunk_file(
-        self, code: str, file_path: str, language: Optional[str] = None
-    ) -> List[Chunk]:
+    def chunk_file(self, code: str, file_path: str, language: str | None = None) -> list[Chunk]:
         """
         Chunk a file with automatic chunker selection.
 
@@ -114,9 +109,7 @@ class ChunkerFactory:
 
         except Exception as e:
             # Chunking failed - fallback to text chunker
-            logger.warning(
-                f"Chunking failed for {file_path} with {type(chunker).__name__}: {e}"
-            )
+            logger.warning(f"Chunking failed for {file_path} with {type(chunker).__name__}: {e}")
             logger.debug("Falling back to text chunker")
 
             try:
@@ -145,7 +138,7 @@ class ChunkerFactory:
             self._text_chunker = TextChunker()
         return self._text_chunker
 
-    def get_supported_languages(self) -> List[str]:
+    def get_supported_languages(self) -> list[str]:
         """
         Get list of all supported languages.
 
@@ -156,7 +149,7 @@ class ChunkerFactory:
 
         return get_supported_languages()
 
-    def get_supported_extensions(self) -> List[str]:
+    def get_supported_extensions(self) -> list[str]:
         """
         Get list of all supported file extensions.
 

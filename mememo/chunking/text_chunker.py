@@ -6,10 +6,9 @@ Simple token-based chunking for unsupported languages or when parsing fails.
 
 import logging
 import re
-from typing import List
 
-from .base_chunker import BaseChunker, Chunk
 from ..utils import count_tokens
+from .base_chunker import BaseChunker, Chunk
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +34,7 @@ class TextChunker(BaseChunker):
         self.max_tokens = max_tokens
         self.overlap_tokens = overlap_tokens
 
-    def chunk(self, code: str, file_path: str) -> List[Chunk]:
+    def chunk(self, code: str, file_path: str) -> list[Chunk]:
         """
         Chunk text using sentence and token boundaries.
 
@@ -47,7 +46,7 @@ class TextChunker(BaseChunker):
             List of text chunks
         """
         # Split into sentences
-        sentences = re.split(r'([.!?]\s+)', code)
+        sentences = re.split(r"([.!?]\s+)", code)
 
         # Rebuild sentences with punctuation
         full_sentences = []
@@ -176,12 +175,16 @@ class TextChunker(BaseChunker):
             )
 
         logger.debug(f"Text chunker created {len(chunks)} chunks from {file_path}")
-        return chunks if chunks else [
-            Chunk(
-                text=code,
-                start_line=1,
-                end_line=code.count("\n") + 1,
-                chunk_type="text",
-                file_path=file_path,
-            )
-        ]
+        return (
+            chunks
+            if chunks
+            else [
+                Chunk(
+                    text=code,
+                    start_line=1,
+                    end_line=code.count("\n") + 1,
+                    chunk_type="text",
+                    file_path=file_path,
+                )
+            ]
+        )

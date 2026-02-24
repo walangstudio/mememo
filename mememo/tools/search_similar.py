@@ -12,7 +12,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..types.memory import SearchParams
-from .schemas import SearchSimilarParams, SearchSimilarResponse, SearchResult
+from .schemas import SearchResult, SearchSimilarParams, SearchSimilarResponse
 
 if TYPE_CHECKING:
     from ..core.memory_manager import MemoryManager
@@ -47,16 +47,10 @@ async def search_similar(
 
         # Apply language filter if specified
         if params.language:
-            results = [
-                r
-                for r in results
-                if r.memory.content.language == params.language
-            ]
+            results = [r for r in results if r.memory.content.language == params.language]
 
         # Convert to search result schema
-        search_results = [
-            SearchResult(memory=r.memory, similarity=r.similarity) for r in results
-        ]
+        search_results = [SearchResult(memory=r.memory, similarity=r.similarity) for r in results]
 
         return SearchSimilarResponse(
             success=True,

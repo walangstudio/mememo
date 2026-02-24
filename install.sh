@@ -12,9 +12,8 @@
 set -e
 
 # Configuration
-VERSION="0.1.0"
 VENV_DIR=".venv"
-PYTHON_MIN_VERSION="3.9"
+PYTHON_MIN_VERSION="3.10"
 
 # Colors
 RED='\033[0;31m'
@@ -66,17 +65,15 @@ activate_venv() {
 }
 
 install_production() {
-    log_info "Installing mememo v$VERSION (production)..."
     pip install --upgrade pip
     pip install -e .
-    log_success "mememo installed"
+    log_success "mememo $(python -c 'import mememo; print(mememo.__version__)') installed"
 }
 
 install_dev() {
-    log_info "Installing mememo v$VERSION with dev dependencies..."
     pip install --upgrade pip
     pip install -e ".[dev]"
-    log_success "mememo installed with dev/test tools"
+    log_success "mememo $(python -c 'import mememo; print(mememo.__version__)') installed with dev/test tools"
 }
 
 run_warmup() {
@@ -120,9 +117,12 @@ configure_claude_cli() {
         return 1
     fi
 
+    # Remove existing entry first so re-installs and path changes always apply
+    claude mcp remove mememo --scope user &> /dev/null || true
+
     claude mcp add --scope user mememo -- "$PYTHON_PATH" -m mememo
     if [ $? -eq 0 ]; then
-        log_success "Claude CLI MCP server configured (user scope - available in all projects)!"
+        log_success "Claude CLI MCP server configured (user scope)"
         log_info "Verify with: claude mcp list"
     else
         log_warn "Auto-configuration failed. Add manually:"
@@ -303,7 +303,7 @@ EOF
 
 main() {
     echo "======================================"
-    echo "mememo v$VERSION Installer"
+    echo "mememo Installer"
     echo "======================================"
     echo ""
 

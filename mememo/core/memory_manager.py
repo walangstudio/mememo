@@ -12,26 +12,24 @@ Orchestrates all memory operations:
 import logging
 import re
 from datetime import datetime
-from typing import List, Optional
 from uuid import uuid4
 
+from ..embeddings import Embedder
 from ..types import (
+    CreateMemoryParams,
     Memory,
     MemoryContent,
+    MemoryFilters,
     MemoryMetadata,
     MemoryRelationships,
     MemorySummary,
-    CreateMemoryParams,
-    MemoryFilters,
     SearchParams,
     SearchResult,
-    GitContext,
 )
-from ..utils import calculate_checksum, count_tokens, truncate_to_tokens, SecretsDetector
+from ..utils import SecretsDetector, calculate_checksum, count_tokens, truncate_to_tokens
 from .git_manager import GitManager
 from .storage_manager import StorageManager
 from .vector_index import VectorIndex
-from ..embeddings import Embedder
 
 logger = logging.getLogger(__name__)
 
@@ -120,9 +118,7 @@ class MemoryManager:
         # 6. Generate summaries
         one_line = self._generate_one_line(validated_content)
         detailed_summary = (
-            self._generate_detailed_summary(validated_content)
-            if token_count > 200
-            else None
+            self._generate_detailed_summary(validated_content) if token_count > 200 else None
         )
 
         # 7. Generate embedding
@@ -190,7 +186,7 @@ class MemoryManager:
         context = await self.git_manager.detect_context()
         return await self.storage_manager.load_memory(memory_id, context)
 
-    async def find_memories(self, filters: MemoryFilters) -> List[Memory]:
+    async def find_memories(self, filters: MemoryFilters) -> list[Memory]:
         """
         Find memories with filters.
 
@@ -203,7 +199,7 @@ class MemoryManager:
         context = await self.git_manager.detect_context()
         return await self.storage_manager.find_memories(filters, context)
 
-    async def search_similar(self, params: SearchParams) -> List[SearchResult]:
+    async def search_similar(self, params: SearchParams) -> list[SearchResult]:
         """
         Search for similar memories using vector similarity.
 
@@ -231,7 +227,7 @@ class MemoryManager:
         # Using exponential decay: similarity = exp(-distance)
         import math
 
-        results: List[SearchResult] = []
+        results: list[SearchResult] = []
 
         for memory_id, distance in zip(memory_ids, distances):
             # Convert L2 distance to similarity score
@@ -296,7 +292,7 @@ class MemoryManager:
 
     async def summarize_memories(
         self,
-        memory_ids: List[str],
+        memory_ids: list[str],
         max_tokens: int = 500,
     ) -> str:
         """
@@ -322,7 +318,7 @@ class MemoryManager:
                 continue
 
         # Group by file
-        by_file: dict[str, List[Memory]] = {}
+        by_file: dict[str, list[Memory]] = {}
         for memory in memories:
             file_path = memory.content.file_path or "unknown"
             if file_path not in by_file:

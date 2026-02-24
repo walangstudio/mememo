@@ -23,7 +23,7 @@ What actually happened.
 ## Environment
 - **OS**: [e.g., Windows 11, macOS 14, Ubuntu 22.04]
 - **Python Version**: [e.g., 3.11.5]
-- **mememo Version**: [e.g., 0.1.0]
+- **mememo Version**: [e.g., 0.2.0]
 - **Installation Method**: [e.g., pip, install.sh, install.bat]
 
 ## Error Messages / Logs

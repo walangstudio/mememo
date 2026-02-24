@@ -8,7 +8,6 @@ import logging
 import sqlite3
 import time
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional
 
 import faiss
 import numpy as np
@@ -60,7 +59,7 @@ class VectorIndex:
         self._init_mappings_db()
 
         # In-memory cache of loaded shards (shard_id → (index, last_access_time))
-        self.loaded_shards: Dict[int, Tuple[faiss.Index, float]] = {}
+        self.loaded_shards: dict[int, tuple[faiss.Index, float]] = {}
         self.current_shard = self._get_current_shard()
 
         logger.info(
@@ -81,12 +80,8 @@ class VectorIndex:
                 created_at INTEGER NOT NULL
             )
         """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memory_id ON vector_mappings(memory_id)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_shard ON vector_mappings(shard_id)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_id ON vector_mappings(memory_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shard ON vector_mappings(shard_id)")
         conn.commit()
         conn.close()
 
@@ -107,10 +102,7 @@ class VectorIndex:
 
         # Check if current shard is full
         conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.execute(
-            "SELECT COUNT(*) FROM vector_mappings WHERE shard_id = ?",
-            (result,)
-        )
+        cursor = conn.execute("SELECT COUNT(*) FROM vector_mappings WHERE shard_id = ?", (result,))
         count = cursor.fetchone()[0]
         conn.close()
 
@@ -169,9 +161,9 @@ class VectorIndex:
 
     def add(
         self,
-        embeddings: List[List[float]],
-        memory_ids: List[str],
-        checksums: List[str],
+        embeddings: list[list[float]],
+        memory_ids: list[str],
+        checksums: list[str],
     ) -> None:
         """
         Add vectors to index with automatic sharding.
@@ -184,7 +176,7 @@ class VectorIndex:
         if len(embeddings) != len(memory_ids) or len(embeddings) != len(checksums):
             raise ValueError("embeddings, memory_ids, and checksums must have same length")
 
-        embeddings_array = np.array(embeddings, dtype="float32")
+        np.array(embeddings, dtype="float32")
 
         conn = sqlite3.connect(str(self.db_path))
         cursor = conn.cursor()
@@ -198,8 +190,7 @@ class VectorIndex:
         ):
             # Check if current shard is full
             cursor.execute(
-                "SELECT COUNT(*) FROM vector_mappings WHERE shard_id = ?",
-                (self.current_shard,)
+                "SELECT COUNT(*) FROM vector_mappings WHERE shard_id = ?", (self.current_shard,)
             )
             shard_count = cursor.fetchone()[0]
 
@@ -216,8 +207,7 @@ class VectorIndex:
 
             # Get local index within shard
             cursor.execute(
-                "SELECT COUNT(*) FROM vector_mappings WHERE shard_id = ?",
-                (self.current_shard,)
+                "SELECT COUNT(*) FROM vector_mappings WHERE shard_id = ?", (self.current_shard,)
             )
             local_index = cursor.fetchone()[0]
 
@@ -225,18 +215,21 @@ class VectorIndex:
             index.add(np.array([embedding], dtype="float32"))
 
             # Add mapping to SQLite
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO vector_mappings
                 (shard_id, local_index, global_index, memory_id, checksum, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                self.current_shard,
-                local_index,
-                global_index + i,
-                memory_id,
-                checksum,
-                int(time.time())
-            ))
+            """,
+                (
+                    self.current_shard,
+                    local_index,
+                    global_index + i,
+                    memory_id,
+                    checksum,
+                    int(time.time()),
+                ),
+            )
 
         conn.commit()
         conn.close()
@@ -245,9 +238,9 @@ class VectorIndex:
 
     def search(
         self,
-        query_embedding: List[float],
+        query_embedding: list[float],
         top_k: int = 5,
-    ) -> Tuple[List[float], List[str]]:
+    ) -> tuple[list[float], list[str]]:
         """
         Search across all shards for similar vectors.
 
@@ -262,9 +255,7 @@ class VectorIndex:
 
         # Get all shard IDs
         conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.execute(
-            "SELECT DISTINCT shard_id FROM vector_mappings ORDER BY shard_id"
-        )
+        cursor = conn.execute("SELECT DISTINCT shard_id FROM vector_mappings ORDER BY shard_id")
         shard_ids = [row[0] for row in cursor.fetchall()]
         conn.close()
 
@@ -290,10 +281,13 @@ class VectorIndex:
             for local_idx, dist in zip(indices[0], distances[0]):
                 if local_idx == -1:  # FAISS returns -1 for missing results
                     continue
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT memory_id FROM vector_mappings
                     WHERE shard_id = ? AND local_index = ?
-                """, (shard_id, int(local_idx)))
+                """,
+                    (shard_id, int(local_idx)),
+                )
                 result = cursor.fetchone()
                 if result:
                     all_distances.append(float(dist))
@@ -335,9 +329,7 @@ class VectorIndex:
             Dict with statistics
         """
         conn = sqlite3.connect(str(self.db_path))
-        cursor = conn.execute(
-            "SELECT COUNT(DISTINCT shard_id), COUNT(*) FROM vector_mappings"
-        )
+        cursor = conn.execute("SELECT COUNT(DISTINCT shard_id), COUNT(*) FROM vector_mappings")
         shard_count, total_vectors = cursor.fetchone()
         conn.close()
 
@@ -346,7 +338,7 @@ class VectorIndex:
             "shard_count": shard_count or 0,
             "loaded_shards": len(self.loaded_shards),
             "active_shards": len(self.loaded_shards),  # Same as loaded_shards (shards in memory)
-            "total_shards": shard_count or 0,          # Same as shard_count (total shards on disk)
+            "total_shards": shard_count or 0,  # Same as shard_count (total shards on disk)
             "vectors_per_shard": self.SHARD_SIZE,
             "dimension": self.dimension,
         }

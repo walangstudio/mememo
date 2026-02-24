@@ -6,7 +6,6 @@ Provides accurate token counting using tiktoken for context management.
 
 import tiktoken
 
-
 # Initialize tokenizer (GPT-3.5/GPT-4 compatible)
 _tokenizer = None
 
@@ -91,9 +90,10 @@ def truncate_to_tokens(text: str, max_tokens: int) -> str:
 
     # Try to break at sentence boundary
     import re
-    sentences = re.split(r'[.!?]\s+', result)
+
+    sentences = re.split(r"[.!?]\s+", result)
     if len(sentences) > 1:
         sentences.pop()  # Remove incomplete last sentence
-        return '. '.join(sentences) + '.'
+        return ". ".join(sentences) + "."
 
     return result

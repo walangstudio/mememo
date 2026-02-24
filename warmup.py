@@ -33,18 +33,22 @@ def warmup() -> None:
     # ------------------------------------------------------------------
     t = _step("Loading PyTorch ...")
     import torch  # noqa: F401 – side-effect import intentional
+
     print(f"    done ({time.monotonic() - t:.1f}s)", flush=True)
 
     t = _step("Loading sentence-transformers ...")
     from sentence_transformers import SentenceTransformer
+
     print(f"    done ({time.monotonic() - t:.1f}s)", flush=True)
 
     t = _step("Loading FAISS ...")
     import faiss  # noqa: F401
+
     print(f"    done ({time.monotonic() - t:.1f}s)", flush=True)
 
     t = _step("Loading tiktoken ...")
     import tiktoken  # noqa: F401
+
     print(f"    done ({time.monotonic() - t:.1f}s)", flush=True)
 
     # ------------------------------------------------------------------
@@ -52,6 +56,7 @@ def warmup() -> None:
     # ------------------------------------------------------------------
     t = _step("Compiling mememo package ...")
     import mememo
+
     pkg_dir = Path(mememo.__path__[0])
     compileall.compile_dir(str(pkg_dir), quiet=1, force=True)
     print(f"    done ({time.monotonic() - t:.1f}s)", flush=True)

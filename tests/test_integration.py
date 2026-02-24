@@ -1,5 +1,5 @@
 """
-Integration tests for mememo v0.1.0.
+Integration tests for mememo.
 
 Tests the full workflow:
 - Initialize components
@@ -10,17 +10,16 @@ Tests the full workflow:
 - Delete memories
 """
 
-import asyncio
-import tempfile
 import shutil
+import tempfile
 from pathlib import Path
+
 import pytest
 
-from mememo.types.config import MemoConfig, StorageConfig, EmbeddingConfig, ChunkingConfig, SearchConfig, SecurityConfig
 from mememo.core.git_manager import GitManager
+from mememo.core.memory_manager import MemoryManager
 from mememo.core.storage_manager import StorageManager
 from mememo.core.vector_index import VectorIndex
-from mememo.core.memory_manager import MemoryManager
 from mememo.embeddings.embedder import Embedder
 from mememo.types.memory import CreateMemoryParams, MemoryRelationships, SearchParams
 
@@ -28,8 +27,8 @@ from mememo.types.memory import CreateMemoryParams, MemoryRelationships, SearchP
 @pytest.fixture
 async def test_env():
     """Create test environment with temp directory."""
-    import subprocess
     import os
+    import subprocess
 
     # Create temporary directory
     temp_dir = Path(tempfile.mkdtemp())
@@ -40,14 +39,28 @@ async def test_env():
     try:
         # Initialize a git repository in temp directory (required by GitManager)
         subprocess.run(["git", "init"], cwd=temp_dir, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=temp_dir, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=temp_dir, check=True, capture_output=True)
-        subprocess.run(["git", "checkout", "-b", "main"], cwd=temp_dir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=temp_dir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=temp_dir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "checkout", "-b", "main"], cwd=temp_dir, check=True, capture_output=True
+        )
 
         # Create initial commit (git requires at least one commit for branch detection)
         (temp_dir / "README.md").write_text("# Test Repo")
         subprocess.run(["git", "add", "README.md"], cwd=temp_dir, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=temp_dir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Initial commit"], cwd=temp_dir, check=True, capture_output=True
+        )
 
         # Change to temp directory so GitManager.detect_context() finds the test repo
         os.chdir(temp_dir)
@@ -195,9 +208,7 @@ async def test_list_with_filters(test_env):
     # (MemoryFilters doesn't support language filtering yet)
     from mememo.types.memory import MemoryFilters
 
-    all_memories = await memory_manager.find_memories(
-        MemoryFilters(type="code_snippet")
-    )
+    all_memories = await memory_manager.find_memories(MemoryFilters(type="code_snippet"))
 
     # Filter Python memories client-side
     python_memories = [m for m in all_memories if m.content.language == "python"]

@@ -42,8 +42,8 @@ async def check_memory(
             try:
                 context = await memory_manager.git_manager.detect_context()
                 git_context = {
-                    "repo": context.repo.dict() if context.repo else None,
-                    "branch": context.branch.dict() if context.branch else None,
+                    "repo": context.repo.model_dump() if context.repo else None,
+                    "branch": context.branch.model_dump() if context.branch else None,
                 }
             except Exception as e:
                 logger.warning(f"Failed to get git context: {e}")

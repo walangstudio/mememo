@@ -11,7 +11,6 @@ Uses tree-sitter to parse and extract code structures from multiple languages:
 """
 
 import logging
-from typing import List, Optional, Dict
 
 from .base_chunker import BaseChunker, Chunk
 
@@ -20,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Try to import tree-sitter packages
 try:
     from tree_sitter_languages import get_language, get_parser
+
     TREE_SITTER_AVAILABLE = True
 except ImportError:
     TREE_SITTER_AVAILABLE = False
@@ -41,7 +41,6 @@ LANGUAGE_QUERIES = {
         (interface_declaration
             name: (type_identifier) @interface.name) @interface.def
     """,
-
     "javascript": """
         (function_declaration
             name: (identifier) @function.name) @function.def
@@ -52,7 +51,6 @@ LANGUAGE_QUERIES = {
         (class_declaration
             name: (identifier) @class.name) @class.def
     """,
-
     "go": """
         (function_declaration
             name: (identifier) @function.name) @function.def
@@ -65,7 +63,6 @@ LANGUAGE_QUERIES = {
             (type_spec
                 name: (type_identifier) @type.name)) @type.def
     """,
-
     "rust": """
         (function_item
             name: (identifier) @function.name) @function.def
@@ -78,7 +75,6 @@ LANGUAGE_QUERIES = {
         (trait_item
             name: (type_identifier) @trait.name) @trait.def
     """,
-
     "java": """
         (class_declaration
             name: (identifier) @class.name) @class.def
@@ -89,7 +85,6 @@ LANGUAGE_QUERIES = {
         (interface_declaration
             name: (identifier) @interface.name) @interface.def
     """,
-
     "c": """
         (function_definition
             declarator: (function_declarator
@@ -98,7 +93,6 @@ LANGUAGE_QUERIES = {
         (struct_specifier
             name: (type_identifier) @struct.name) @struct.def
     """,
-
     "cpp": """
         (function_definition
             declarator: (function_declarator
@@ -110,7 +104,6 @@ LANGUAGE_QUERIES = {
         (struct_specifier
             name: (type_identifier) @struct.name) @struct.def
     """,
-
     "csharp": """
         (class_declaration
             name: (identifier) @class.name) @class.def
@@ -139,8 +132,8 @@ class TreeSitterChunker(BaseChunker):
 
     def __init__(self):
         """Initialize tree-sitter chunker with lazy-loaded parsers."""
-        self._parsers: Dict = {}
-        self._languages: Dict = {}
+        self._parsers: dict = {}
+        self._languages: dict = {}
 
         if not TREE_SITTER_AVAILABLE:
             raise RuntimeError(
@@ -169,7 +162,7 @@ class TreeSitterChunker(BaseChunker):
 
         return self._parsers[language]
 
-    def chunk(self, code: str, file_path: str, language: str = None) -> List[Chunk]:
+    def chunk(self, code: str, file_path: str, language: str = None) -> list[Chunk]:
         """
         Chunk code using tree-sitter parsing.
 
@@ -187,6 +180,7 @@ class TreeSitterChunker(BaseChunker):
         # Auto-detect language if not provided
         if language is None:
             from .language_detector import detect_language
+
             language = detect_language(file_path)
             if language is None:
                 raise ValueError(f"Cannot detect language for {file_path}")
@@ -235,7 +229,7 @@ class TreeSitterChunker(BaseChunker):
         capture_name: str,
         language: str,
         file_path: str,
-    ) -> Optional[Chunk]:
+    ) -> Chunk | None:
         """
         Extract a tree-sitter node as a chunk.
 
@@ -253,7 +247,7 @@ class TreeSitterChunker(BaseChunker):
         end_line = node.end_point[0] + 1
 
         # Extract text
-        text = code[node.start_byte:node.end_byte]
+        text = code[node.start_byte : node.end_byte]
 
         # Parse capture name to determine type
         chunk_type = capture_name.split(".")[0]
@@ -315,7 +309,7 @@ class TreeSitterChunker(BaseChunker):
                 file_path=file_path,
             )
 
-    def _extract_name(self, node, language: str) -> Optional[str]:
+    def _extract_name(self, node, language: str) -> str | None:
         """
         Extract name from tree-sitter node.
 
@@ -328,12 +322,22 @@ class TreeSitterChunker(BaseChunker):
         """
         # Try to find name in child nodes
         for child in node.children:
-            if child.type in ("identifier", "type_identifier", "field_identifier", "property_identifier"):
+            if child.type in (
+                "identifier",
+                "type_identifier",
+                "field_identifier",
+                "property_identifier",
+            ):
                 return child.text.decode("utf8")
 
         # Fallback: try named children
         for child in node.named_children:
-            if child.type in ("identifier", "type_identifier", "field_identifier", "property_identifier"):
+            if child.type in (
+                "identifier",
+                "type_identifier",
+                "field_identifier",
+                "property_identifier",
+            ):
                 return child.text.decode("utf8")
 
         return None
