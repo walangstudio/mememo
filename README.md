@@ -81,8 +81,8 @@ bash install.sh                 # Linux/macOS
 install.bat                     # Windows
 
 # Development (includes testing tools)
-bash install.sh --dev          # Linux/macOS
-install.bat --dev              # Windows
+bash install.sh --dev           # Linux/macOS
+install.bat --dev               # Windows
 ```
 
 This creates a virtual environment at `.venv` and installs all dependencies.
@@ -131,8 +131,8 @@ install.bat                            # Windows
 #### Claude Desktop (auto-configure)
 
 ```bash
-bash install.sh --configure=claude     # Linux/macOS
-install.bat --configure=claude         # Windows
+bash install.sh -c desktop     # Linux/macOS
+install.bat -c desktop         # Windows
 ```
 
 Then **restart Claude Desktop** — mememo is launched automatically, no manual server start needed.
@@ -140,8 +140,8 @@ Then **restart Claude Desktop** — mememo is launched automatically, no manual 
 #### Claude Code CLI (auto-configure)
 
 ```bash
-bash install.sh --configure=claudecli   # Linux/macOS
-install.bat --configure=claudecli       # Windows
+bash install.sh -c code        # Linux/macOS
+install.bat -c code            # Windows
 ```
 
 Or manually:
@@ -157,6 +157,55 @@ claude mcp add --scope user mememo -- /path/to/mememo/.venv/bin/python -m mememo
 ```
 
 Verify it's registered: `claude mcp list`
+
+#### Kilo Code (auto-configure)
+
+```bash
+bash install.sh -c kilo        # Linux/macOS
+install.bat -c kilo            # Windows
+```
+
+Writes `.kilocode/mcp.json` in the parent workspace directory.
+
+#### OpenCode (auto-configure)
+
+```bash
+bash install.sh -c opencode              # workspace-local
+bash install.sh -c opencode --global     # global (~/.config/opencode/opencode.json)
+```
+
+#### Goose (auto-configure)
+
+```bash
+bash install.sh -c goose       # Linux/macOS
+install.bat -c goose           # Windows
+```
+
+Writes to `~/.config/goose/config.yaml` (global). Requires PyYAML (included in mememo's dependencies).
+
+#### All detected clients
+
+```bash
+bash install.sh -c all         # Linux/macOS
+install.bat -c all             # Windows
+```
+
+Configures all clients whose config files already exist. Desktop and Code are always attempted.
+
+## Supported MCP Clients
+
+| Client | `-c TYPE` | Config written | Notes |
+|--------|-----------|----------------|-------|
+| Claude Desktop | `desktop` | OS-specific `claude_desktop_config.json` | Restart required |
+| Claude Code | `code` | `~/.claude.json` (user scope via `claude mcp add`) | Use `--global` has no effect; already user scope |
+| Kilo Code | `kilo` | `.kilocode/mcp.json` | Workspace-local only |
+| OpenCode | `opencode` | `opencode.json` / `~/.config/opencode/opencode.json` | Use `--global` for user scope |
+| Goose | `goose` | `~/.config/goose/config.yaml` | Global only |
+| All above | `all` | All existing configs | Skips clients not yet installed |
+
+**Backward-compatible aliases** (still work):
+- `--configure=claude` → same as `-c desktop`
+- `--configure=claudecli` → same as `-c code`
 
 #### VS Code — Cline
 
