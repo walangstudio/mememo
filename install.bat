@@ -1,53 +1,142 @@
 @echo off
 REM mememo installer for Windows
-REM
-REM Usage:
-REM   install.bat              # Install for production
-REM   install.bat --dev        # Install with dev/test dependencies
-REM   install.bat --upgrade    # Upgrade existing installation
-REM   install.bat --uninstall  # Uninstall mememo
-REM
-
 setlocal enabledelayedexpansion
 
 set VENV_DIR=.venv
 set PYTHON_MIN=3.10
 
-REM Parse arguments
-set MODE=production
-set ACTION=install
-set AUTO_CONFIGURE=
+REM ── Defaults ─────────────────────────────────────────────
+set FORCE=false
+set UNINSTALL=false
+set UPGRADE=false
+set CLIENT=
+set SKIP_TEST=false
+set GLOBAL_CONFIG=false
+set DEV_MODE=false
+set CLIENT_EXPLICIT=false
 
 :parse_args
-if "%~1"=="" goto end_parse
-if "%~1"=="--dev" set MODE=dev
-if "%~1"=="--upgrade" set ACTION=upgrade
-if "%~1"=="--uninstall" set ACTION=uninstall
-if "%~1"=="--configure" set AUTO_CONFIGURE=claude
-if "%~1"=="--configure" if not "%~2"=="" set AUTO_CONFIGURE=%~2
-if "%~1"=="--configure=claude" set AUTO_CONFIGURE=claude
-if "%~1"=="--configure=claudecli" set AUTO_CONFIGURE=claudecli
-if "%~1"=="--help" goto show_help
+if "%~1"=="" goto :end_parse
+if /i "%~1"=="-c"                    goto :pa_client
+if /i "%~1"=="--client"              goto :pa_client
+if /i "%~1"=="-f"                    goto :pa_force
+if /i "%~1"=="--force"               goto :pa_force
+if /i "%~1"=="-u"                    goto :pa_uninstall
+if /i "%~1"=="--uninstall"           goto :pa_uninstall
+if /i "%~1"=="--upgrade"             goto :pa_upgrade
+if /i "%~1"=="--global"              goto :pa_global
+if /i "%~1"=="--skip-test"           goto :pa_skip_test
+if /i "%~1"=="--dev"                 goto :pa_dev
+if /i "%~1"=="--configure=claude"    goto :pa_cfg_claude
+if /i "%~1"=="--configure=claudecli" goto :pa_cfg_claudecli
+if /i "%~1"=="--configure"           goto :pa_cfg_claude
+if /i "%~1"=="--help"                goto :show_help
+if /i "%~1"=="-h"                    goto :show_help
+echo [ERROR] Unknown option: %~1
+echo Run 'install.bat --help' for usage
+exit /b 1
+
+:pa_client
+if "%~2"=="" (
+    echo [ERROR] --client requires a value
+    exit /b 1
+)
+set "CLIENT=%~2"
+set "CLIENT_EXPLICIT=true"
 shift
-goto parse_args
+shift
+goto :parse_args
+
+:pa_force
+set "FORCE=true"
+shift
+goto :parse_args
+
+:pa_uninstall
+set "UNINSTALL=true"
+shift
+goto :parse_args
+
+:pa_upgrade
+set "UPGRADE=true"
+shift
+goto :parse_args
+
+:pa_global
+set "GLOBAL_CONFIG=true"
+shift
+goto :parse_args
+
+:pa_skip_test
+set "SKIP_TEST=true"
+shift
+goto :parse_args
+
+:pa_dev
+set "DEV_MODE=true"
+shift
+goto :parse_args
+
+:pa_cfg_claude
+set "CLIENT=desktop"
+set "CLIENT_EXPLICIT=true"
+shift
+goto :parse_args
+
+:pa_cfg_claudecli
+set "CLIENT=code"
+set "CLIENT_EXPLICIT=true"
+shift
+goto :parse_args
+
 :end_parse
+
+if "%GLOBAL_CONFIG%"=="true" (
+    if not "%CLIENT%"=="code" (
+        if not "%CLIENT%"=="both" (
+            if not "%CLIENT%"=="opencode" (
+                if not "%CLIENT%"=="all" (
+                    if not "%CLIENT%"=="" (
+                        echo [ERROR] --global is only valid with -c code, opencode, both, or all
+                        exit /b 1
+                    )
+                )
+            )
+        )
+    )
+)
 
 echo ======================================
 echo mememo Installer
 echo ======================================
 echo.
 
-if "%ACTION%"=="install" goto do_install
-if "%ACTION%"=="upgrade" goto do_upgrade
-if "%ACTION%"=="uninstall" goto do_uninstall
-goto end
+if "%UNINSTALL%"=="true" goto do_uninstall
+if "%UPGRADE%"=="true"   goto do_upgrade
+goto do_install
 
+rem ════════════════════════════════════════════════════════
 :do_install
     echo [INFO] Checking Python version...
     python --version >nul 2>&1
     if errorlevel 1 (
         echo [ERROR] Python not found. Install Python %PYTHON_MIN%+
         exit /b 1
+    )
+
+    if exist "%VENV_DIR%\.mememo_installed" (
+        if exist "%VENV_DIR%" (
+            if not "%FORCE%"=="true" (
+                set "_inst_ver=unknown"
+                for /f "usebackq delims=" %%v in ("%VENV_DIR%\.mememo_installed") do set "_inst_ver=%%v"
+                echo [INFO] mememo !_inst_ver! already installed. Use --upgrade to update.
+                if "%CLIENT_EXPLICIT%"=="true" goto :do_configure_only
+                echo [INFO] Run 'install.bat -c desktop' to configure Claude Desktop
+                echo [INFO]      'install.bat -c code'    to configure Claude Code
+                echo.
+                goto end
+            )
+        )
     )
 
     echo [INFO] Creating virtual environment...
@@ -64,7 +153,7 @@ goto end
     echo [INFO] Upgrading pip...
     python -m pip install --upgrade pip
 
-    if "%MODE%"=="dev" goto install_dev
+    if "%DEV_MODE%"=="true" goto install_dev
     goto install_prod
 
 :install_dev
@@ -89,43 +178,25 @@ goto end
 
 :install_done
     echo.
-    call :run_warmup
+    if not "%SKIP_TEST%"=="true" call :run_warmup
 
-    REM Auto-configure MCP if requested
-    if "%AUTO_CONFIGURE%"=="" goto configure_tip
-    if /i "%AUTO_CONFIGURE%"=="claude" goto do_configure_claude
-    if /i "%AUTO_CONFIGURE%"=="claudecli" goto do_configure_claudecli
-    echo [ERROR] AI assistant '%AUTO_CONFIGURE%' not yet supported
-    echo [INFO] Supported: claude, claudecli
-    echo [INFO] Configure manually (see README.md)
-    goto show_complete
+    if "%CLIENT_EXPLICIT%"=="true" (
+        echo.
+        call :do_configure
+    ) else (
+        echo [INFO] Tip: Run 'install.bat -c desktop' to auto-configure Claude Desktop
+        echo [INFO]      Run 'install.bat -c code'    to auto-configure Claude Code CLI
+    )
 
-:configure_tip
-    echo [INFO] Tip: Run 'install.bat --configure=claude' to auto-configure Claude Desktop
-    echo [INFO]      Run 'install.bat --configure=claudecli' to auto-configure Claude Code CLI
-    goto show_complete
-
-:do_configure_claude
-    echo.
-    call :configure_mcp
-    goto show_complete
-
-:do_configure_claudecli
-    echo.
-    call :configure_claude_cli
-    goto show_complete
-
-:show_complete
     echo.
     echo ======================================
     echo Installation Complete!
     echo ======================================
     echo.
 
-    if "%MODE%"=="dev" goto show_dev_msg
-    if "%AUTO_CONFIGURE%"=="" goto show_not_configured
-    if /i "%AUTO_CONFIGURE%"=="claudecli" goto show_claudecli_done
-    goto show_claude_done
+    if "%DEV_MODE%"=="true" goto show_dev_msg
+    if "%CLIENT_EXPLICIT%"=="true" goto show_configured
+    goto show_not_configured
 
 :show_dev_msg
     echo Dev environment ready:
@@ -137,96 +208,52 @@ goto end
     echo      pytest tests/ -v
     echo.
     echo   3. Configure your AI assistant (if not done):
-    echo      install.bat --configure=claude      (Claude Desktop)
-    echo      install.bat --configure=claudecli   (Claude Code CLI)
+    echo      install.bat -c desktop   (Claude Desktop)
+    echo      install.bat -c code      (Claude Code CLI)
+    echo.
+    goto end
+
+:show_configured
+    if /i "%CLIENT%"=="code" (
+        echo   mememo is ready in Claude Code CLI.
+        echo   Verify with: claude mcp list
+    ) else (
+        echo   mememo is ready. Restart the client to activate.
+    )
+    echo.
+    echo   See README.md for usage and configuration options.
     echo.
     goto end
 
 :show_not_configured
     echo   mememo is installed but not yet connected to an AI assistant.
-    echo   Run: install.bat --configure=claude      (Claude Desktop)
-    echo        install.bat --configure=claudecli   (Claude Code CLI)
+    echo   Run: install.bat -c desktop   (Claude Desktop)
+    echo        install.bat -c code      (Claude Code CLI)
+    echo        install.bat -c kilo      (Kilo Code)
+    echo        install.bat -c opencode  (OpenCode)
+    echo        install.bat -c goose     (Goose)
     echo.
     echo   See README.md for usage and configuration options.
     echo.
     goto end
 
-:show_claudecli_done
-    echo   mememo is ready in Claude Code CLI.
-    echo   Verify with: claude mcp list
-    echo.
-    echo   See README.md for usage and configuration options.
-    echo.
+rem ════════════════════════════════════════════════════════
+:do_configure_only
+    call %VENV_DIR%\Scripts\activate.bat
+    call :do_configure
     goto end
 
-:show_claude_done
-    echo   mememo is ready. Restart Claude Desktop to activate.
-    echo.
-    echo   See README.md for usage and configuration options.
-    echo.
-    goto end
-
-:configure_claude_cli
-    echo [INFO] Configuring Claude Code CLI MCP server...
-
-    set PROJECT_DIR=%CD%
-    set PYTHON_PATH=%PROJECT_DIR%\%VENV_DIR%\Scripts\python.exe
-
-    if not exist "%PYTHON_PATH%" (
-        echo [ERROR] Python not found at %PYTHON_PATH%
+rem ════════════════════════════════════════════════════════
+:do_configure
+    set "_py_path=%CD%\%VENV_DIR%\Scripts\python.exe"
+    if not exist "!_py_path!" (
+        echo [ERROR] Python not found at !_py_path!
         goto :eof
     )
-
-    where claude >nul 2>&1
-    if errorlevel 1 (
-        echo [ERROR] Claude CLI not found. Install it first: https://claude.ai/download
-        goto :eof
-    )
-
-    REM Remove existing entry first so re-installs and path changes always apply
-    claude mcp remove mememo --scope user >nul 2>&1
-
-    claude mcp add --scope user mememo -- "%PYTHON_PATH%" -m mememo
-    if errorlevel 1 (
-        echo [WARN] Auto-configuration failed. Add manually:
-        echo        claude mcp add --scope user mememo -- "%PYTHON_PATH%" -m mememo
-    ) else (
-        echo [OK] Claude CLI MCP server configured (user scope)
-        echo [INFO] Verify with: claude mcp list
-    )
-
+    call :configure_client "%CLIENT%" "!_py_path!"
     goto :eof
 
-:configure_mcp
-    echo [INFO] Configuring Claude Desktop MCP server...
-
-    REM Get absolute paths
-    set PROJECT_DIR=%CD%
-    set PYTHON_PATH=%PROJECT_DIR%\%VENV_DIR%\Scripts\python.exe
-    set CONFIG_DIR=%APPDATA%\Claude
-    set CONFIG_FILE=%CONFIG_DIR%\claude_desktop_config.json
-
-    REM Check if Python exists
-    if not exist "%PYTHON_PATH%" (
-        echo [ERROR] Python not found at %PYTHON_PATH%
-        goto :eof
-    )
-
-    REM Create config directory
-    if not exist "%CONFIG_DIR%" mkdir "%CONFIG_DIR%"
-
-    REM Create or update config using Python
-    "%PYTHON_PATH%" -c "import json; import os; config_file = r'%CONFIG_FILE%'; config = json.load(open(config_file)) if os.path.exists(config_file) else {}; config.setdefault('mcpServers', {})['mememo'] = {'command': r'%PYTHON_PATH%', 'args': ['-m', 'mememo']}; json.dump(config, open(config_file, 'w'), indent=2)"
-
-    if errorlevel 1 (
-        echo [WARN] Auto-configuration failed. Configure Claude Desktop manually (see README.md)
-    ) else (
-        echo [OK] Claude Desktop MCP server configured at %CONFIG_FILE%
-        echo [WARN] Restart Claude Desktop to start using mememo
-    )
-
-    goto :eof
-
+rem ════════════════════════════════════════════════════════
 :do_upgrade
     if not exist "%VENV_DIR%" (
         echo [ERROR] No installation found. Run 'install.bat' first
@@ -239,15 +266,32 @@ goto end
     pip install --upgrade -e ".[dev]"
     echo [OK] mememo upgraded
     echo.
-    call :run_warmup
+    if not "%SKIP_TEST%"=="true" call :run_warmup
+
+    if "%CLIENT_EXPLICIT%"=="true" (
+        echo.
+        call :do_configure
+    )
     goto end
 
+rem ════════════════════════════════════════════════════════
 :do_uninstall
+    set "_py_path=%CD%\%VENV_DIR%\Scripts\python.exe"
+
+    if "%CLIENT_EXPLICIT%"=="true" (
+        if exist "!_py_path!" (
+            call :configure_client "%CLIENT%" "!_py_path!"
+            echo.
+        )
+    )
+
     echo [WARN] This will remove mememo and %VENV_DIR%
-    set /p confirm="Continue? (y/N): "
-    if /i not "%confirm%"=="y" (
-        echo [INFO] Cancelled
-        goto end
+    if not "%FORCE%"=="true" (
+        set /p confirm="Continue? (y/N): "
+        if /i not "!confirm!"=="y" (
+            echo [INFO] Cancelled
+            goto end
+        )
     )
 
     echo [INFO] Uninstalling...
@@ -266,11 +310,275 @@ goto end
     echo [OK] mememo uninstalled
     echo.
     echo [INFO] User data in %USERPROFILE%\.mememo preserved
-    echo [INFO] To complete uninstall, manually remove mememo from:
-    echo        %APPDATA%\Claude\claude_desktop_config.json
-    echo        (Remove the "mememo" entry from mcpServers section)
     goto end
 
+rem ════════════════════════════════════════════════════════
+:configure_client
+set "_cct=%~1"
+set "_cpy=%~2"
+
+if /i "!_cct!"=="desktop"  goto :cc_desktop
+if /i "!_cct!"=="code"     goto :cc_code
+if /i "!_cct!"=="kilo"     goto :cc_kilo
+if /i "!_cct!"=="opencode" goto :cc_opencode
+if /i "!_cct!"=="goose"    goto :cc_goose
+if /i "!_cct!"=="both"     goto :cc_both
+if /i "!_cct!"=="all"      goto :cc_all
+echo [ERROR] Unknown client type: !_cct!
+goto :eof
+
+:cc_desktop
+echo [INFO] Client: Claude Desktop
+set "_cfg_d=%APPDATA%\Claude\claude_desktop_config.json"
+if not exist "%APPDATA%\Claude" mkdir "%APPDATA%\Claude"
+call :_configure_mcp_json "!_cfg_d!" "!_cpy!" mememo
+goto :eof
+
+:cc_code
+echo [INFO] Client: Claude Code
+where claude >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Claude CLI not found. Install it first: https://claude.ai/download
+    goto :eof
+)
+if "%UNINSTALL%"=="true" (
+    claude mcp remove mememo --scope user >nul 2>&1
+    echo [OK] Removed mememo from Claude Code ^(user scope^)
+    goto :eof
+)
+claude mcp remove mememo --scope user >nul 2>&1
+claude mcp add --scope user mememo -- "!_cpy!" -m mememo
+if errorlevel 1 (
+    echo [WARN] Auto-configuration failed. Add manually:
+    echo        claude mcp add --scope user mememo -- "!_cpy!" -m mememo
+) else (
+    echo [OK] Claude Code MCP server configured ^(user scope^)
+    echo [INFO] Verify with: claude mcp list
+)
+goto :eof
+
+:cc_kilo
+echo [INFO] Client: Kilo Code
+for %%I in ("%CD%") do set "_kilo_parent=%%~dpI"
+if "!_kilo_parent:~-1!"=="\" set "_kilo_parent=!_kilo_parent:~0,-1!"
+set "_kilo_cfg=!_kilo_parent!\.kilocode\mcp.json"
+echo [INFO] Config: !_kilo_cfg!
+call :_configure_mcp_json "!_kilo_cfg!" "!_cpy!" mememo
+goto :eof
+
+:cc_opencode
+echo [INFO] Client: OpenCode
+if "%GLOBAL_CONFIG%"=="true" (
+    set "_oc_cfg=%USERPROFILE%\.config\opencode\opencode.json"
+) else (
+    for %%I in ("%CD%") do set "_oc_parent=%%~dpI"
+    if "!_oc_parent:~-1!"=="\" set "_oc_parent=!_oc_parent:~0,-1!"
+    set "_oc_cfg=!_oc_parent!\opencode.json"
+)
+echo [INFO] Config: !_oc_cfg!
+call :_configure_opencode_json "!_oc_cfg!" "!_cpy!"
+goto :eof
+
+:cc_goose
+echo [INFO] Client: Goose
+set "_goose_cfg=%USERPROFILE%\.config\goose\config.yaml"
+echo [INFO] Config: !_goose_cfg!
+call :_configure_goose_yaml "!_goose_cfg!" "!_cpy!"
+goto :eof
+
+:cc_both
+call :configure_client "desktop" "!_cpy!"
+echo.
+call :configure_client "code" "!_cpy!"
+goto :eof
+
+:cc_all
+call :configure_client "desktop" "!_cpy!"
+echo.
+call :configure_client "code" "!_cpy!"
+for %%I in ("%CD%") do set "_all_parent=%%~dpI"
+if "!_all_parent:~-1!"=="\" set "_all_parent=!_all_parent:~0,-1!"
+set "_all_kilo=!_all_parent!\.kilocode\mcp.json"
+set "_all_oc=!_all_parent!\opencode.json"
+set "_all_oc_g=%USERPROFILE%\.config\opencode\opencode.json"
+set "_all_goose=%USERPROFILE%\.config\goose\config.yaml"
+if "%UNINSTALL%"=="true" (
+    echo.
+    call :configure_client "kilo" "!_cpy!"
+    echo.
+    call :configure_client "opencode" "!_cpy!"
+    echo.
+    call :configure_client "goose" "!_cpy!"
+) else (
+    if exist "!_all_kilo!" (
+        echo.
+        call :configure_client "kilo" "!_cpy!"
+    )
+    if exist "!_all_oc!" (
+        echo.
+        call :configure_client "opencode" "!_cpy!"
+    ) else if exist "!_all_oc_g!" (
+        echo.
+        call :configure_client "opencode" "!_cpy!"
+    )
+    if exist "!_all_goose!" (
+        echo.
+        call :configure_client "goose" "!_cpy!"
+    )
+)
+goto :eof
+
+rem ════════════════════════════════════════════════════════
+rem Subroutine: _configure_mcp_json <config_path> <python_path> <server_name>
+rem Writes standard mcpServers format (used by desktop, code-file, kilo)
+:_configure_mcp_json
+set "_mcfg=%~1"
+set "_mpy=%~2"
+set "_mname=%~3"
+
+if "%UNINSTALL%"=="true" (
+    if not exist "!_mcfg!" ( echo [INFO] Config not found, nothing to remove & goto :eof )
+    for /f "tokens=*" %%T in ('powershell -command "Get-Date -Format yyyyMMddHHmmss"') do set "_ts=%%T"
+    copy /y "!_mcfg!" "!_mcfg!.backup.!_ts!" >nul
+    "!_mpy!" -c "import json,sys,os; cfg=json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1]) else {}; s=cfg.get('mcpServers',{}); (s.pop(sys.argv[2],None) or True) and s.__class__; open(sys.argv[1],'w').write(json.dumps(cfg,indent=2)+'\n'); print('[OK] Removed ' + sys.argv[2] + ' from config') if sys.argv[2] not in s else print('[INFO] Entry not found')" "!_mcfg!" "!_mname!" 2>nul
+    goto :eof
+)
+
+if exist "!_mcfg!" (
+    for /f "tokens=*" %%T in ('powershell -command "Get-Date -Format yyyyMMddHHmmss"') do set "_ts=%%T"
+    copy /y "!_mcfg!" "!_mcfg!.backup.!_ts!" >nul
+    echo [INFO] Backed up existing config
+)
+
+set "_tmp_merge=%TEMP%\mememo_merge_%RANDOM%.py"
+echo import json, sys, os > "!_tmp_merge!"
+echo config_path = os.path.abspath(sys.argv[1]) >> "!_tmp_merge!"
+echo python_path = sys.executable >> "!_tmp_merge!"
+echo name = sys.argv[2] >> "!_tmp_merge!"
+echo try: >> "!_tmp_merge!"
+echo     with open(config_path) as f: config = json.load(f) >> "!_tmp_merge!"
+echo except (FileNotFoundError, json.JSONDecodeError): config = {} >> "!_tmp_merge!"
+echo config.setdefault('mcpServers', {}) >> "!_tmp_merge!"
+echo config['mcpServers'][name] = {'command': python_path, 'args': ['-m', name]} >> "!_tmp_merge!"
+echo d = os.path.dirname(config_path) >> "!_tmp_merge!"
+echo if d: os.makedirs(d, exist_ok=True) >> "!_tmp_merge!"
+echo with open(config_path, 'w') as f: json.dump(config, f, indent=2); f.write('\n') >> "!_tmp_merge!"
+"!_mpy!" "!_tmp_merge!" "!_mcfg!" "!_mname!"
+del /f /q "!_tmp_merge!" 2>nul
+echo [OK] MCP config updated at !_mcfg!
+goto :eof
+
+rem ════════════════════════════════════════════════════════
+rem Subroutine: _configure_opencode_json <config_path> <python_path>
+:_configure_opencode_json
+set "_ocfg=%~1"
+set "_opy=%~2"
+
+if "%UNINSTALL%"=="true" (
+    if not exist "!_ocfg!" ( echo [INFO] Config not found, nothing to remove & goto :eof )
+    for /f "tokens=*" %%T in ('powershell -command "Get-Date -Format yyyyMMddHHmmss"') do set "_ts=%%T"
+    copy /y "!_ocfg!" "!_ocfg!.backup.!_ts!" >nul
+    set "_tmp_rm=%TEMP%\mememo_rm_oc_%RANDOM%.py"
+    echo import json, sys, os > "!_tmp_rm!"
+    echo cfg=json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1]) else {} >> "!_tmp_rm!"
+    echo mcp=cfg.get('mcp',{}) >> "!_tmp_rm!"
+    echo if 'mememo' in mcp: >> "!_tmp_rm!"
+    echo     del mcp['mememo'] >> "!_tmp_rm!"
+    echo     open(sys.argv[1],'w').write(json.dumps(cfg,indent=2)+'\n') >> "!_tmp_rm!"
+    echo     print('[OK] Removed mememo from config') >> "!_tmp_rm!"
+    echo else: print('[INFO] mememo not found in config') >> "!_tmp_rm!"
+    "!_opy!" "!_tmp_rm!" "!_ocfg!"
+    del /f /q "!_tmp_rm!" 2>nul
+    goto :eof
+)
+
+if exist "!_ocfg!" (
+    for /f "tokens=*" %%T in ('powershell -command "Get-Date -Format yyyyMMddHHmmss"') do set "_ts=%%T"
+    copy /y "!_ocfg!" "!_ocfg!.backup.!_ts!" >nul
+    echo [INFO] Backed up existing config
+)
+
+set "_tmp_oc=%TEMP%\mememo_merge_oc_%RANDOM%.py"
+echo import json, sys, os > "!_tmp_oc!"
+echo config_path = os.path.abspath(sys.argv[1]) >> "!_tmp_oc!"
+echo python_path = sys.executable >> "!_tmp_oc!"
+echo try: >> "!_tmp_oc!"
+echo     with open(config_path) as f: config = json.load(f) >> "!_tmp_oc!"
+echo except (FileNotFoundError, json.JSONDecodeError): config = {} >> "!_tmp_oc!"
+echo config.setdefault('mcp', {}) >> "!_tmp_oc!"
+echo config['mcp']['mememo'] = {'type': 'local', 'command': [python_path, '-m', 'mememo']} >> "!_tmp_oc!"
+echo d = os.path.dirname(config_path) >> "!_tmp_oc!"
+echo if d: os.makedirs(d, exist_ok=True) >> "!_tmp_oc!"
+echo with open(config_path, 'w') as f: json.dump(config, f, indent=2); f.write('\n') >> "!_tmp_oc!"
+"!_opy!" "!_tmp_oc!" "!_ocfg!"
+del /f /q "!_tmp_oc!" 2>nul
+echo [OK] OpenCode MCP config updated at !_ocfg!
+goto :eof
+
+rem ════════════════════════════════════════════════════════
+rem Subroutine: _configure_goose_yaml <config_path> <python_path>
+:_configure_goose_yaml
+set "_gcfg=%~1"
+set "_gpy=%~2"
+
+if "%UNINSTALL%"=="true" (
+    if not exist "!_gcfg!" ( echo [INFO] Config not found, nothing to remove & goto :eof )
+    for /f "tokens=*" %%T in ('powershell -command "Get-Date -Format yyyyMMddHHmmss"') do set "_ts=%%T"
+    copy /y "!_gcfg!" "!_gcfg!.backup.!_ts!" >nul
+    set "_tmp_rg=%TEMP%\mememo_rm_goose_%RANDOM%.py"
+    echo import sys, os > "!_tmp_rg!"
+    echo try: import yaml >> "!_tmp_rg!"
+    echo except ImportError: print('[WARN] PyYAML not available'); sys.exit(0) >> "!_tmp_rg!"
+    echo cfg_path = sys.argv[1] >> "!_tmp_rg!"
+    echo if not os.path.exists(cfg_path): sys.exit(0) >> "!_tmp_rg!"
+    echo with open(cfg_path) as f: config = yaml.safe_load(f) or {} >> "!_tmp_rg!"
+    echo ext = config.get('extensions', {}) >> "!_tmp_rg!"
+    echo if 'mememo' in ext: >> "!_tmp_rg!"
+    echo     del ext['mememo'] >> "!_tmp_rg!"
+    echo     with open(cfg_path, 'w') as f: yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False) >> "!_tmp_rg!"
+    echo     print('[OK] Removed mememo from Goose config') >> "!_tmp_rg!"
+    echo else: print('[INFO] mememo not found in config') >> "!_tmp_rg!"
+    "!_gpy!" "!_tmp_rg!" "!_gcfg!"
+    del /f /q "!_tmp_rg!" 2>nul
+    goto :eof
+)
+
+if exist "!_gcfg!" (
+    for /f "tokens=*" %%T in ('powershell -command "Get-Date -Format yyyyMMddHHmmss"') do set "_ts=%%T"
+    copy /y "!_gcfg!" "!_gcfg!.backup.!_ts!" >nul
+    echo [INFO] Backed up existing config
+)
+
+set "_tmp_gg=%TEMP%\mememo_merge_goose_%RANDOM%.py"
+echo import sys, os > "!_tmp_gg!"
+echo try: import yaml >> "!_tmp_gg!"
+echo except ImportError: >> "!_tmp_gg!"
+echo     py = sys.executable >> "!_tmp_gg!"
+echo     print('[WARN] PyYAML not available. Add manually to config.yaml:') >> "!_tmp_gg!"
+echo     print('extensions:') >> "!_tmp_gg!"
+echo     print('  mememo:') >> "!_tmp_gg!"
+echo     print('    name: mememo') >> "!_tmp_gg!"
+echo     print('    type: stdio') >> "!_tmp_gg!"
+echo     print('    cmd: ' + py) >> "!_tmp_gg!"
+echo     print('    args: [\"-m\", \"mememo\"]') >> "!_tmp_gg!"
+echo     print('    enabled: true') >> "!_tmp_gg!"
+echo     sys.exit(0) >> "!_tmp_gg!"
+echo config_path = os.path.abspath(sys.argv[1]) >> "!_tmp_gg!"
+echo python_path = sys.executable >> "!_tmp_gg!"
+echo try: >> "!_tmp_gg!"
+echo     with open(config_path) as f: config = yaml.safe_load(f) or {} >> "!_tmp_gg!"
+echo except FileNotFoundError: config = {} >> "!_tmp_gg!"
+echo config.setdefault('extensions', {}) >> "!_tmp_gg!"
+echo config['extensions']['mememo'] = {'name': 'mememo', 'type': 'stdio', 'cmd': python_path, 'args': ['-m', 'mememo'], 'enabled': True} >> "!_tmp_gg!"
+echo d = os.path.dirname(config_path) >> "!_tmp_gg!"
+echo if d: os.makedirs(d, exist_ok=True) >> "!_tmp_gg!"
+echo with open(config_path, 'w') as f: yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False) >> "!_tmp_gg!"
+"!_gpy!" "!_tmp_gg!" "!_gcfg!"
+del /f /q "!_tmp_gg!" 2>nul
+echo [OK] Goose MCP config updated at !_gcfg!
+goto :eof
+
+rem ════════════════════════════════════════════════════════
 :run_warmup
     echo [INFO] Pre-warming bytecode cache and embedding model (this runs once)...
     python warmup.py
@@ -285,16 +593,29 @@ goto end
     echo Usage: install.bat [OPTIONS]
     echo.
     echo Options:
-    echo   (none)            Install for production
-    echo   --dev             Install with dev/test dependencies
-    echo   --configure[=AI]  Auto-configure AI assistant MCP server
-    echo                     Supported: claude (Claude Desktop), claudecli (Claude Code CLI)
-    echo                     Default: claude
-    echo                     Example: --configure=claude
-    echo                              --configure=claudecli
-    echo   --upgrade         Upgrade existing installation
-    echo   --uninstall       Remove mememo and virtual environment
-    echo   --help            Show this help
+    echo   -c, --client TYPE   MCP client: desktop, code, kilo, opencode, goose, all
+    echo   -f, --force         Skip prompts, overwrite existing config
+    echo   -u, --uninstall     Remove mememo from MCP client config and virtual environment
+    echo       --upgrade       Upgrade existing installation
+    echo       --global        Use global config path (applies to: code, opencode, all)
+    echo       --skip-test     Skip warmup validation step
+    echo       --dev           Install dev/test dependencies
+    echo   -h, --help          Show this help
+    echo.
+    echo Backward-compatible aliases:
+    echo   --configure=claude      same as -c desktop
+    echo   --configure=claudecli   same as -c code
+    echo.
+    echo Examples:
+    echo   install.bat -c desktop         Configure Claude Desktop
+    echo   install.bat -c code            Configure Claude Code
+    echo   install.bat -c kilo            Configure Kilo Code
+    echo   install.bat -c opencode        Configure OpenCode (workspace)
+    echo   install.bat -c opencode --global Configure OpenCode (global)
+    echo   install.bat -c goose           Configure Goose
+    echo   install.bat -c all             Configure all detected clients
+    echo   install.bat --upgrade          Upgrade existing installation
+    echo   install.bat -u -c all          Uninstall from all client configs
     goto end
 
 :end
