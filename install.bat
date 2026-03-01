@@ -163,7 +163,9 @@ rem ═════════════════════════�
         echo [ERROR] Installation failed
         exit /b 1
     )
-    for /f %%v in ('python -c "import mememo; print(mememo.__version__)"') do echo [OK] mememo %%v installed with dev/test tools
+    for /f %%v in ('python -c "from importlib.metadata import version; print(version(\"mememo\"))"') do set "_inst_ver=%%v"
+    echo [OK] mememo !_inst_ver! installed with dev/test tools
+    echo !_inst_ver!>"%VENV_DIR%\.mememo_installed"
     goto install_done
 
 :install_prod
@@ -173,7 +175,9 @@ rem ═════════════════════════�
         echo [ERROR] Installation failed
         exit /b 1
     )
-    for /f %%v in ('python -c "import mememo; print(mememo.__version__)"') do echo [OK] mememo %%v installed
+    for /f %%v in ('python -c "from importlib.metadata import version; print(version(\"mememo\"))"') do set "_inst_ver=%%v"
+    echo [OK] mememo !_inst_ver! installed
+    echo !_inst_ver!>"%VENV_DIR%\.mememo_installed"
     goto install_done
 
 :install_done
@@ -264,7 +268,9 @@ rem ═════════════════════════�
     call %VENV_DIR%\Scripts\activate.bat
     python -m pip install --upgrade pip
     pip install --upgrade -e ".[dev]"
-    echo [OK] mememo upgraded
+    for /f %%v in ('python -c "from importlib.metadata import version; print(version(\"mememo\"))"') do set "_inst_ver=%%v"
+    echo [OK] mememo !_inst_ver! upgraded
+    echo !_inst_ver!>"%VENV_DIR%\.mememo_installed"
     echo.
     if not "%SKIP_TEST%"=="true" call :run_warmup
 
