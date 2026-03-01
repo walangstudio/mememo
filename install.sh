@@ -270,34 +270,74 @@ with open(config_path, 'w') as f:
 }
 
 _configure_code() {
+    local python_path="$1"
+
+    # ~/.claude.json takes precedence (Linux default); fall back to ~/.claude/mcp.json
+    local config_path
+    if [[ -f "$HOME/.claude.json" ]]; then
+        config_path="$HOME/.claude.json"
+    else
+        config_path="$HOME/.claude/mcp.json"
+    fi
+
+    log_info "Config: $config_path"
+
     if [[ "$UNINSTALL" == true ]]; then
-        if command -v claude &>/dev/null; then
-            claude mcp remove mememo --scope user &>/dev/null && \
-                log_success "Removed mememo from Claude Code (user scope)" || \
-                log_info "mememo not found in Claude Code config"
-        else
-            log_warn "Claude CLI not found; remove mememo manually: claude mcp remove mememo --scope user"
-        fi
+        [[ -f "$config_path" ]] || { log_info "Config not found, nothing to remove"; return 0; }
+        cp "$config_path" "$config_path.backup.$(date +%Y%m%d%H%M%S)"
+        python3 -c "
+import json, sys
+config_path = sys.argv[1]
+try:
+    with open(config_path) as f:
+        config = json.load(f)
+except: config = {}
+servers = config.get('mcpServers', {})
+if 'mememo' in servers:
+    del servers['mememo']
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+        f.write('\n')
+    print('[OK] Removed mememo from Claude Code config')
+else:
+    print('[INFO] mememo not found in config')
+" "$config_path"
         return 0
     fi
 
-    local python_path="$1"
+    mkdir -p "$(dirname "$config_path")"
 
-    if ! command -v claude &>/dev/null; then
-        log_error "Claude CLI not found. Install it first: https://claude.ai/download"
-        return 1
+    if [[ -f "$config_path" ]]; then
+        cp "$config_path" "$config_path.backup.$(date +%Y%m%d%H%M%S)"
+        log_info "Backed up existing config"
     fi
 
-    claude mcp remove mememo --scope user &>/dev/null || true
-    claude mcp add --scope user mememo -- "$python_path" -m mememo
-    if [ $? -eq 0 ]; then
-        log_success "Claude Code MCP server configured (user scope)"
-        log_info "Verify with: claude mcp list"
-    else
-        log_warn "Auto-configuration failed. Add manually:"
-        echo "  claude mcp add --scope user mememo -- $python_path -m mememo"
-        return 1
-    fi
+    python3 -c "
+import json, sys, os
+
+config_path = sys.argv[1]
+python_path = sys.argv[2]
+
+try:
+    with open(config_path) as f:
+        config = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    config = {}
+
+config.setdefault('mcpServers', {})
+config['mcpServers']['mememo'] = {
+    'command': python_path,
+    'args': ['-m', 'mememo']
+}
+
+os.makedirs(os.path.dirname(os.path.abspath(config_path)), exist_ok=True)
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+" "$config_path" "$python_path"
+
+    log_success "Claude Code configured at $config_path"
+    log_info "Verify with: claude mcp list"
 }
 
 _configure_kilo() {

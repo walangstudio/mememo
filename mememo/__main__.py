@@ -7,8 +7,12 @@ Usage:
 """
 
 import argparse
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
-from mememo import __version__
+try:
+    __version__ = _pkg_version("mememo")
+except PackageNotFoundError:
+    __version__ = "unknown"
 
 from .server import run
 
