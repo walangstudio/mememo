@@ -34,24 +34,24 @@ show_help() {
 Usage: bash install.sh [OPTIONS]
 
 Options:
-  -c, --client TYPE   MCP client: desktop, code, kilo, opencode, goose, all (default: none)
+  -c, --client TYPE   MCP client: claudedesktop, claude, kilo, opencode, goose, all (default: none)
   -f, --force         Skip prompts, overwrite existing config
   -u, --uninstall     Remove mememo from MCP client config and virtual environment
       --upgrade       Upgrade existing installation
-      --global        Use global config path (applies to: code, opencode, all)
+      --global        Use global config path (applies to: claude, opencode, all)
       --skip-test     Skip warmup validation step
       --dev           Install dev/test dependencies
   -h, --help          Show this help
 
 Backward-compatible aliases (still supported):
-  --configure=claude      same as -c desktop
-  --configure=claudecli   same as -c code
-  --configure             same as -c desktop
+  --configure=claude      same as -c claudedesktop
+  --configure=claudecli   same as -c claude
+  --configure             same as -c claudedesktop
 
 Examples:
   bash install.sh                    Install (no MCP config written)
-  bash install.sh -c desktop         Install + configure Claude Desktop
-  bash install.sh -c code            Install + configure Claude Code
+  bash install.sh -c claudedesktop         Install + configure Claude Desktop
+  bash install.sh -c claude                Install + configure Claude Code
   bash install.sh -c kilo            Install + configure Kilo Code
   bash install.sh -c opencode        Install + configure OpenCode (workspace)
   bash install.sh -c opencode --global Install + configure OpenCode (global)
@@ -82,14 +82,14 @@ while [[ $# -gt 0 ]]; do
         --dev)
             DEV_MODE=true; shift ;;
         --configure=claude)
-            CLIENT="desktop"; CLIENT_EXPLICIT=true; shift ;;
+            CLIENT="claudedesktop"; CLIENT_EXPLICIT=true; shift ;;
         --configure=claudecli)
-            CLIENT="code"; CLIENT_EXPLICIT=true; shift ;;
+            CLIENT="claude"; CLIENT_EXPLICIT=true; shift ;;
         --configure=*)
             log_error "Unknown --configure value: ${1#*=}. Supported: claude, claudecli"
             exit 1 ;;
         --configure)
-            CLIENT="desktop"; CLIENT_EXPLICIT=true; shift ;;
+            CLIENT="claudedesktop"; CLIENT_EXPLICIT=true; shift ;;
         -h|--help)
             show_help ;;
         *)
@@ -101,8 +101,8 @@ done
 
 if [[ "$GLOBAL_CONFIG" == true && -n "$CLIENT" ]]; then
     case "$CLIENT" in
-        code|both|opencode|all) ;;
-        *) log_error "--global is only valid with -c code, opencode, both, or all"; exit 1 ;;
+        claude|both|opencode|all) ;;
+        *) log_error "--global is only valid with -c claude, opencode, both, or all"; exit 1 ;;
     esac
 fi
 
@@ -272,13 +272,7 @@ with open(config_path, 'w') as f:
 _configure_code() {
     local python_path="$1"
 
-    # ~/.claude.json takes precedence (Linux default); fall back to ~/.claude/mcp.json
-    local config_path
-    if [[ -f "$HOME/.claude.json" ]]; then
-        config_path="$HOME/.claude.json"
-    else
-        config_path="$HOME/.claude/mcp.json"
-    fi
+    local config_path="$HOME/.claude.json"
 
     log_info "Config: $config_path"
 
@@ -553,11 +547,11 @@ configure_client() {
     local python_path="$2"
 
     case "$client_type" in
-        desktop)
+        claudedesktop)
             log_info "Client: Claude Desktop"
             _configure_desktop "$python_path"
             ;;
-        code)
+        claude)
             log_info "Client: Claude Code"
             _configure_code "$python_path"
             ;;
@@ -574,14 +568,14 @@ configure_client() {
             _configure_goose "$python_path"
             ;;
         both)
-            configure_client "desktop" "$python_path"
+            configure_client "claudedesktop" "$python_path"
             echo ""
-            configure_client "code" "$python_path"
+            configure_client "claude" "$python_path"
             ;;
         all)
-            configure_client "desktop" "$python_path"
+            configure_client "claudedesktop" "$python_path"
             echo ""
-            configure_client "code" "$python_path"
+            configure_client "claude" "$python_path"
             local _kilo_path _opencode_ws _opencode_global _goose_path
             _kilo_path="$(get_kilo_config_path)"
             _opencode_ws="$SCRIPT_DIR/../opencode.json"
@@ -601,7 +595,7 @@ configure_client() {
             fi
             ;;
         *)
-            log_error "Unknown client type: $client_type. Valid: desktop, code, kilo, opencode, goose, both, all"
+            log_error "Unknown client type: $client_type. Valid: claudedesktop, claude, kilo, opencode, goose, both, all"
             exit 1
             ;;
     esac
@@ -683,8 +677,8 @@ if [ -f "$MARKER" ] && [ -d "$VENV_DIR" ] && [[ "$FORCE" != true ]]; then
         configure_client "$CLIENT" "$VENV_PYTHON"
     else
         echo ""
-        log_info "Run 'bash install.sh -c desktop' to configure Claude Desktop"
-        log_info "     'bash install.sh -c code'    to configure Claude Code"
+        log_info "Run 'bash install.sh -c claudedesktop' to configure Claude Desktop"
+        log_info "     'bash install.sh -c claude'    to configure Claude Code"
     fi
     echo ""
     exit 0
@@ -709,8 +703,8 @@ if [[ "$CLIENT_EXPLICIT" == true ]]; then
     configure_client "$CLIENT" "$VENV_PYTHON"
 else
     echo ""
-    log_info "Tip: Run 'bash install.sh -c desktop' to auto-configure Claude Desktop"
-    log_info "     Run 'bash install.sh -c code'    to auto-configure Claude Code"
+    log_info "Tip: Run 'bash install.sh -c claudedesktop' to auto-configure Claude Desktop"
+    log_info "     Run 'bash install.sh -c claude'    to auto-configure Claude Code"
 fi
 
 echo ""
@@ -730,16 +724,16 @@ Dev environment ready:
      pytest tests/ -v
 
   3. Configure your AI assistant (if not done):
-     bash install.sh -c desktop   (Claude Desktop)
-     bash install.sh -c code      (Claude Code CLI)
+     bash install.sh -c claudedesktop   (Claude Desktop)
+     bash install.sh -c claude          (Claude Code CLI)
 EOF
 elif [[ "$CLIENT_EXPLICIT" == true ]]; then
     case "$CLIENT" in
-        code)
+        claude)
             echo "  mememo is ready in Claude Code CLI."
             echo "  Verify with: claude mcp list"
             ;;
-        desktop)
+        claudedesktop)
             echo "  mememo is ready. Restart Claude Desktop to activate."
             ;;
         *)
@@ -751,8 +745,8 @@ elif [[ "$CLIENT_EXPLICIT" == true ]]; then
 else
     cat <<EOF
   mememo is installed but not yet connected to an AI assistant.
-  Run: bash install.sh -c desktop   (Claude Desktop)
-       bash install.sh -c code      (Claude Code CLI)
+  Run: bash install.sh -c claudedesktop   (Claude Desktop)
+       bash install.sh -c claude          (Claude Code CLI)
        bash install.sh -c kilo      (Kilo Code)
        bash install.sh -c opencode  (OpenCode)
        bash install.sh -c goose     (Goose)

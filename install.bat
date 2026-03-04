@@ -78,13 +78,13 @@ shift
 goto :parse_args
 
 :pa_cfg_claude
-set "CLIENT=desktop"
+set "CLIENT=claudedesktop"
 set "CLIENT_EXPLICIT=true"
 shift
 goto :parse_args
 
 :pa_cfg_claudecli
-set "CLIENT=code"
+set "CLIENT=claude"
 set "CLIENT_EXPLICIT=true"
 shift
 goto :parse_args
@@ -92,12 +92,12 @@ goto :parse_args
 :end_parse
 
 if "%GLOBAL_CONFIG%"=="true" (
-    if not "%CLIENT%"=="code" (
+    if not "%CLIENT%"=="claude" (
         if not "%CLIENT%"=="both" (
             if not "%CLIENT%"=="opencode" (
                 if not "%CLIENT%"=="all" (
                     if not "%CLIENT%"=="" (
-                        echo [ERROR] --global is only valid with -c code, opencode, both, or all
+                        echo [ERROR] --global is only valid with -c claude, opencode, both, or all
                         exit /b 1
                     )
                 )
@@ -131,8 +131,8 @@ rem ═════════════════════════�
                 for /f "usebackq delims=" %%v in ("%VENV_DIR%\.mememo_installed") do set "_inst_ver=%%v"
                 echo [INFO] mememo !_inst_ver! already installed. Use --upgrade to update.
                 if "%CLIENT_EXPLICIT%"=="true" goto :do_configure_only
-                echo [INFO] Run 'install.bat -c desktop' to configure Claude Desktop
-                echo [INFO]      'install.bat -c code'    to configure Claude Code
+                echo [INFO] Run 'install.bat -c claudedesktop' to configure Claude Desktop
+                echo [INFO]      'install.bat -c claude'    to configure Claude Code
                 echo.
                 goto end
             )
@@ -188,8 +188,8 @@ rem ═════════════════════════�
         echo.
         call :do_configure
     ) else (
-        echo [INFO] Tip: Run 'install.bat -c desktop' to auto-configure Claude Desktop
-        echo [INFO]      Run 'install.bat -c code'    to auto-configure Claude Code CLI
+        echo [INFO] Tip: Run 'install.bat -c claudedesktop' to auto-configure Claude Desktop
+        echo [INFO]      Run 'install.bat -c claude'    to auto-configure Claude Code CLI
     )
 
     echo.
@@ -212,13 +212,13 @@ rem ═════════════════════════�
     echo      pytest tests/ -v
     echo.
     echo   3. Configure your AI assistant (if not done):
-    echo      install.bat -c desktop   (Claude Desktop)
-    echo      install.bat -c code      (Claude Code CLI)
+    echo      install.bat -c claudedesktop   (Claude Desktop)
+    echo      install.bat -c claude          (Claude Code CLI)
     echo.
     goto end
 
 :show_configured
-    if /i "%CLIENT%"=="code" (
+    if /i "%CLIENT%"=="claude" (
         echo   mememo is ready in Claude Code CLI.
         echo   Verify with: claude mcp list
     ) else (
@@ -231,8 +231,8 @@ rem ═════════════════════════�
 
 :show_not_configured
     echo   mememo is installed but not yet connected to an AI assistant.
-    echo   Run: install.bat -c desktop   (Claude Desktop)
-    echo        install.bat -c code      (Claude Code CLI)
+    echo   Run: install.bat -c claudedesktop   (Claude Desktop)
+    echo        install.bat -c claude          (Claude Code CLI)
     echo        install.bat -c kilo      (Kilo Code)
     echo        install.bat -c opencode  (OpenCode)
     echo        install.bat -c goose     (Goose)
@@ -323,8 +323,8 @@ rem ═════════════════════════�
 set "_cct=%~1"
 set "_cpy=%~2"
 
-if /i "!_cct!"=="desktop"  goto :cc_desktop
-if /i "!_cct!"=="code"     goto :cc_code
+if /i "!_cct!"=="claudedesktop"  goto :cc_desktop
+if /i "!_cct!"=="claude"         goto :cc_code
 if /i "!_cct!"=="kilo"     goto :cc_kilo
 if /i "!_cct!"=="opencode" goto :cc_opencode
 if /i "!_cct!"=="goose"    goto :cc_goose
@@ -393,15 +393,15 @@ call :_configure_goose_yaml "!_goose_cfg!" "!_cpy!"
 goto :eof
 
 :cc_both
-call :configure_client "desktop" "!_cpy!"
+call :configure_client "claudedesktop" "!_cpy!"
 echo.
-call :configure_client "code" "!_cpy!"
+call :configure_client "claude" "!_cpy!"
 goto :eof
 
 :cc_all
-call :configure_client "desktop" "!_cpy!"
+call :configure_client "claudedesktop" "!_cpy!"
 echo.
-call :configure_client "code" "!_cpy!"
+call :configure_client "claude" "!_cpy!"
 for %%I in ("%CD%") do set "_all_parent=%%~dpI"
 if "!_all_parent:~-1!"=="\" set "_all_parent=!_all_parent:~0,-1!"
 set "_all_kilo=!_all_parent!\.kilocode\mcp.json"
@@ -599,22 +599,22 @@ rem ═════════════════════════�
     echo Usage: install.bat [OPTIONS]
     echo.
     echo Options:
-    echo   -c, --client TYPE   MCP client: desktop, code, kilo, opencode, goose, all
+    echo   -c, --client TYPE   MCP client: claudedesktop, claude, kilo, opencode, goose, all
     echo   -f, --force         Skip prompts, overwrite existing config
     echo   -u, --uninstall     Remove mememo from MCP client config and virtual environment
     echo       --upgrade       Upgrade existing installation
-    echo       --global        Use global config path (applies to: code, opencode, all)
+    echo       --global        Use global config path (applies to: claude, opencode, all)
     echo       --skip-test     Skip warmup validation step
     echo       --dev           Install dev/test dependencies
     echo   -h, --help          Show this help
     echo.
     echo Backward-compatible aliases:
-    echo   --configure=claude      same as -c desktop
-    echo   --configure=claudecli   same as -c code
+    echo   --configure=claude      same as -c claudedesktop
+    echo   --configure=claudecli   same as -c claude
     echo.
     echo Examples:
-    echo   install.bat -c desktop         Configure Claude Desktop
-    echo   install.bat -c code            Configure Claude Code
+    echo   install.bat -c claudedesktop         Configure Claude Desktop
+    echo   install.bat -c claude                Configure Claude Code
     echo   install.bat -c kilo            Configure Kilo Code
     echo   install.bat -c opencode        Configure OpenCode (workspace)
     echo   install.bat -c opencode --global Configure OpenCode (global)
