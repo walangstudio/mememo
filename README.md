@@ -77,12 +77,30 @@ Unlike general-purpose AI memory solutions, mememo is **purpose-built for code**
 
 ```bash
 # Production
-bash install.sh                 # Linux/macOS
-install.bat                     # Windows
+bash install.sh                 # Linux/macOS (Claude Desktop)
+install.bat                     # Windows (Claude Desktop)
 
 # Development (includes testing tools)
 bash install.sh --dev           # Linux/macOS
 install.bat --dev               # Windows
+
+# Other clients
+bash install.sh -c claude                    # Claude Code (workspace-local)
+bash install.sh -c claude --global           # Claude Code (global)
+bash install.sh -c cursor                    # Cursor (workspace-local)
+bash install.sh -c cursor --global           # Cursor (global)
+bash install.sh -c windsurf                  # Windsurf (global only)
+bash install.sh -c vscode                    # VS Code (.vscode/mcp.json)
+bash install.sh -c gemini                    # Gemini CLI (workspace-local)
+bash install.sh -c gemini --global           # Gemini CLI (global)
+bash install.sh -c codex                     # OpenAI Codex CLI (workspace-local)
+bash install.sh -c codex --global            # OpenAI Codex CLI (global)
+bash install.sh -c zed                       # Zed (global)
+bash install.sh -c kilo                      # Kilo Code
+bash install.sh -c opencode                  # OpenCode (workspace-local)
+bash install.sh -c opencode --global         # OpenCode (global)
+bash install.sh -c goose                     # Goose
+bash install.sh -c all                       # all detected clients
 ```
 
 This creates a virtual environment at `.venv` and installs all dependencies.
@@ -131,8 +149,8 @@ install.bat                            # Windows
 #### Claude Desktop (auto-configure)
 
 ```bash
-bash install.sh -c desktop     # Linux/macOS
-install.bat -c desktop         # Windows
+bash install.sh -c claudedesktop     # Linux/macOS
+install.bat -c claudedesktop         # Windows
 ```
 
 Then **restart Claude Desktop** — mememo is launched automatically, no manual server start needed.
@@ -140,8 +158,8 @@ Then **restart Claude Desktop** — mememo is launched automatically, no manual 
 #### Claude Code CLI (auto-configure)
 
 ```bash
-bash install.sh -c code        # Linux/macOS
-install.bat -c code            # Windows
+bash install.sh -c claude        # Linux/macOS
+install.bat -c claude            # Windows
 ```
 
 Or manually:
@@ -157,6 +175,45 @@ claude mcp add --scope user mememo -- /path/to/mememo/.venv/bin/python -m mememo
 ```
 
 Verify it's registered: `claude mcp list`
+
+#### Cursor (auto-configure)
+
+```bash
+bash install.sh -c cursor        # workspace-local
+bash install.sh -c cursor --global  # global
+```
+
+#### Windsurf (auto-configure)
+
+```bash
+bash install.sh -c windsurf      # global only
+```
+
+#### VS Code (auto-configure)
+
+```bash
+bash install.sh -c vscode        # workspace-local .vscode/mcp.json
+```
+
+#### Gemini CLI (auto-configure)
+
+```bash
+bash install.sh -c gemini        # workspace-local
+bash install.sh -c gemini --global  # global
+```
+
+#### OpenAI Codex CLI (auto-configure)
+
+```bash
+bash install.sh -c codex         # workspace-local
+bash install.sh -c codex --global   # global
+```
+
+#### Zed (auto-configure)
+
+```bash
+bash install.sh -c zed           # global only
+```
 
 #### Kilo Code (auto-configure)
 
@@ -196,16 +253,112 @@ Configures all clients whose config files already exist. Desktop and Code are al
 
 | Client | `-c TYPE` | Config written | Notes |
 |--------|-----------|----------------|-------|
-| Claude Desktop | `desktop` | OS-specific `claude_desktop_config.json` | Restart required |
-| Claude Code | `code` | `~/.claude.json` (user scope via `claude mcp add`) | Use `--global` has no effect; already user scope |
+| Claude Desktop | `claudedesktop` | OS-specific `claude_desktop_config.json` | Restart required |
+| Claude Code | `claude` | `.mcp.json` (workspace) or user scope via `claude mcp add` | Use `--global` for user scope |
+| Cursor | `cursor` | `.cursor/mcp.json` or `~/.cursor/mcp.json` (global) | Use `--global` for global |
+| Windsurf | `windsurf` | `~/.codeium/windsurf/mcp_config.json` | Global only |
+| VS Code | `vscode` | `.vscode/mcp.json` | Workspace-local; global via VS Code settings UI |
+| Gemini CLI | `gemini` | `.gemini/settings.json` or `~/.gemini/settings.json` (global) | Use `--global` for global |
+| Codex CLI | `codex` | `.codex/config.toml` or `~/.codex/config.toml` (global) | TOML; use `--global` for global |
+| Zed | `zed` | `~/.config/zed/settings.json` | Global only |
 | Kilo Code | `kilo` | `.kilocode/mcp.json` | Workspace-local only |
-| OpenCode | `opencode` | `opencode.json` / `~/.config/opencode/opencode.json` | Use `--global` for user scope |
+| OpenCode | `opencode` | `opencode.json` / `~/.config/opencode/opencode.json` | Use `--global` for global |
 | Goose | `goose` | `~/.config/goose/config.yaml` | Global only |
-| All above | `all` | All existing configs | Skips clients not yet installed |
+| pi.dev | `pidev` | n/a | Prints manual instructions; no auto-config |
+| All above | `all` | All detected existing configs | Skips clients not yet installed |
 
 **Backward-compatible aliases** (still work):
-- `--configure=claude` → same as `-c desktop`
-- `--configure=claudecli` → same as `-c code`
+- `--configure=claude` → same as `-c claudedesktop`
+- `--configure=claudecli` → same as `-c claude`
+
+### Installer Flags
+
+```
+  -c, --client TYPE   claudedesktop, claude, cursor, windsurf, vscode, gemini, codex,
+                      zed, kilo, opencode, goose, pidev, all  (default: none)
+  -f, --force         Skip prompts, overwrite existing config
+  -u, --uninstall     Remove from MCP client config and virtual environment
+      --upgrade       Upgrade existing installation (alias: --update)
+      --status        Show where this server is currently installed
+      --global        Use global config path (claude, cursor, gemini, codex, opencode)
+      --skip-test     Skip warmup validation step
+      --dev           Install dev/test dependencies
+  -h, --help          Show this help
+```
+
+Check install status:
+```bash
+bash install.sh --status
+```
+
+Upgrade (pull the latest source first, or re-download and extract, then):
+```bash
+bash install.sh --upgrade
+bash install.sh --upgrade -c all   # also reconfigure all clients
+```
+
+### Manual MCP Config
+
+Use absolute paths. Linux/macOS python: `/path/to/mememo/.venv/bin/python` — Windows: `C:\path\to\mememo\.venv\Scripts\python.exe`
+
+#### Claude Desktop
+
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "mememo": {
+      "command": "/absolute/path/to/mememo/.venv/bin/python",
+      "args": ["-m", "mememo"]
+    }
+  }
+}
+```
+
+#### Cursor
+
+`.cursor/mcp.json` (workspace) or `~/.cursor/mcp.json` (global):
+```json
+{
+  "mcpServers": {
+    "mememo": {
+      "command": "/absolute/path/to/mememo/.venv/bin/python",
+      "args": ["-m", "mememo"]
+    }
+  }
+}
+```
+
+#### Windsurf
+
+`~/.codeium/windsurf/mcp_config.json`:
+```json
+{
+  "mcpServers": {
+    "mememo": {
+      "command": "/absolute/path/to/mememo/.venv/bin/python",
+      "args": ["-m", "mememo"]
+    }
+  }
+}
+```
+
+#### VS Code
+
+`.vscode/mcp.json` in your workspace root (uses `servers`, not `mcpServers`):
+```json
+{
+  "servers": {
+    "mememo": {
+      "type": "stdio",
+      "command": "/absolute/path/to/mememo/.venv/bin/python",
+      "args": ["-m", "mememo"]
+    }
+  }
+}
+```
 
 #### VS Code — Cline
 
@@ -221,7 +374,7 @@ Open Cline extension settings → MCP Servers → Add:
 
 #### VS Code — Continue.dev
 
-Add to `~/.continue/config.json` under `mcpServers`:
+`~/.continue/config.json` under `mcpServers`:
 ```json
 {
   "mcpServers": [
@@ -234,9 +387,9 @@ Add to `~/.continue/config.json` under `mcpServers`:
 }
 ```
 
-#### Cursor
+#### Gemini CLI
 
-Add to `~/.cursor/mcp.json` (create if it doesn't exist):
+`.gemini/settings.json` (workspace) or `~/.gemini/settings.json` (global):
 ```json
 {
   "mcpServers": {
@@ -248,11 +401,75 @@ Add to `~/.cursor/mcp.json` (create if it doesn't exist):
 }
 ```
 
----
+#### OpenAI Codex CLI
 
-> **Path reference**:
-> - **Linux/macOS**: `/path/to/mememo/.venv/bin/python`
-> - **Windows**: `C:\path\to\mememo\.venv\Scripts\python.exe`
+`.codex/config.toml` (workspace) or `~/.codex/config.toml` (global):
+```toml
+[mcp_servers.mememo]
+command = "/absolute/path/to/mememo/.venv/bin/python -m mememo"
+startup_timeout_sec = 30
+tool_timeout_sec = 300
+enabled = true
+```
+
+#### Zed
+
+`~/.config/zed/settings.json`:
+```json
+{
+  "context_servers": {
+    "mememo": {
+      "command": {
+        "path": "/absolute/path/to/mememo/.venv/bin/python",
+        "args": ["-m", "mememo"],
+        "env": {}
+      }
+    }
+  }
+}
+```
+
+#### Kilo Code
+
+`.kilocode/mcp.json` in your workspace root:
+```json
+{
+  "mcpServers": {
+    "mememo": {
+      "command": "/absolute/path/to/mememo/.venv/bin/python",
+      "args": ["-m", "mememo"]
+    }
+  }
+}
+```
+
+#### OpenCode
+
+`opencode.json` (workspace) or `~/.config/opencode/opencode.json` (global):
+```json
+{
+  "mcp": {
+    "mememo": {
+      "command": "/absolute/path/to/mememo/.venv/bin/python",
+      "args": ["-m", "mememo"]
+    }
+  }
+}
+```
+
+#### Goose
+
+`~/.config/goose/config.yaml`:
+```yaml
+extensions:
+  mememo:
+    type: stdio
+    cmd: /absolute/path/to/mememo/.venv/bin/python
+    args:
+      - -m
+      - mememo
+    enabled: true
+```
 
 ### Available MCP Tools
 
