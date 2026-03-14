@@ -35,7 +35,23 @@ class GitContext(BaseModel):
 
 
 # Memory content types
-MemoryContentType = Literal["code_snippet", "context", "summary", "relationship"]
+MemoryContentType = Literal[
+    "code_snippet",
+    "context",
+    "summary",
+    "relationship",
+    "decision",
+    "analysis",
+    "conversation",
+]
+
+# Types tied to source files — staled when the file changes in a commit
+CODE_MEMORY_TYPES: frozenset[str] = frozenset({"code_snippet", "relationship"})
+
+# Types that survive code changes — decisions, analysis, and conversation notes persist
+PERSISTENT_MEMORY_TYPES: frozenset[str] = frozenset(
+    {"context", "summary", "decision", "analysis", "conversation"}
+)
 
 
 class MemoryContent(BaseModel):
@@ -65,6 +81,8 @@ class MemoryMetadata(BaseModel):
     token_count: int = Field(ge=0, description="Number of tokens in content")
     embedding_shard: int | None = Field(None, description="FAISS shard number")
     embedding_index: int | None = Field(None, description="Index within shard")
+    stale: bool = Field(default=False, description="Source file changed since this memory was created")
+    stale_reason: str | None = Field(None, description="Why this memory was marked stale")
 
 
 class MemoryRelationships(BaseModel):
@@ -124,7 +142,11 @@ class MemoryFilters(BaseModel):
     file_path: str | None = None
     tags: list[str] | None = None
     type: MemoryContentType | None = None
+    language: str | None = None
+    function_name: str | None = None
+    class_name: str | None = None
     cross_branch: bool = Field(default=False, description="Search across all branches")
+    include_stale: bool = Field(default=False, description="Include stale memories in results")
     limit: int = Field(default=100, ge=1, le=1000)
     offset: int = Field(default=0, ge=0)
     sort_by: Literal["date", "file", "type"] = Field(default="date")
@@ -142,6 +164,7 @@ class SearchParams(BaseModel):
     cross_branch: bool = Field(default=False, description="Search across all branches")
     repo_id: str | None = Field(None, description="Filter by repository")
     branch: str | None = Field(None, description="Filter by branch")
+    include_stale: bool = Field(default=False, description="Include stale memories in results")
 
 
 class SummarizeParams(BaseModel):

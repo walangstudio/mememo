@@ -42,6 +42,7 @@ async def list_memories(
             file_path=params.file_path,
             function_name=params.function_name,
             class_name=params.class_name,
+            include_stale=params.include_stale,
         )
 
         # Find memories via memory manager

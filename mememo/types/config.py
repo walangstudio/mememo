@@ -21,9 +21,7 @@ class StorageConfig(BaseModel):
     @classmethod
     def expand_path(cls, v):
         """Expand ~ and environment variables in path."""
-        if isinstance(v, str):
-            return Path(v).expanduser().resolve()
-        return v
+        return Path(v).expanduser().resolve()
 
 
 class EmbeddingConfig(BaseModel):
@@ -71,9 +69,6 @@ class SecurityConfig(BaseModel):
     enable_encryption: bool = Field(default=False, description="Enable content encryption")
     encryption_key: str | None = Field(None, description="Encryption key (never commit!)")
     enable_audit_log: bool = Field(default=False, description="Enable audit logging")
-    network_detection: bool = Field(
-        default=False, description="Detect/block external network calls"
-    )
     secrets_detection: bool = Field(default=True, description="Scan for secrets before storing")
     auto_sanitize: bool = Field(default=False, description="Auto-redact secrets vs reject")
 
@@ -164,7 +159,6 @@ class Config(BaseModel):
                 enable_encryption=os.getenv("MEMEMO_ENABLE_ENCRYPTION", "false").lower() == "true",
                 encryption_key=os.getenv("MEMEMO_ENCRYPTION_KEY"),
                 enable_audit_log=os.getenv("MEMEMO_ENABLE_AUDIT_LOG", "false").lower() == "true",
-                network_detection=os.getenv("MEMEMO_NETWORK_DETECTION", "false").lower() == "true",
                 secrets_detection=os.getenv("MEMEMO_SECRETS_DETECTION", "true").lower() == "true",
                 auto_sanitize=os.getenv("MEMEMO_AUTO_SANITIZE", "false").lower() == "true",
             ),

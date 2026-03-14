@@ -1,14 +1,15 @@
 """
 MCP tools for mememo.
 
-9 tools for memory operations:
-- store_memory: Store code snippets, context, summaries
+10 tools for memory operations:
+- store_memory: Store code snippets, decisions, analysis, conversation notes
 - retrieve_memory: Get memory by ID
-- search_similar: Semantic similarity search
-- list_memories: List with filters
+- search_similar: Semantic similarity search (excludes stale by default)
+- list_memories: List with filters (excludes stale by default)
 - summarize_context: Hierarchical summaries
 - delete_memory: Delete by ID
-- index_repository: Batch indexing
+- index_repository: Batch indexing (records last indexed commit)
+- sync_commits: Patch memories to reflect new commits
 - check_memory: Get statistics
 - refresh_memory: Update existing memory
 """
@@ -22,6 +23,7 @@ from .retrieve_memory import retrieve_memory
 from .search_similar import search_similar
 from .store_memory import store_memory
 from .summarize_context import summarize_context
+from .sync_commits import sync_commits
 
 __all__ = [
     "store_memory",
@@ -31,6 +33,7 @@ __all__ = [
     "summarize_context",
     "delete_memory",
     "index_repository",
+    "sync_commits",
     "check_memory",
     "refresh_memory",
 ]

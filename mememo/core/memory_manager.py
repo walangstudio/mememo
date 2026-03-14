@@ -241,6 +241,10 @@ class MemoryManager:
             try:
                 memory = await self.storage_manager.load_memory(memory_id, context)
 
+                # Exclude stale memories unless caller opts in
+                if memory.metadata.stale and not params.include_stale:
+                    continue
+
                 # Apply type filter if specified
                 if params.type and memory.content.type != params.type:
                     continue
