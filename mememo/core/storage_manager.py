@@ -65,6 +65,7 @@ class StorageManager:
 
         # Initialize schema
         self._initialize_schema()
+        self._migrate_schema()
 
     def _initialize_schema(self) -> None:
         """Initialize database schema with all tables and indexes."""
@@ -93,7 +94,9 @@ class StorageManager:
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 embedding_shard INTEGER,
-                embedding_index INTEGER
+                embedding_index INTEGER,
+                stale INTEGER DEFAULT 0,
+                stale_reason TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_repo_branch ON memories(repo_id, branch_name);
@@ -151,9 +154,24 @@ class StorageManager:
                 total_files INTEGER DEFAULT 0,
                 indexed_files INTEGER DEFAULT 0,
                 failed_files INTEGER DEFAULT 0,
+                last_indexed_commit TEXT,
                 PRIMARY KEY (repo_id, branch_name)
             );
         """)
+        self.conn.commit()
+
+    def _migrate_schema(self) -> None:
+        """Apply incremental schema migrations (idempotent — safe to run on every startup)."""
+        migrations = [
+            "ALTER TABLE memories ADD COLUMN stale INTEGER DEFAULT 0",
+            "ALTER TABLE memories ADD COLUMN stale_reason TEXT",
+            "ALTER TABLE repo_index_metadata ADD COLUMN last_indexed_commit TEXT",
+        ]
+        for sql in migrations:
+            try:
+                self.conn.execute(sql)
+            except sqlite3.OperationalError:
+                pass  # Column already exists
         self.conn.commit()
 
     def _get_content_path(self, checksum: str) -> Path:
@@ -208,8 +226,8 @@ class StorageManager:
                 content_type, file_path, line_start, line_end,
                 function_name, class_name, language, chunk_type,
                 checksum, content_ref, token_count, created_at, updated_at,
-                embedding_shard, embedding_index
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                embedding_shard, embedding_index, stale, stale_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 memory.id,
@@ -222,7 +240,6 @@ class StorageManager:
                 memory.content.file_path,
                 memory.content.line_range[0] if memory.content.line_range else None,
                 memory.content.line_range[1] if memory.content.line_range else None,
-                # NEW in v0.3.0
                 memory.content.function_name,
                 memory.content.class_name,
                 memory.content.language,
@@ -234,6 +251,8 @@ class StorageManager:
                 int(memory.metadata.updated_at.timestamp()),
                 memory.metadata.embedding_shard,
                 memory.metadata.embedding_index,
+                1 if memory.metadata.stale else 0,
+                memory.metadata.stale_reason,
             ),
         )
 
@@ -364,6 +383,8 @@ class StorageManager:
                 token_count=row["token_count"],
                 embedding_shard=row["embedding_shard"],
                 embedding_index=row["embedding_index"],
+                stale=bool(row.get("stale", 0)),
+                stale_reason=row.get("stale_reason"),
             ),
             relationships=MemoryRelationships(
                 depends_on=depends_on if depends_on else None,
@@ -388,26 +409,41 @@ class StorageManager:
 
         # Repo/branch filter
         if not filters.cross_branch:
-            conditions.append("repo_id = ?")
+            conditions.append("m.repo_id = ?")
             params.append(context.repo.id)
-            conditions.append("branch_name = ?")
+            conditions.append("m.branch_name = ?")
             params.append(context.branch.name)
         elif filters.repo_id:
-            conditions.append("repo_id = ?")
+            conditions.append("m.repo_id = ?")
             params.append(filters.repo_id)
 
         # Other filters
         if filters.id:
-            conditions.append("id = ?")
+            conditions.append("m.id = ?")
             params.append(filters.id)
 
         if filters.file_path:
-            conditions.append("file_path LIKE ?")
+            conditions.append("m.file_path LIKE ?")
             params.append(f"{filters.file_path}%")
 
         if filters.type:
-            conditions.append("content_type = ?")
+            conditions.append("m.content_type = ?")
             params.append(filters.type)
+
+        if filters.language:
+            conditions.append("m.language = ?")
+            params.append(filters.language)
+
+        if filters.function_name:
+            conditions.append("m.function_name = ?")
+            params.append(filters.function_name)
+
+        if filters.class_name:
+            conditions.append("m.class_name = ?")
+            params.append(filters.class_name)
+
+        if not filters.include_stale:
+            conditions.append("m.stale = 0")
 
         # Tag filter (requires join)
         query = "SELECT DISTINCT m.* FROM memories m"
@@ -487,6 +523,59 @@ class StorageManager:
             "by_repo": by_repo,
             "total_size_mb": total_size_mb,
         }
+
+    def mark_memories_stale_for_file(
+        self, file_path: str, repo_id: str, branch: str, reason: str
+    ) -> int:
+        """
+        Mark code memories for a file as stale.
+
+        Only affects CODE_MEMORY_TYPES (code_snippet, relationship).
+        Persistent types (decision, analysis, conversation, context, summary) are never staled.
+
+        Returns:
+            Number of memories marked stale
+        """
+        from ..types.memory import CODE_MEMORY_TYPES
+
+        placeholders = ",".join("?" * len(CODE_MEMORY_TYPES))
+        cursor = self.conn.cursor()
+        cursor.execute(
+            f"""
+            UPDATE memories
+            SET stale = 1, stale_reason = ?
+            WHERE file_path = ? AND repo_id = ? AND branch_name = ?
+              AND content_type IN ({placeholders})
+              AND stale = 0
+            """,
+            (reason, file_path, repo_id, branch, *CODE_MEMORY_TYPES),
+        )
+        self.conn.commit()
+        return cursor.rowcount
+
+    def get_last_indexed_commit(self, repo_id: str, branch: str) -> str | None:
+        """Return the commit hash recorded during the last index_repository run, or None."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT last_indexed_commit FROM repo_index_metadata WHERE repo_id = ? AND branch_name = ?",
+            (repo_id, branch),
+        )
+        row = cursor.fetchone()
+        return row["last_indexed_commit"] if row else None
+
+    def set_last_indexed_commit(self, repo_id: str, branch: str, commit_hash: str) -> None:
+        """Record the commit hash for the last successful index_repository run."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO repo_index_metadata (repo_id, branch_name, last_indexed_commit)
+            VALUES (?, ?, ?)
+            ON CONFLICT(repo_id, branch_name)
+            DO UPDATE SET last_indexed_commit = excluded.last_indexed_commit
+            """,
+            (repo_id, branch, commit_hash),
+        )
+        self.conn.commit()
 
     def close(self) -> None:
         """Close database connection."""

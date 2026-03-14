@@ -9,7 +9,9 @@ All-Python code-aware memory server with:
 - Hybrid storage (SQLite + JSON blobs)
 """
 
+import json
 import logging
+import time
 from importlib.metadata import version as pkg_version
 from pathlib import Path
 
@@ -47,6 +49,9 @@ from .tools import (
 from .tools import (
     summarize_context as summarize_context_impl,
 )
+from .tools import (
+    sync_commits as sync_commits_impl,
+)
 from .tools.schemas import (
     CheckMemoryParams,
     CheckMemoryResponse,
@@ -66,6 +71,8 @@ from .tools.schemas import (
     StoreMemoryResponse,
     SummarizeContextParams,
     SummarizeContextResponse,
+    SyncCommitsParams,
+    SyncCommitsResponse,
 )
 from .types.config import MemoConfig
 
@@ -115,7 +122,7 @@ Chunking:
   Preserve structure: {config.chunking.preserve_structure}
 
 Search:
-  Default top-k: {config.search.default_top_k}
+  Default top-k: {config.search.top_k}
   Min similarity: {config.search.min_similarity}
 """
 
@@ -235,6 +242,25 @@ async def ensure_initialized():
         await initialize_mememo()
 
 
+def _audit_log(tool: str) -> None:
+    """Append one JSON line to audit.jsonl when audit logging is enabled."""
+    if not config or not config.security.enable_audit_log:
+        return
+    try:
+        audit_path = Path(config.storage.base_dir) / "audit.jsonl"
+        vi = memory_manager.vector_index if memory_manager else None
+        entry = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "tool": tool,
+            "repo": vi.repo_id if vi else None,
+            "branch": vi.branch if vi else None,
+        }
+        with open(audit_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        logger.debug(f"Audit log write failed: {e}")
+
+
 # ============================================================================
 # MCP Tools
 # ============================================================================
@@ -258,6 +284,7 @@ async def store_memory(params: StoreMemoryParams) -> StoreMemoryResponse:
         - Store code summary with relationships
     """
     await ensure_initialized()
+    _audit_log("store_memory")
     return await store_memory_impl(params, memory_manager)
 
 
@@ -274,6 +301,7 @@ async def retrieve_memory(params: RetrieveMemoryParams) -> RetrieveMemoryRespons
     - Summary (one-line + detailed)
     """
     await ensure_initialized()
+    _audit_log("retrieve_memory")
     return await retrieve_memory_impl(params, memory_manager)
 
 
@@ -291,6 +319,7 @@ async def search_similar(params: SearchSimilarParams) -> SearchSimilarResponse:
     Returns ranked results with similarity scores (0.0-1.0).
     """
     await ensure_initialized()
+    _audit_log("search_similar")
     return await search_similar_impl(params, memory_manager)
 
 
@@ -300,15 +329,17 @@ async def list_memories(params: ListMemoriesParams) -> ListMemoriesResponse:
     List memories with filters.
 
     Filters:
-    - Type (code_snippet, context, summary, relationship)
+    - Type (code_snippet, context, summary, relationship, decision, analysis, conversation)
     - Language (python, typescript, javascript, go, rust, etc.)
     - Tags (user-defined tags)
     - File path, function name, class name
     - Git context (automatic branch isolation)
+    - include_stale: include memories whose source file has changed (default: false)
 
     Returns matching memories (up to limit).
     """
     await ensure_initialized()
+    _audit_log("list_memories")
     return await list_memories_impl(params, memory_manager)
 
 
@@ -329,6 +360,7 @@ async def summarize_context(params: SummarizeContextParams) -> SummarizeContextR
     - Debugging memory storage
     """
     await ensure_initialized()
+    _audit_log("summarize_context")
     return await summarize_context_impl(params, memory_manager)
 
 
@@ -347,6 +379,7 @@ async def delete_memory(params: DeleteMemoryParams) -> DeleteMemoryResponse:
     Note: Deletion is permanent and cannot be undone.
     """
     await ensure_initialized()
+    _audit_log("delete_memory")
     return await delete_memory_impl(params, memory_manager)
 
 
@@ -373,6 +406,18 @@ async def index_repository(params: IndexRepositoryParams) -> IndexRepositoryResp
     - Duration in seconds
     """
     await ensure_initialized()
+    _audit_log("index_repository")
+    # Force full re-index if last snapshot is older than auto_reindex_age_minutes
+    if params.incremental and config.indexing.enable_incremental:
+        hashes_file = Path(config.storage.base_dir) / "merkle" / "file_hashes.json"
+        if hashes_file.exists():
+            age_minutes = (time.time() - hashes_file.stat().st_mtime) / 60
+            if age_minutes > config.indexing.auto_reindex_age_minutes:
+                logger.info(
+                    f"Snapshot age {age_minutes:.1f}m > threshold "
+                    f"{config.indexing.auto_reindex_age_minutes}m, forcing full re-index"
+                )
+                params = params.model_copy(update={"incremental": False})
     return await index_repository_impl(params, memory_manager)
 
 
@@ -394,7 +439,28 @@ async def check_memory(params: CheckMemoryParams) -> CheckMemoryResponse:
     - Understanding current context
     """
     await ensure_initialized()
+    _audit_log("check_memory")
     return await check_memory_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def sync_commits(params: SyncCommitsParams) -> SyncCommitsResponse:
+    """
+    Patch memories to reflect new commits since the last index_repository run.
+
+    For every file changed between the last indexed commit and HEAD:
+    - Marks existing code_snippet/relationship memories as stale
+    - Re-indexes files that still exist (creating fresh memories)
+
+    Persistent memory types (decision, analysis, conversation, context, summary)
+    are never staled — they survive code changes by design.
+
+    Run after index_repository whenever new commits land. Faster than a full
+    re-index because only changed files are processed.
+    """
+    await ensure_initialized()
+    _audit_log("sync_commits")
+    return await sync_commits_impl(params, memory_manager)
 
 
 @mcp.tool()
@@ -415,6 +481,7 @@ async def refresh_memory(params: RefreshMemoryParams) -> RefreshMemoryResponse:
     Note: Content updates create a new memory ID.
     """
     await ensure_initialized()
+    _audit_log("refresh_memory")
     return await refresh_memory_impl(params, memory_manager)
 
 

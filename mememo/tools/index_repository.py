@@ -127,6 +127,15 @@ async def index_repository(
 
         duration = time.time() - start_time
 
+        # Record the commit hash at time of indexing so sync_commits can diff from here
+        try:
+            context = await memory_manager.git_manager.detect_context(params.repo_path)
+            memory_manager.storage_manager.set_last_indexed_commit(
+                context.repo.id, context.branch.name, context.branch.commit_hash
+            )
+        except Exception as e:
+            logger.warning(f"Could not record indexed commit (non-git repo?): {e}")
+
         return IndexRepositoryResponse(
             success=True,
             message=f"Indexed {files_indexed} files ({chunks_created} chunks) in {duration:.2f}s",

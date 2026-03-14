@@ -322,6 +322,179 @@ async def test_incremental_indexing():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+@pytest.mark.asyncio
+async def test_persistent_memory_types(test_env):
+    """decision, analysis, conversation memories are never marked stale."""
+    memory_manager = test_env
+
+    decision = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Use repository pattern for all DB access — decouples domain from persistence.",
+            type="decision",
+            tags=["architecture"],
+            relationships=MemoryRelationships(),
+        )
+    )
+    analysis = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Root cause: N+1 query in user list endpoint. Fix: add select_related.",
+            type="analysis",
+            tags=["bug"],
+            relationships=MemoryRelationships(),
+        )
+    )
+    conversation = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Session summary: decided to migrate auth to JWT. Rationale: stateless scaling.",
+            type="conversation",
+            tags=["session"],
+            relationships=MemoryRelationships(),
+        )
+    )
+
+    assert decision.content.type == "decision"
+    assert analysis.content.type == "analysis"
+    assert conversation.content.type == "conversation"
+
+    # Persistent types start not stale
+    assert not decision.metadata.stale
+    assert not analysis.metadata.stale
+    assert not conversation.metadata.stale
+
+    # Mark stale for a file — persistent memories must not be affected
+    from mememo.types.memory import CODE_MEMORY_TYPES, PERSISTENT_MEMORY_TYPES
+
+    assert "decision" in PERSISTENT_MEMORY_TYPES
+    assert "decision" not in CODE_MEMORY_TYPES
+
+
+@pytest.mark.asyncio
+async def test_staleness_tracking(test_env):
+    """Code memories are staled when their source file changes."""
+    memory_manager = test_env
+
+    # Store a code memory for a fake file
+    code_mem = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="def old_impl(): pass",
+            type="code_snippet",
+            language="python",
+            file_path="src/service.py",
+            tags=["code"],
+            relationships=MemoryRelationships(),
+        )
+    )
+
+    # Store a decision — must survive staleness
+    decision_mem = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Service layer owns business rules.",
+            type="decision",
+            tags=["arch"],
+            relationships=MemoryRelationships(),
+        )
+    )
+
+    context = await memory_manager.git_manager.detect_context()
+    repo_id = context.repo.id
+    branch = context.branch.name
+
+    # Mark code memories stale for src/service.py
+    staled = memory_manager.storage_manager.mark_memories_stale_for_file(
+        "src/service.py", repo_id, branch, "File changed in commit abc1234"
+    )
+    assert staled == 1  # Only the code_snippet, not the decision
+
+    # Code memory is now stale
+    loaded_code = await memory_manager.storage_manager.load_memory(code_mem.id, context)
+    assert loaded_code.metadata.stale is True
+    assert "abc1234" in loaded_code.metadata.stale_reason
+
+    # Decision is untouched
+    loaded_decision = await memory_manager.storage_manager.load_memory(
+        decision_mem.id, context
+    )
+    assert loaded_decision.metadata.stale is False
+
+    # list_memories excludes stale by default
+    from mememo.types.memory import MemoryFilters
+
+    all_fresh = await memory_manager.find_memories(MemoryFilters(type="code_snippet"))
+    assert all(not m.metadata.stale for m in all_fresh)
+    assert not any(m.id == code_mem.id for m in all_fresh)
+
+    # With include_stale=True the stale memory appears
+    with_stale = await memory_manager.find_memories(
+        MemoryFilters(type="code_snippet", include_stale=True)
+    )
+    assert any(m.id == code_mem.id for m in with_stale)
+
+
+@pytest.mark.asyncio
+async def test_last_indexed_commit(test_env):
+    """index_repository records the commit; get/set_last_indexed_commit round-trips."""
+    memory_manager = test_env
+
+    context = await memory_manager.git_manager.detect_context()
+    repo_id = context.repo.id
+    branch = context.branch.name
+
+    # Nothing recorded yet
+    assert memory_manager.storage_manager.get_last_indexed_commit(repo_id, branch) is None
+
+    # Record a commit
+    memory_manager.storage_manager.set_last_indexed_commit(repo_id, branch, "deadbeef" * 5)
+    result = memory_manager.storage_manager.get_last_indexed_commit(repo_id, branch)
+    assert result == "deadbeef" * 5
+
+    # Overwrite
+    memory_manager.storage_manager.set_last_indexed_commit(repo_id, branch, "cafebabe" * 5)
+    result = memory_manager.storage_manager.get_last_indexed_commit(repo_id, branch)
+    assert result == "cafebabe" * 5
+
+
+@pytest.mark.asyncio
+async def test_sync_commits_no_previous_index(test_env):
+    """sync_commits returns a clear error when no prior index exists."""
+    import os
+
+    from mememo.tools.sync_commits import sync_commits
+    from mememo.tools.schemas import SyncCommitsParams
+
+    memory_manager = test_env
+    repo_path = os.getcwd()  # test_env sets cwd to the temp git repo
+
+    params = SyncCommitsParams(repo_path=repo_path)
+    response = await sync_commits(params, memory_manager)
+
+    assert not response.success
+    assert "index_repository" in response.message
+
+
+@pytest.mark.asyncio
+async def test_sync_commits_up_to_date(test_env):
+    """sync_commits is a no-op when already at HEAD."""
+    import os
+
+    from mememo.tools.sync_commits import sync_commits
+    from mememo.tools.schemas import SyncCommitsParams
+
+    memory_manager = test_env
+    repo_path = os.getcwd()
+
+    context = await memory_manager.git_manager.detect_context()
+    # Pretend we already indexed this commit
+    memory_manager.storage_manager.set_last_indexed_commit(
+        context.repo.id, context.branch.name, context.branch.commit_hash
+    )
+
+    params = SyncCommitsParams(repo_path=repo_path)
+    response = await sync_commits(params, memory_manager)
+
+    assert response.success
+    assert "up to date" in response.message
+
+
 if __name__ == "__main__":
     # Run tests
     pytest.main([__file__, "-v"])

@@ -24,7 +24,12 @@ class StoreMemoryParams(BaseModel):
     content: str = Field(description="Content to store in memory")
     type: MemoryContentType = Field(
         default="code_snippet",
-        description="Type of memory: code_snippet, context, summary, or relationship",
+        description=(
+            "Type: code_snippet (file-bound, staled on change), context, summary, relationship, "
+            "decision (architectural choices + rationale), analysis (bug/code investigation), "
+            "conversation (AI session summaries). decision/analysis/conversation are persistent "
+            "and never staled by code changes."
+        ),
     )
     language: str | None = Field(
         default=None, description="Programming language (auto-detected if not provided)"
@@ -98,6 +103,10 @@ class SearchSimilarParams(BaseModel):
     )
     type: MemoryContentType | None = Field(default=None, description="Filter by memory type")
     language: str | None = Field(default=None, description="Filter by programming language")
+    include_stale: bool = Field(
+        default=False,
+        description="Include stale memories (source changed since indexing)",
+    )
 
 
 class SearchResult(BaseModel):
@@ -130,6 +139,10 @@ class ListMemoriesParams(BaseModel):
     file_path: str | None = Field(default=None, description="Filter by file path")
     function_name: str | None = Field(default=None, description="Filter by function name")
     class_name: str | None = Field(default=None, description="Filter by class name")
+    include_stale: bool = Field(
+        default=False,
+        description="Include stale memories (source changed since indexing)",
+    )
     limit: int = Field(default=50, ge=1, le=500, description="Max results (1-500)")
 
 
@@ -259,3 +272,32 @@ class RefreshMemoryResponse(BaseModel):
     success: bool = Field(description="Whether refresh was successful")
     message: str = Field(description="Success or error message")
     memory: Memory | None = Field(default=None, description="Updated memory")
+
+
+# ============================================================================
+# sync_commits tool
+# ============================================================================
+
+
+class SyncCommitsParams(BaseModel):
+    """Parameters for syncing memories to new commits."""
+
+    repo_path: str = Field(description="Path to the repository root")
+    file_patterns: list[str] = Field(
+        default=["**/*.py", "**/*.ts", "**/*.js", "**/*.go", "**/*.rs"],
+        description="Glob patterns controlling which changed files get re-indexed",
+    )
+
+
+class SyncCommitsResponse(BaseModel):
+    """Response from sync_commits."""
+
+    success: bool = Field(description="Whether sync was successful")
+    message: str = Field(description="Summary message")
+    from_commit: str = Field(default="", description="Previously indexed commit (short SHA)")
+    to_commit: str = Field(default="", description="Current HEAD commit (short SHA)")
+    files_updated: int = Field(default=0, description="Changed files re-indexed")
+    files_removed: int = Field(default=0, description="Files deleted since last index")
+    memories_staled: int = Field(default=0, description="Code memories marked stale")
+    chunks_created: int = Field(default=0, description="New chunks stored")
+    duration_seconds: float = Field(default=0.0, description="Elapsed seconds")

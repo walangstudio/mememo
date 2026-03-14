@@ -133,7 +133,51 @@ export MEMEMO_EMBEDDING_DEVICE="auto"  # or "cuda", "mps", "cpu"
 # Security settings
 export MEMEMO_SECRETS_DETECTION="true"
 export MEMEMO_AUTO_SANITIZE="false"
+export MEMEMO_ENABLE_AUDIT_LOG="false"   # appends to ~/.mememo/audit.jsonl
+
+# Indexing (auto-reindex when snapshot is stale)
+export MEMEMO_AUTO_REINDEX_AGE_MINUTES="5.0"
+export MEMEMO_ENABLE_INCREMENTAL="true"
 ```
+
+### Encryption (optional)
+
+SQLite encryption requires an extra dependency:
+
+```bash
+pip install mememo[encryption]
+```
+
+Then set:
+
+```bash
+export MEMEMO_ENABLE_ENCRYPTION="true"
+export MEMEMO_ENCRYPTION_KEY="your-key"
+```
+
+Without `mememo[encryption]`, setting `MEMEMO_ENABLE_ENCRYPTION=true` will silently fall back to plain SQLite.
+
+### Similarity Scores
+
+`search_similar` returns scores in the range 0.0–1.0, computed as `exp(-L2_distance)`. Practical guide:
+
+| Score | Meaning |
+|-------|---------|
+| ≥ 0.9 | Near-identical content |
+| 0.7–0.9 | Strongly related (default threshold) |
+| 0.5–0.7 | Loosely related |
+| < 0.5 | Unlikely to be relevant |
+
+The default `min_similarity=0.7` (`MEMEMO_SEARCH_MIN_SIMILARITY`) filters out low-signal results. Lower it if you're getting too few results on a small repo.
+
+### Incremental Indexing
+
+mememo uses a Merkle DAG to track file changes between indexing runs:
+
+- Each file's SHA-256 hash is stored in `~/.mememo/merkle/file_hashes.json`
+- On `index_repository` with `incremental=true`, only files whose hash has changed since the last run are re-chunked and re-embedded
+- If the snapshot is older than `MEMEMO_AUTO_REINDEX_AGE_MINUTES` (default: 5 min), a full re-index is forced automatically even when `incremental=true`
+- The FAISS index is sharded at 50,000 vectors per shard; LRU eviction kicks in when `max_total_memories` is reached
 
 ## 🎮 Quick Start
 
