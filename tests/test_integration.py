@@ -411,9 +411,7 @@ async def test_staleness_tracking(test_env):
     assert "abc1234" in loaded_code.metadata.stale_reason
 
     # Decision is untouched
-    loaded_decision = await memory_manager.storage_manager.load_memory(
-        decision_mem.id, context
-    )
+    loaded_decision = await memory_manager.storage_manager.load_memory(decision_mem.id, context)
     assert loaded_decision.metadata.stale is False
 
     # list_memories excludes stale by default

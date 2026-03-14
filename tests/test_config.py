@@ -19,7 +19,6 @@ import pytest
 
 from mememo.types.config import Config, StorageConfig
 
-
 # ---------------------------------------------------------------------------
 # Validator-level tests
 # ---------------------------------------------------------------------------

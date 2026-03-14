@@ -81,7 +81,9 @@ class MemoryMetadata(BaseModel):
     token_count: int = Field(ge=0, description="Number of tokens in content")
     embedding_shard: int | None = Field(None, description="FAISS shard number")
     embedding_index: int | None = Field(None, description="Index within shard")
-    stale: bool = Field(default=False, description="Source file changed since this memory was created")
+    stale: bool = Field(
+        default=False, description="Source file changed since this memory was created"
+    )
     stale_reason: str | None = Field(None, description="Why this memory was marked stale")
 
 
