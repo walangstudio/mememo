@@ -493,6 +493,45 @@ class StorageManager:
         )
         self.conn.commit()
 
+    def delete_expired_memories(
+        self, ttl_conversation_days: int, ttl_context_days: int
+    ) -> list[str]:
+        """
+        Delete expired memories based on per-type TTL.
+
+        Only conversation and context types are subject to TTL.
+        decision, analysis, and summary are durable and never auto-expired.
+        Returns IDs of deleted memories so the caller can clean up the vector index.
+        A TTL of 0 means no expiry for that type.
+        """
+        import time
+
+        now = int(time.time())
+        deleted_ids: list[str] = []
+        cursor = self.conn.cursor()
+
+        for content_type, ttl_days in (
+            ("conversation", ttl_conversation_days),
+            ("context", ttl_context_days),
+        ):
+            if ttl_days <= 0:
+                continue
+            cutoff = now - (ttl_days * 86400)
+            cursor.execute(
+                "SELECT id FROM memories WHERE content_type=? AND created_at<?",
+                (content_type, cutoff),
+            )
+            ids = [row[0] for row in cursor.fetchall()]
+            if ids:
+                placeholders = ",".join("?" * len(ids))
+                cursor.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", ids)
+                deleted_ids.extend(ids)
+
+        if deleted_ids:
+            self.conn.commit()
+
+        return deleted_ids
+
     def get_statistics(self) -> dict:
         """
         Get storage statistics.

@@ -134,6 +134,7 @@ class TreeSitterChunker(BaseChunker):
         """Initialize tree-sitter chunker with lazy-loaded parsers."""
         self._parsers: dict = {}
         self._languages: dict = {}
+        self._failed_languages: set = set()
 
         if not TREE_SITTER_AVAILABLE:
             raise RuntimeError(
@@ -151,14 +152,18 @@ class TreeSitterChunker(BaseChunker):
         Returns:
             Tree-sitter parser
         """
+        if language in self._failed_languages:
+            raise ValueError(f"tree-sitter parser unavailable for {language}")
+
         if language not in self._parsers:
             try:
                 self._languages[language] = get_language(language)
                 self._parsers[language] = get_parser(language)
                 logger.debug(f"Loaded tree-sitter parser for {language}")
             except Exception as e:
-                logger.error(f"Failed to load tree-sitter parser for {language}: {e}")
-                raise
+                self._failed_languages.add(language)
+                logger.warning(f"tree-sitter parser unavailable for {language}: {e}")
+                raise ValueError(f"tree-sitter parser unavailable for {language}") from e
 
         return self._parsers[language]
 
