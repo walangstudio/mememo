@@ -53,14 +53,14 @@ def _build_context_block(results, budget: int, min_similarity: float) -> str | N
     """Build compact context block within token budget."""
     from .utils.token_counter import count_tokens
 
-    CODE_TYPES = {"code_snippet", "relationship"}
+    code_types = {"code_snippet", "relationship"}
 
     persistent: list = []
     code: list = []
 
     for r in results:
         mem_type = r.memory.content.type
-        if mem_type in CODE_TYPES:
+        if mem_type in code_types:
             code.append(r)
         else:
             persistent.append(r)
@@ -121,8 +121,8 @@ def _build_context_block(results, budget: int, min_similarity: float) -> str | N
 async def cmd_capture() -> None:
     """Stop hook: read transcript tail and auto-capture memories."""
     from .server import initialize_mememo
-    from .tools.schemas import CaptureParams
     from .tools.capture import capture as capture_impl
+    from .tools.schemas import CaptureParams
 
     raw = sys.stdin.read()
     try:
@@ -133,8 +133,8 @@ async def cmd_capture() -> None:
     transcript_path = hook_data.get("transcript_path", "")
 
     # Load config to get hook settings
+
     from .types.config import MemoConfig
-    import os
 
     cfg = MemoConfig.from_env()
 
@@ -192,6 +192,7 @@ async def cmd_inject() -> None:
     await initialize_mememo()
 
     import mememo.server as srv
+
     from .utils.token_counter import count_tokens
 
     # Lazy TTL cleanup — expire conversation/context memories before searching

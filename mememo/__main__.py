@@ -35,6 +35,7 @@ def main():
             return
 
     import argparse
+
     from .server import run
 
     parser = argparse.ArgumentParser(
