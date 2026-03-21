@@ -171,6 +171,9 @@ class SummarizeContextParams(BaseModel):
     group_by: Literal["file", "type", "none"] = Field(
         default="file", description="How to group memories in summary"
     )
+    save_as_memory: bool = Field(
+        default=False, description="If True, persist the summary as a 'summary' memory"
+    )
 
 
 class SummarizeContextResponse(BaseModel):
@@ -181,6 +184,9 @@ class SummarizeContextResponse(BaseModel):
     message: str = Field(description="Success or error message")
     token_count: int = Field(description="Number of tokens in summary")
     memories_included: int = Field(description="Number of memories included")
+    saved_memory_id: str | None = Field(
+        default=None, description="ID of persisted summary memory (only when save_as_memory=True)"
+    )
 
 
 # ============================================================================
@@ -301,3 +307,140 @@ class SyncCommitsResponse(BaseModel):
     memories_staled: int = Field(default=0, description="Code memories marked stale")
     chunks_created: int = Field(default=0, description="New chunks stored")
     duration_seconds: float = Field(default=0.0, description="Elapsed seconds")
+
+
+# ============================================================================
+# store_decision tool
+# ============================================================================
+
+
+class StoreDecisionParams(BaseModel):
+    """Parameters for storing a structured architectural decision."""
+
+    problem: str = Field(description="Problem or question being decided")
+    alternatives: list[str] = Field(description="Options that were considered")
+    chosen: str = Field(description="The chosen alternative")
+    rationale: str = Field(description="Why this alternative was chosen")
+    outcome: str | None = Field(default=None, description="Result or follow-up (if known)")
+    tags: list[str] | None = Field(default=None, description="Tags for categorization")
+
+
+class StoreDecisionResponse(BaseModel):
+    """Response from storing a decision."""
+
+    success: bool = Field(description="Whether storage was successful")
+    memory_id: str = Field(description="Unique ID of stored memory")
+    message: str = Field(description="Success or error message")
+    token_count: int = Field(description="Number of tokens in content")
+    checksum: str = Field(description="Content checksum for deduplication")
+
+
+# ============================================================================
+# end_session tool
+# ============================================================================
+
+
+class EndSessionParams(BaseModel):
+    """Parameters for storing a session summary."""
+
+    summary: str = Field(description="Summary of what was accomplished this session")
+    tags: list[str] | None = Field(default=None, description="Tags for categorization")
+
+
+class EndSessionResponse(BaseModel):
+    """Response from storing a session summary."""
+
+    success: bool = Field(description="Whether storage was successful")
+    memory_id: str = Field(description="Unique ID of stored memory")
+    message: str = Field(description="Success or error message")
+    token_count: int = Field(description="Number of tokens in content")
+    checksum: str = Field(description="Content checksum for deduplication")
+
+
+# ============================================================================
+# recall_context tool
+# ============================================================================
+
+
+class RecallContextParams(BaseModel):
+    """Parameters for multi-type semantic search across persistent memory types."""
+
+    query: str = Field(description="Search query text")
+    top_k: int = Field(default=10, ge=1, le=50, description="Number of results to return (1-50)")
+    min_similarity: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Minimum similarity threshold (0.0-1.0)",
+    )
+
+
+class RecallContextResponse(BaseModel):
+    """Response from recall_context."""
+
+    success: bool = Field(description="Whether search was successful")
+    results: list[SearchResult] = Field(description="List of search results")
+    message: str = Field(description="Success or error message")
+    count: int = Field(description="Number of results returned")
+
+
+# ============================================================================
+# recent_context tool
+# ============================================================================
+
+
+class RecentContextParams(BaseModel):
+    """Parameters for retrieving most recent memories."""
+
+    limit: int = Field(default=10, ge=1, le=100, description="Number of recent memories to return")
+    type: MemoryContentType | None = Field(default=None, description="Filter by memory type")
+
+
+class RecentContextResponse(BaseModel):
+    """Response from recent_context."""
+
+    success: bool = Field(description="Whether retrieval was successful")
+    memories: list[Memory] = Field(description="List of recent memories")
+    message: str = Field(description="Success or error message")
+    count: int = Field(description="Number of memories returned")
+
+
+# ============================================================================
+# capture tool
+# ============================================================================
+
+
+class ExtractedMemory(BaseModel):
+    """Single memory extracted by the LLM from raw text."""
+
+    type: MemoryContentType = Field(description="Extracted memory type")
+    content: str = Field(description="Extracted memory content")
+    tags: list[str] = Field(default_factory=list, description="Extracted tags")
+    memory_id: str = Field(default="", description="Stored memory ID (empty if store failed)")
+
+
+class CaptureParams(BaseModel):
+    """Parameters for passive memory capture via LLM extraction."""
+
+    text: str = Field(description="Raw text to extract memories from (conversation, notes, etc.)")
+    hint: str | None = Field(
+        default=None,
+        description="Optional hint to guide extraction (e.g. 'focus on decisions')",
+    )
+
+
+class CaptureResponse(BaseModel):
+    """Response from capture."""
+
+    success: bool = Field(description="Whether capture completed (True even for passthrough)")
+    extracted: list[ExtractedMemory] = Field(description="Memories extracted and stored")
+    stored_count: int = Field(description="Number of memories successfully stored")
+    message: str = Field(description="Summary message")
+    passthrough: bool = Field(
+        default=False,
+        description="True when no LLM is configured — use passthrough_prompt to self-extract",
+    )
+    passthrough_prompt: str | None = Field(
+        default=None,
+        description="Extraction instructions for the calling model when passthrough=True",
+    )

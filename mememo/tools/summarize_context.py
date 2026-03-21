@@ -10,6 +10,7 @@ Creates hierarchical summaries with:
 import logging
 from typing import TYPE_CHECKING
 
+from ..types.memory import CreateMemoryParams, MemoryRelationships
 from ..utils.token_counter import count_tokens
 from .schemas import SummarizeContextParams, SummarizeContextResponse
 
@@ -42,12 +43,23 @@ async def summarize_context(
         # Count tokens in summary
         token_count = count_tokens(summary)
 
+        saved_memory_id = None
+        if params.save_as_memory:
+            create_params = CreateMemoryParams(
+                content=summary,
+                type="summary",
+                relationships=MemoryRelationships(),
+            )
+            saved_memory = await memory_manager.create_memory(create_params)
+            saved_memory_id = saved_memory.id
+
         return SummarizeContextResponse(
             success=True,
             summary=summary,
             message=f"Summarized {len(params.memory_ids)} memories",
             token_count=token_count,
             memories_included=len(params.memory_ids),
+            saved_memory_id=saved_memory_id,
         )
 
     except ValueError as e:

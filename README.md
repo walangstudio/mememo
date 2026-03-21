@@ -5,7 +5,6 @@
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](tests/)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
-[![Built with AI](https://img.shields.io/badge/built%20with-AI%20assistance-blueviolet.svg)](https://claude.ai)
 
 **Git-aware code memory for AI assistants** - MCP server that understands your codebase's structure, not just its text. Private, local, and built for developers.
 
@@ -18,6 +17,17 @@
 - **🔐 Security-First**: Secrets detection with auto-sanitization
 - **📂 Git-Aware**: Automatic branch isolation
 - **⚡ Incremental**: Only re-index changed files (Merkle DAG)
+- **🤖 Passive Hooks**: Auto-capture memories and inject context without any user action
+
+### Passive Hooks (Claude Code)
+
+mememo integrates with Claude Code hooks to make memory fully automatic:
+
+**Stop hook** — fires asynchronously after every Claude response. Reads the conversation transcript, extracts memorable facts via LLM, and stores them. No `capture` call needed.
+
+**UserPromptSubmit hook** — fires synchronously before Claude processes each message. Runs a semantic search against your memory store and injects relevant results as a system message, within a configurable token budget (800 tokens by default). Nothing is injected if no results exceed the similarity threshold.
+
+See [hooks/README.md](hooks/README.md) for setup instructions.
 
 ### Supported Languages
 
@@ -44,6 +54,7 @@ Unlike general-purpose AI memory solutions, mememo is **purpose-built for code**
 | **Incremental Indexing** | ✅ Merkle DAG (5-10x faster re-indexing) | ❌ Full corpus re-indexing |
 | **MCP Native** | ✅ Built for Claude Desktop, Cursor, Cline | ⚙️ Requires API adapters |
 | **Privacy** | ✅ 100% local, your data stays on your machine | ❌ Cloud storage or hybrid |
+| **Passive Memory** | ✅ Auto-capture + inject via Claude Code hooks | ❌ Manual invocation required |
 
 **mememo is ideal if you:**
 - 👨‍💻 Use AI assistants (Claude, Cursor, Cline) for coding
@@ -140,6 +151,35 @@ export MEMEMO_AUTO_REINDEX_AGE_MINUTES="5.0"
 export MEMEMO_ENABLE_INCREMENTAL="true"
 ```
 
+### Passive Hook Configuration
+
+```bash
+# Token budget for injected context per prompt (default: 800)
+export MEMEMO_HOOK_INJECT_TOKEN_BUDGET="800"
+
+# Min similarity to include a memory in the injected block (default: 0.25)
+export MEMEMO_HOOK_INJECT_MIN_SIMILARITY="0.25"
+
+# Broader search floor — candidates fetched at this threshold,
+# then filtered down to INJECT_MIN_SIMILARITY (default: 0.2)
+export MEMEMO_HOOK_INJECT_SEARCH_FLOOR="0.2"
+
+# Transcript tail lines read by the Stop hook (default: 100)
+export MEMEMO_HOOK_CAPTURE_LINES="100"
+
+# Disable individual hooks
+export MEMEMO_HOOK_CAPTURE_ENABLED="true"
+export MEMEMO_HOOK_INJECT_ENABLED="true"
+
+# TTL for conversation memories in days — 0 = no expiry (default: 30)
+export MEMEMO_TTL_CONVERSATION_DAYS="30"
+
+# TTL for context memories in days — 0 = no expiry (default: 90)
+export MEMEMO_TTL_CONTEXT_DAYS="90"
+
+# decision, analysis, and summary memories never auto-expire
+```
+
 ### Encryption (optional)
 
 SQLite encryption requires an extra dependency:
@@ -219,6 +259,17 @@ claude mcp add --scope user mememo -- /path/to/mememo/.venv/bin/python -m mememo
 ```
 
 Verify it's registered: `claude mcp list`
+
+#### Step 3 (Claude Code only): Enable passive hooks
+
+Copy `hooks/hooks.json` into your Claude Code hooks config and replace the path placeholder:
+
+```bash
+# Update the path in hooks.json
+sed -i 's|/path/to/mememo|/absolute/path/to/mememo|g' hooks/hooks.json
+```
+
+Then merge the contents into `~/.claude/settings.json` under the `hooks` key. See [hooks/README.md](hooks/README.md) for full instructions including Windows setup.
 
 #### Cursor (auto-configure)
 
@@ -517,66 +568,91 @@ extensions:
 
 ### Available MCP Tools
 
-#### 1. `store_memory` - Store code snippets
+#### Memory Storage
+
+| Tool | Purpose |
+|------|---------|
+| `store_memory` | Store code snippets, decisions, context, or analysis |
+| `store_decision` | Store an architectural decision with rationale |
+| `capture` | Extract and store memorable facts from raw text via LLM; deduplicates at 0.97 similarity |
+| `refresh_memory` | Update an existing memory's content |
+| `delete_memory` | Delete a memory by ID |
+
+#### Memory Retrieval
+
+| Tool | Purpose |
+|------|---------|
+| `retrieve_memory` | Fetch a single memory by ID |
+| `search_similar` | Semantic vector search across all memories |
+| `list_memories` | List memories with filters (type, language, file, tag) |
+| `recall_context` | Search persistent memories (decisions, analysis, context) |
+| `recent_context` | Fetch the most recently stored memories |
+| `summarize_context` | Generate a hierarchical summary of stored memories |
+| `check_memory` | Show memory statistics |
+
+#### Repository Indexing
+
+| Tool | Purpose |
+|------|---------|
+| `index_repository` | Batch-index a codebase (incremental by default) |
+| `sync_commits` | Sync recent git commits to update stale code memories |
+| `end_session` | Close the session and persist indexes |
+
+#### Example usage
 
 ```python
-{
-  "content": "def example():\n    return 42",
-  "type": "code_snippet",
-  "language": "python",
-  "file_path": "src/example.py",
-  "tags": ["example"]
-}
-```
+# Store a decision
+store_decision({
+  "decision": "Use FAISS for vector search",
+  "rationale": "Local, no network dependency, supports sharding",
+  "tags": ["architecture", "search"]
+})
 
-#### 2. `search_similar` - Semantic search
-
-```python
-{
+# Semantic search
+search_similar({
   "query": "function that processes data",
   "top_k": 5,
   "min_similarity": 0.7
-}
-```
+})
 
-#### 3. `list_memories` - List with filters
-
-```python
-{
-  "language": "python",
-  "function_name": "process_data",
-  "limit": 50
-}
-```
-
-#### 4. `index_repository` - Batch indexing
-
-```python
-{
+# Index a repo
+index_repository({
   "repo_path": "/path/to/repo",
   "file_patterns": ["**/*.py", "**/*.ts"],
   "incremental": true
-}
+})
+
+# List memories by filter
+list_memories({
+  "language": "python",
+  "function_name": "process_data",
+  "limit": 50
+})
 ```
-
-#### 5-9. Other tools
-
-- `retrieve_memory` - Get by ID
-- `delete_memory` - Delete with confirmation
-- `summarize_context` - Hierarchical summaries
-- `check_memory` - Statistics
-- `refresh_memory` - Update existing
 
 ## 🔧 Architecture
 
 ```
 mememo/
-├── server.py              # FastMCP server
+├── server.py              # FastMCP server (15 MCP tools)
+├── cli.py                 # Hook CLI (capture --hook, inject --hook)
 ├── core/                  # Core managers
-├── chunking/              # Code-aware chunking
-├── embeddings/            # Sentence transformers
-├── indexing/              # Merkle DAG
-└── tools/                 # 9 MCP tools
+│   ├── memory_manager.py  # Orchestrates all memory ops
+│   ├── llm_adapter.py     # Multi-provider LLM abstraction
+│   ├── storage_manager.py # SQLite + JSON blob storage
+│   ├── vector_index.py    # FAISS vector index (sharded)
+│   └── git_manager.py     # Git context detection
+├── chunking/              # Code-aware chunking (AST + tree-sitter)
+├── embeddings/            # Sentence transformers (MiniLM / Gemma)
+├── indexing/              # Merkle DAG for incremental indexing
+├── tools/                 # MCP tool implementations
+├── types/                 # Pydantic models (config, memory)
+├── utils/                 # Token counter, secrets detector, hashing
+└── hooks/                 # Claude Code passive hook scripts
+    ├── stop.sh            # Stop hook wrapper
+    ├── user-prompt.sh     # UserPromptSubmit hook wrapper
+    ├── hooks.json         # Hook config template
+    └── README.md          # Hook setup instructions
 ```
 
 ## 📊 Performance

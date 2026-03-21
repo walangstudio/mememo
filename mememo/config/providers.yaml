@@ -1,0 +1,52 @@
+default_provider: passthrough
+
+# Set to a real provider to enable LLM-powered memory extraction (capture tool).
+# passthrough = no LLM calls; the calling model self-extracts when capture is invoked.
+
+providers:
+  anthropic:
+    default_model: claude-haiku-4-5-20251001
+    # api_key: sk-ant-...  (use ANTHROPIC_API_KEY env var instead)
+
+  ollama:
+    default_model: llama3.2
+    base_url: http://localhost:11434
+
+  # --- OpenAI-compatible providers ---
+  # Any provider exposing /v1/chat/completions works here.
+
+  # openai:
+  #   type: openai_compatible
+  #   default_model: gpt-4o-mini
+  #   base_url: https://api.openai.com/v1
+  #   # api_key: sk-...  (or set OPENAI_API_KEY env var)
+
+  # openrouter:
+  #   type: openai_compatible
+  #   default_model: openai/gpt-4o-mini
+  #   base_url: https://openrouter.ai/api/v1
+  #   # api_key: ...  (or set OPENROUTER_API_KEY env var)
+
+  # groq:
+  #   type: openai_compatible
+  #   default_model: llama-3.3-70b-versatile
+  #   base_url: https://api.groq.com/openai/v1
+  #   # api_key: ...  (or set GROQ_API_KEY env var)
+
+  # google:
+  #   type: openai_compatible
+  #   default_model: gemini-2.0-flash
+  #   base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  #   # api_key: ...  (or set GOOGLE_API_KEY env var)
+
+  # lmstudio:
+  #   type: openai_compatible
+  #   default_model: your-loaded-model-name
+  #   base_url: http://localhost:1234/v1
+  #   # no api_key needed
+
+  # jan:
+  #   type: openai_compatible
+  #   default_model: your-loaded-model-name
+  #   base_url: http://localhost:1337/v1
+  #   # no api_key needed
