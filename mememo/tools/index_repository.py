@@ -67,7 +67,9 @@ async def index_repository(
 
         # Find matching files (excluding ignored directories)
         skip = frozenset(ignored_dirs) if ignored_dirs else None
-        files_to_index = _find_matching_files(repo_path, params.file_patterns, params.max_files, skip)
+        files_to_index = _find_matching_files(
+            repo_path, params.file_patterns, params.max_files, skip
+        )
 
         logger.info(f"Found {len(files_to_index)} files matching patterns")
 
@@ -163,12 +165,29 @@ async def index_repository(
         )
 
 
-_DEFAULT_IGNORED_DIRS = frozenset({
-    "__pycache__", ".git", ".hg", ".svn", ".venv", "venv", "env",
-    "node_modules", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    "build", "dist", ".next", ".nuxt", "target", ".idea", ".vscode",
-    ".coverage",
-})
+_DEFAULT_IGNORED_DIRS = frozenset(
+    {
+        "__pycache__",
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "env",
+        "node_modules",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "build",
+        "dist",
+        ".next",
+        ".nuxt",
+        "target",
+        ".idea",
+        ".vscode",
+        ".coverage",
+    }
+)
 
 
 def _find_matching_files(

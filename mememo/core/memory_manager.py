@@ -219,7 +219,9 @@ class MemoryManager:
         context = await self.git_manager.detect_context(cwd)
         return await self.storage_manager.find_memories(filters, context)
 
-    async def search_similar(self, params: SearchParams, cwd: str | None = None) -> list[SearchResult]:
+    async def search_similar(
+        self, params: SearchParams, cwd: str | None = None
+    ) -> list[SearchResult]:
         """
         Search for similar memories using vector similarity.
 
