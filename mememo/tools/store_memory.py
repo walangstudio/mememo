@@ -10,6 +10,7 @@ Stores content with automatic:
 """
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..types.memory import CreateMemoryParams, MemoryRelationships
@@ -53,8 +54,13 @@ async def store_memory(
             relationships=MemoryRelationships(),
         )
 
+        # Derive cwd from file_path if it's absolute
+        cwd = None
+        if params.file_path and Path(params.file_path).is_absolute():
+            cwd = str(Path(params.file_path).parent)
+
         # Create memory via memory manager
-        memory = await memory_manager.create_memory(create_params)
+        memory = await memory_manager.create_memory(create_params, cwd=cwd)
 
         return StoreMemoryResponse(
             success=True,

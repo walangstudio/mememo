@@ -471,7 +471,7 @@ async def index_repository(params: IndexRepositoryParams) -> IndexRepositoryResp
                     f"{config.indexing.auto_reindex_age_minutes}m, forcing full re-index"
                 )
                 params = params.model_copy(update={"incremental": False})
-    return await index_repository_impl(params, memory_manager)
+    return await index_repository_impl(params, memory_manager, ignored_dirs=config.indexing.ignored_dirs)
 
 
 @mcp.tool()

@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 
 async def index_repository(
-    params: IndexRepositoryParams, memory_manager: "MemoryManager"
+    params: IndexRepositoryParams,
+    memory_manager: "MemoryManager",
+    ignored_dirs: list[str] | None = None,
 ) -> IndexRepositoryResponse:
     """
     Index a repository with code-aware chunking.
@@ -33,6 +35,7 @@ async def index_repository(
     Args:
         params: Index parameters
         memory_manager: Memory manager instance
+        ignored_dirs: Directory names to exclude from indexing
 
     Returns:
         Index response with statistics
@@ -41,7 +44,7 @@ async def index_repository(
 
     try:
         # Validate repo path
-        repo_path = Path(params.repo_path)
+        repo_path = Path(params.repo_path).resolve()
         if not repo_path.exists():
             return IndexRepositoryResponse(
                 success=False,
@@ -62,8 +65,9 @@ async def index_repository(
                 duration_seconds=0,
             )
 
-        # Find matching files
-        files_to_index = _find_matching_files(repo_path, params.file_patterns, params.max_files)
+        # Find matching files (excluding ignored directories)
+        skip = frozenset(ignored_dirs) if ignored_dirs else None
+        files_to_index = _find_matching_files(repo_path, params.file_patterns, params.max_files, skip)
 
         logger.info(f"Found {len(files_to_index)} files matching patterns")
 
@@ -109,8 +113,8 @@ async def index_repository(
                         relationships=MemoryRelationships(),
                     )
 
-                    # Create memory (with embedding)
-                    await memory_manager.create_memory(create_params)
+                    # Create memory (with embedding, using repo path for git context)
+                    await memory_manager.create_memory(create_params, cwd=str(repo_path))
                     chunks_created += 1
 
                 files_indexed += 1
@@ -129,7 +133,7 @@ async def index_repository(
 
         # Record the commit hash at time of indexing so sync_commits can diff from here
         try:
-            context = await memory_manager.git_manager.detect_context(params.repo_path)
+            context = await memory_manager.git_manager.detect_context(str(repo_path))
             memory_manager.storage_manager.set_last_indexed_commit(
                 context.repo.id, context.branch.name, context.branch.commit_hash
             )
@@ -159,29 +163,48 @@ async def index_repository(
         )
 
 
-def _find_matching_files(repo_path: Path, patterns: list[str], max_files: int) -> list[Path]:
+_DEFAULT_IGNORED_DIRS = frozenset({
+    "__pycache__", ".git", ".hg", ".svn", ".venv", "venv", "env",
+    "node_modules", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    "build", "dist", ".next", ".nuxt", "target", ".idea", ".vscode",
+    ".coverage",
+})
+
+
+def _find_matching_files(
+    repo_path: Path,
+    patterns: list[str],
+    max_files: int,
+    ignored_dirs: frozenset[str] | None = None,
+) -> list[Path]:
     """
-    Find files matching glob patterns.
+    Find files matching glob patterns, excluding ignored directories.
 
     Args:
         repo_path: Repository root path
         patterns: List of glob patterns
         max_files: Maximum files to return
+        ignored_dirs: Directory names to exclude (defaults to common ignored dirs)
 
     Returns:
         List of matching file paths
     """
+    skip_dirs = ignored_dirs if ignored_dirs is not None else _DEFAULT_IGNORED_DIRS
     matching_files = set()
 
     for pattern in patterns:
-        # Use glob to find matching files
         for file_path in repo_path.glob(pattern):
-            if file_path.is_file():
-                matching_files.add(file_path)
+            if not file_path.is_file():
+                continue
 
-                # Check max files limit
-                if len(matching_files) >= max_files:
-                    break
+            # Skip files inside ignored directories
+            if skip_dirs.intersection(file_path.relative_to(repo_path).parts):
+                continue
+
+            matching_files.add(file_path)
+
+            if len(matching_files) >= max_files:
+                break
 
         if len(matching_files) >= max_files:
             break
