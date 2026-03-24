@@ -70,6 +70,7 @@ class MemoryManager:
         self.storage_manager = storage_manager
         self.embedder = embedder
         self.vector_index = vector_index
+        self._vector_index_cache: dict[tuple[str, str], VectorIndex] = {}
         self.auto_sanitize = auto_sanitize
         self.secrets_detection = secrets_detection
 
@@ -80,7 +81,22 @@ class MemoryManager:
 
         logger.info("MemoryManager initialized")
 
-    async def create_memory(self, params: CreateMemoryParams) -> Memory:
+    def _get_vector_index(self, repo_id: str, branch: str) -> VectorIndex:
+        """Get or create a VectorIndex for the given repo/branch."""
+        if repo_id == self.vector_index.repo_id and branch == self.vector_index.branch:
+            return self.vector_index
+
+        key = (repo_id, branch)
+        if key not in self._vector_index_cache:
+            self._vector_index_cache[key] = VectorIndex(
+                base_path=self.vector_index.base_path,
+                repo_id=repo_id,
+                branch=branch,
+                dimension=self.vector_index.dimension,
+            )
+        return self._vector_index_cache[key]
+
+    async def create_memory(self, params: CreateMemoryParams, cwd: str | None = None) -> Memory:
         """
         Create a new memory.
 
@@ -93,6 +109,7 @@ class MemoryManager:
 
         Args:
             params: Memory creation parameters
+            cwd: Working directory for git context detection
 
         Returns:
             Created memory object
@@ -104,7 +121,7 @@ class MemoryManager:
         validated_content = self._validate_content(params.content)
 
         # 2. Detect git context (repo + branch)
-        context = await self.git_manager.detect_context()
+        context = await self.git_manager.detect_context(cwd)
 
         # 3. Generate UUID for memory ID
         memory_id = str(uuid4())
@@ -162,9 +179,10 @@ class MemoryManager:
         logger.debug(f"Saving memory {memory_id} to storage")
         await self.storage_manager.save_memory(memory)
 
-        # 10. Add to vector index
+        # 10. Add to vector index (resolved per repo/branch)
         logger.debug(f"Adding memory {memory_id} to vector index")
-        self.vector_index.add(
+        vi = self._get_vector_index(context.repo.id, context.branch.name)
+        vi.add(
             embeddings=[embedding.tolist()],
             memory_ids=[memory_id],
             checksums=[checksum],
@@ -173,51 +191,57 @@ class MemoryManager:
         logger.info(f"Created memory {memory_id} ({token_count} tokens)")
         return memory
 
-    async def retrieve_memory(self, memory_id: str) -> Memory:
+    async def retrieve_memory(self, memory_id: str, cwd: str | None = None) -> Memory:
         """
         Retrieve memory by ID.
 
         Args:
             memory_id: Memory ID
+            cwd: Working directory for git context detection
 
         Returns:
             Memory object
         """
-        context = await self.git_manager.detect_context()
+        context = await self.git_manager.detect_context(cwd)
         return await self.storage_manager.load_memory(memory_id, context)
 
-    async def find_memories(self, filters: MemoryFilters) -> list[Memory]:
+    async def find_memories(self, filters: MemoryFilters, cwd: str | None = None) -> list[Memory]:
         """
         Find memories with filters.
 
         Args:
             filters: Query filters
+            cwd: Working directory for git context detection
 
         Returns:
             List of matching memories
         """
-        context = await self.git_manager.detect_context()
+        context = await self.git_manager.detect_context(cwd)
         return await self.storage_manager.find_memories(filters, context)
 
-    async def search_similar(self, params: SearchParams) -> list[SearchResult]:
+    async def search_similar(
+        self, params: SearchParams, cwd: str | None = None
+    ) -> list[SearchResult]:
         """
         Search for similar memories using vector similarity.
 
         Args:
             params: Search parameters
+            cwd: Working directory for git context detection
 
         Returns:
             List of search results with similarity scores
         """
-        context = await self.git_manager.detect_context()
+        context = await self.git_manager.detect_context(cwd)
 
         # Generate embedding for query
         logger.debug(f"Generating embedding for query: {params.query[:50]}...")
         query_embedding = self.embedder.embed_query(params.query)
 
-        # Search vector index
+        # Search vector index (resolved per repo/branch)
+        vi = self._get_vector_index(context.repo.id, context.branch.name)
         top_k = params.top_k
-        distances, memory_ids = self.vector_index.search(
+        distances, memory_ids = vi.search(
             query_embedding=query_embedding.tolist(),
             top_k=top_k,
         )
@@ -263,18 +287,20 @@ class MemoryManager:
         logger.info(f"Found {len(results)} similar memories")
         return results
 
-    async def delete_memory(self, memory_id: str) -> None:
+    async def delete_memory(self, memory_id: str, cwd: str | None = None) -> None:
         """
         Delete memory.
 
         Args:
             memory_id: Memory ID to delete
+            cwd: Working directory for git context detection
         """
-        context = await self.git_manager.detect_context()
+        context = await self.git_manager.detect_context(cwd)
         await self.storage_manager.delete_memory(memory_id, context)
 
-        # Delete from vector index
-        self.vector_index.delete_by_memory_id(memory_id)
+        # Delete from vector index (resolved per repo/branch)
+        vi = self._get_vector_index(context.repo.id, context.branch.name)
+        vi.delete_by_memory_id(memory_id)
 
         logger.info(f"Deleted memory {memory_id}")
 
@@ -298,6 +324,7 @@ class MemoryManager:
         self,
         memory_ids: list[str],
         max_tokens: int = 500,
+        cwd: str | None = None,
     ) -> str:
         """
         Summarize multiple memories into a hierarchical summary.
@@ -305,11 +332,12 @@ class MemoryManager:
         Args:
             memory_ids: List of memory IDs to summarize
             max_tokens: Maximum tokens in summary
+            cwd: Working directory for git context detection
 
         Returns:
             Hierarchical summary text
         """
-        context = await self.git_manager.detect_context()
+        context = await self.git_manager.detect_context(cwd)
 
         # Load all memories
         memories = []

@@ -142,7 +142,7 @@ async def sync_commits(
                     tags=["indexed", "repository", "synced"],
                     relationships=MemoryRelationships(),
                 )
-                await memory_manager.create_memory(create_params)
+                await memory_manager.create_memory(create_params, cwd=str(repo_path))
                 chunks_created += 1
 
             merkle.mark_file_indexed(file_path)
