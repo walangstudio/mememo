@@ -2,10 +2,6 @@
 
 Thank you for your interest in contributing to mememo! This document provides guidelines and instructions for contributing.
 
-## Development Notes
-
-This project was developed with assistance from [Claude AI](https://claude.ai) for rapid prototyping and architecture design. All code has been thoroughly reviewed, tested, and validated by the maintainers to ensure quality and correctness.
-
 ## Development Setup
 
 ### Prerequisites

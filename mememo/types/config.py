@@ -16,6 +16,12 @@ class StorageConfig(BaseModel):
     base_dir: Path = Field(description="Base directory for all data")
     max_memory_size_mb: int = Field(default=10, gt=0, description="Max size per memory in MB")
     max_total_memories: int = Field(default=10000, gt=0, description="Max total memories")
+    ttl_conversation_days: int = Field(
+        default=30, ge=0, description="TTL in days for conversation memories (0 = no expiry)"
+    )
+    ttl_context_days: int = Field(
+        default=90, ge=0, description="TTL in days for context memories (0 = no expiry)"
+    )
 
     @field_validator("base_dir", mode="before")
     @classmethod
@@ -114,6 +120,28 @@ class IndexingConfig(BaseModel):
     )
 
 
+class HookConfig(BaseModel):
+    """Configuration for passive Claude Code hooks."""
+
+    inject_token_budget: int = Field(
+        default=800, gt=0, description="Max tokens for injected context"
+    )
+    inject_min_similarity: float = Field(
+        default=0.25, ge=0.0, le=1.0, description="Min similarity to include in injected block"
+    )
+    inject_search_floor: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Broader search floor — fetch more candidates, filter at inject_min_similarity",
+    )
+    capture_transcript_lines: int = Field(
+        default=100, gt=0, description="Transcript tail lines to capture from"
+    )
+    capture_enabled: bool = Field(default=True, description="Enable Stop hook capture")
+    inject_enabled: bool = Field(default=True, description="Enable UserPromptSubmit injection")
+
+
 class Config(BaseModel):
     """Complete mememo configuration."""
 
@@ -123,6 +151,7 @@ class Config(BaseModel):
     search: SearchConfig
     security: SecurityConfig
     indexing: IndexingConfig
+    hook: HookConfig = Field(default_factory=HookConfig)
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -140,6 +169,8 @@ class Config(BaseModel):
                 ),
                 max_memory_size_mb=int(os.getenv("MEMEMO_MAX_MEMORY_SIZE_MB", "10")),
                 max_total_memories=int(os.getenv("MEMEMO_MAX_TOTAL_MEMORIES", "10000")),
+                ttl_conversation_days=int(os.getenv("MEMEMO_TTL_CONVERSATION_DAYS", "30")),
+                ttl_context_days=int(os.getenv("MEMEMO_TTL_CONTEXT_DAYS", "90")),
             ),
             embedding=EmbeddingConfig(
                 model_name=os.getenv("MEMEMO_EMBEDDING_MODEL", "minilm"),
@@ -165,6 +196,14 @@ class Config(BaseModel):
             indexing=IndexingConfig(
                 enable_incremental=os.getenv("MEMEMO_ENABLE_INCREMENTAL", "true").lower() == "true",
                 auto_reindex_age_minutes=float(os.getenv("MEMEMO_AUTO_REINDEX_AGE_MINUTES", "5.0")),
+            ),
+            hook=HookConfig(
+                inject_token_budget=int(os.getenv("MEMEMO_HOOK_INJECT_TOKEN_BUDGET", "800")),
+                inject_min_similarity=float(os.getenv("MEMEMO_HOOK_INJECT_MIN_SIMILARITY", "0.25")),
+                inject_search_floor=float(os.getenv("MEMEMO_HOOK_INJECT_SEARCH_FLOOR", "0.2")),
+                capture_transcript_lines=int(os.getenv("MEMEMO_HOOK_CAPTURE_LINES", "100")),
+                capture_enabled=os.getenv("MEMEMO_HOOK_CAPTURE_ENABLED", "true").lower() == "true",
+                inject_enabled=os.getenv("MEMEMO_HOOK_INJECT_ENABLED", "true").lower() == "true",
             ),
         )
 
