@@ -456,8 +456,8 @@ async def test_sync_commits_no_previous_index(test_env):
     """sync_commits returns a clear error when no prior index exists."""
     import os
 
-    from mememo.tools.sync_commits import sync_commits
     from mememo.tools.schemas import SyncCommitsParams
+    from mememo.tools.sync_commits import sync_commits
 
     memory_manager = test_env
     repo_path = os.getcwd()  # test_env sets cwd to the temp git repo
@@ -474,8 +474,8 @@ async def test_sync_commits_up_to_date(test_env):
     """sync_commits is a no-op when already at HEAD."""
     import os
 
-    from mememo.tools.sync_commits import sync_commits
     from mememo.tools.schemas import SyncCommitsParams
+    from mememo.tools.sync_commits import sync_commits
 
     memory_manager = test_env
     repo_path = os.getcwd()

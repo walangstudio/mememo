@@ -18,10 +18,14 @@ from pathlib import Path
 from fastmcp import FastMCP
 
 from .core.git_manager import GitManager
+from .core.llm_adapter import LLMAdapter
 from .core.memory_manager import MemoryManager
 from .core.storage_manager import StorageManager
 from .core.vector_index import VectorIndex
 from .embeddings.embedder import Embedder
+from .tools import (
+    capture as capture_impl,
+)
 from .tools import (
     check_memory as check_memory_impl,
 )
@@ -29,10 +33,19 @@ from .tools import (
     delete_memory as delete_memory_impl,
 )
 from .tools import (
+    end_session as end_session_impl,
+)
+from .tools import (
     index_repository as index_repository_impl,
 )
 from .tools import (
     list_memories as list_memories_impl,
+)
+from .tools import (
+    recall_context as recall_context_impl,
+)
+from .tools import (
+    recent_context as recent_context_impl,
 )
 from .tools import (
     refresh_memory as refresh_memory_impl,
@@ -44,6 +57,9 @@ from .tools import (
     search_similar as search_similar_impl,
 )
 from .tools import (
+    store_decision as store_decision_impl,
+)
+from .tools import (
     store_memory as store_memory_impl,
 )
 from .tools import (
@@ -53,20 +69,30 @@ from .tools import (
     sync_commits as sync_commits_impl,
 )
 from .tools.schemas import (
+    CaptureParams,
+    CaptureResponse,
     CheckMemoryParams,
     CheckMemoryResponse,
     DeleteMemoryParams,
     DeleteMemoryResponse,
+    EndSessionParams,
+    EndSessionResponse,
     IndexRepositoryParams,
     IndexRepositoryResponse,
     ListMemoriesParams,
     ListMemoriesResponse,
+    RecallContextParams,
+    RecallContextResponse,
+    RecentContextParams,
+    RecentContextResponse,
     RefreshMemoryParams,
     RefreshMemoryResponse,
     RetrieveMemoryParams,
     RetrieveMemoryResponse,
     SearchSimilarParams,
     SearchSimilarResponse,
+    StoreDecisionParams,
+    StoreDecisionResponse,
     StoreMemoryParams,
     StoreMemoryResponse,
     SummarizeContextParams,
@@ -91,6 +117,7 @@ mcp = FastMCP("mememo", version=_VERSION)
 # Global state (initialized on startup)
 config: MemoConfig | None = None
 memory_manager: MemoryManager | None = None
+llm_adapter: LLMAdapter | None = None
 
 
 @mcp.resource("config://mememo")
@@ -166,8 +193,9 @@ async def initialize_mememo():
     - Embedder
     - Vector index
     - Memory manager
+    - LLM adapter (for capture tool)
     """
-    global config, memory_manager
+    global config, memory_manager, llm_adapter
 
     logger.info("=" * 60)
     logger.info("Initializing mememo v%s", _VERSION)
@@ -232,6 +260,11 @@ async def initialize_mememo():
     )
     logger.info("Memory manager initialized")
 
+    # Initialize LLM adapter (lazy — no API calls until capture is invoked)
+    llm_adapter = LLMAdapter()
+    mode = "passthrough" if llm_adapter.is_passthrough() else llm_adapter._provider()
+    logger.info("LLM adapter initialized (provider: %s)", mode)
+
     logger.info("mememo v%s initialized successfully", _VERSION)
 
 
@@ -286,6 +319,26 @@ async def store_memory(params: StoreMemoryParams) -> StoreMemoryResponse:
     await ensure_initialized()
     _audit_log("store_memory")
     return await store_memory_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def capture(params: CaptureParams) -> CaptureResponse:
+    """
+    Passive memory capture — extract and store memorable facts from raw text.
+
+    Pass any text (conversation snippet, session notes, observations). The
+    configured LLM extracts decisions, context, analysis, and other facts and
+    stores them automatically as the appropriate memory types.
+
+    Passthrough mode (default, no LLM configured): returns passthrough=True and
+    a passthrough_prompt you can use to self-extract by calling store_memory.
+
+    Configure a provider in mememo/config/providers.yaml or set
+    MEMEMO_LLM_CONFIG to a custom providers.yaml path.
+    """
+    await ensure_initialized()
+    _audit_log("capture")
+    return await capture_impl(params, memory_manager, llm_adapter)
 
 
 @mcp.tool()
@@ -483,6 +536,69 @@ async def refresh_memory(params: RefreshMemoryParams) -> RefreshMemoryResponse:
     await ensure_initialized()
     _audit_log("refresh_memory")
     return await refresh_memory_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def store_decision(params: StoreDecisionParams) -> StoreDecisionResponse:
+    """
+    Store a structured architectural decision.
+
+    Assembles canonical markdown from structured fields:
+    - Problem statement
+    - Alternatives considered
+    - Chosen option with rationale
+    - Outcome (optional)
+
+    Stored as a persistent 'decision' memory — never staled by code changes.
+    """
+    await ensure_initialized()
+    _audit_log("store_decision")
+    return await store_decision_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def end_session(params: EndSessionParams) -> EndSessionResponse:
+    """
+    Store a session summary as a persistent conversation memory.
+
+    Automatically prepends:
+    - ISO timestamp (UTC)
+    - Current git branch name
+
+    Use at the end of a working session to capture what was accomplished.
+    Stored as a 'conversation' memory — never staled by code changes.
+    """
+    await ensure_initialized()
+    _audit_log("end_session")
+    return await end_session_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def recall_context(params: RecallContextParams) -> RecallContextResponse:
+    """
+    Semantic search across persistent memory types only.
+
+    Searches: decision, analysis, context, conversation.
+    Excludes: code_snippet, relationship (code-bound types).
+
+    Uses a lower default similarity threshold (0.2) for broader recall.
+    """
+    await ensure_initialized()
+    _audit_log("recall_context")
+    return await recall_context_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def recent_context(params: RecentContextParams) -> RecentContextResponse:
+    """
+    Return the N most recent memories, sorted by creation date.
+
+    Pure SQL — no vector search. Useful for "what did I work on recently?"
+    Optionally filter by memory type.
+    """
+    await ensure_initialized()
+    _audit_log("recent_context")
+    return await recent_context_impl(params, memory_manager)
 
 
 def run():

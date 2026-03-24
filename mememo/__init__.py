@@ -16,6 +16,14 @@ try:
 except PackageNotFoundError:
     __version__ = "unknown"
 
-from .server import mcp, run
-
 __all__ = ["mcp", "run", "__version__"]
+
+
+def __getattr__(name: str):
+    if name in ("mcp", "run"):
+        from .server import mcp, run
+
+        globals()["mcp"] = mcp
+        globals()["run"] = run
+        return globals()[name]
+    raise AttributeError(f"module 'mememo' has no attribute {name!r}")
