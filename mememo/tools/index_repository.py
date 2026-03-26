@@ -87,7 +87,10 @@ async def index_repository(
         # Index each file
         files_indexed = 0
         chunks_created = 0
-        files_skipped = 0
+        skip_reasons: dict[str, int] = {}
+
+        def _skip(reason: str) -> None:
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
 
         for file_path in files_to_index:
             try:
@@ -96,6 +99,11 @@ async def index_repository(
 
                 # Chunk file with code-aware chunking
                 chunks = chunker_factory.chunk_file(content, str(file_path))
+
+                if not chunks:
+                    _skip("empty_chunks")
+                    logger.debug(f"Skipped {file_path.relative_to(repo_path)} (0 chunks produced)")
+                    continue
 
                 # Store each chunk as a memory
                 for chunk in chunks:
@@ -123,15 +131,14 @@ async def index_repository(
                 logger.debug(f"Indexed {file_path.relative_to(repo_path)} ({len(chunks)} chunks)")
 
             except UnicodeDecodeError:
-                # Binary file - skip
-                files_skipped += 1
+                _skip("binary")
                 logger.debug(f"Skipped binary file: {file_path}")
             except Exception as e:
-                # File processing error - skip and continue
-                files_skipped += 1
+                _skip("error")
                 logger.warning(f"Error indexing {file_path}: {e}")
 
         duration = time.time() - start_time
+        files_skipped = sum(skip_reasons.values())
 
         # Record the commit hash at time of indexing so sync_commits can diff from here
         try:
@@ -142,12 +149,18 @@ async def index_repository(
         except Exception as e:
             logger.warning(f"Could not record indexed commit (non-git repo?): {e}")
 
+        msg = f"Indexed {files_indexed} files ({chunks_created} chunks) in {duration:.2f}s"
+        if skip_reasons:
+            reason_parts = [f"{count} {reason}" for reason, count in sorted(skip_reasons.items())]
+            msg += f" | Skipped: {', '.join(reason_parts)}"
+
         return IndexRepositoryResponse(
             success=True,
-            message=f"Indexed {files_indexed} files ({chunks_created} chunks) in {duration:.2f}s",
+            message=msg,
             files_indexed=files_indexed,
             chunks_created=chunks_created,
             files_skipped=files_skipped,
+            skip_reasons=skip_reasons,
             duration_seconds=duration,
         )
 
