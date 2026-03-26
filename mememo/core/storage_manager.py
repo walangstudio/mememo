@@ -271,13 +271,19 @@ class StorageManager:
             if memory.relationships.depends_on:
                 cursor.executemany(
                     "INSERT INTO relationships (from_memory_id, to_memory_id, relationship_type) VALUES (?, ?, ?)",
-                    [(memory.id, dep_id, "depends_on") for dep_id in memory.relationships.depends_on],
+                    [
+                        (memory.id, dep_id, "depends_on")
+                        for dep_id in memory.relationships.depends_on
+                    ],
                 )
 
             if memory.relationships.related_to:
                 cursor.executemany(
                     "INSERT INTO relationships (from_memory_id, to_memory_id, relationship_type) VALUES (?, ?, ?)",
-                    [(memory.id, rel_id, "related_to") for rel_id in memory.relationships.related_to],
+                    [
+                        (memory.id, rel_id, "related_to")
+                        for rel_id in memory.relationships.related_to
+                    ],
                 )
 
             self.conn.commit()
