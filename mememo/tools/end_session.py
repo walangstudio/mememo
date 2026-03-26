@@ -25,7 +25,7 @@ async def end_session(
         try:
             git_context = await memory_manager.git_manager.detect_context()
             branch = git_context.branch.name
-        except RuntimeError:
+        except Exception:
             branch = "unknown"
 
         content = f"## Session — {timestamp} [{branch}]\n\n{params.summary}"
