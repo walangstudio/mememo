@@ -236,6 +236,10 @@ class IndexRepositoryResponse(BaseModel):
     files_indexed: int = Field(description="Number of files indexed")
     chunks_created: int = Field(description="Number of chunks created")
     files_skipped: int = Field(description="Number of files skipped (unchanged)")
+    skip_reasons: dict[str, int] = Field(
+        default_factory=dict,
+        description="Breakdown of skip reasons (e.g. {'binary': 5, 'empty_chunks': 12, 'error': 1})",
+    )
     duration_seconds: float = Field(description="Indexing duration in seconds")
 
 

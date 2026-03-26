@@ -200,6 +200,9 @@ class StorageManager:
         # Ensure content directory exists
         content_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Track whether blob existed before this call (content-addressable dedup)
+        blob_existed = content_path.exists()
+
         # Save content blob (deduplicated by checksum)
         content_blob = {
             "text": memory.content.text,
@@ -217,66 +220,81 @@ class StorageManager:
         # Get relative path for storage
         content_ref = str(content_path.relative_to(self.base_dir))
 
-        # Insert into SQLite
-        cursor = self.conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO memories (
-                id, repo_id, repo_name, repo_path, branch_name, commit_hash,
-                content_type, file_path, line_start, line_end,
-                function_name, class_name, language, chunk_type,
-                checksum, content_ref, token_count, created_at, updated_at,
-                embedding_shard, embedding_index, stale, stale_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                memory.id,
-                memory.repo.id,
-                memory.repo.name,
-                memory.repo.path,
-                memory.branch.name,
-                memory.branch.commit_hash,
-                memory.content.type,
-                memory.content.file_path,
-                memory.content.line_range[0] if memory.content.line_range else None,
-                memory.content.line_range[1] if memory.content.line_range else None,
-                memory.content.function_name,
-                memory.content.class_name,
-                memory.content.language,
-                self._infer_chunk_type(memory.content),
-                memory.metadata.checksum,
-                content_ref,
-                memory.metadata.token_count,
-                int(memory.metadata.created_at.timestamp()),
-                int(memory.metadata.updated_at.timestamp()),
-                memory.metadata.embedding_shard,
-                memory.metadata.embedding_index,
-                1 if memory.metadata.stale else 0,
-                memory.metadata.stale_reason,
-            ),
-        )
-
-        # Insert tags
-        if memory.metadata.tags:
-            cursor.executemany(
-                "INSERT INTO tags (memory_id, tag) VALUES (?, ?)",
-                [(memory.id, tag) for tag in memory.metadata.tags],
+        # Insert into SQLite — roll back and clean up JSON blob on failure
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO memories (
+                    id, repo_id, repo_name, repo_path, branch_name, commit_hash,
+                    content_type, file_path, line_start, line_end,
+                    function_name, class_name, language, chunk_type,
+                    checksum, content_ref, token_count, created_at, updated_at,
+                    embedding_shard, embedding_index, stale, stale_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    memory.id,
+                    memory.repo.id,
+                    memory.repo.name,
+                    memory.repo.path,
+                    memory.branch.name,
+                    memory.branch.commit_hash,
+                    memory.content.type,
+                    memory.content.file_path,
+                    memory.content.line_range[0] if memory.content.line_range else None,
+                    memory.content.line_range[1] if memory.content.line_range else None,
+                    memory.content.function_name,
+                    memory.content.class_name,
+                    memory.content.language,
+                    self._infer_chunk_type(memory.content),
+                    memory.metadata.checksum,
+                    content_ref,
+                    memory.metadata.token_count,
+                    int(memory.metadata.created_at.timestamp()),
+                    int(memory.metadata.updated_at.timestamp()),
+                    memory.metadata.embedding_shard,
+                    memory.metadata.embedding_index,
+                    1 if memory.metadata.stale else 0,
+                    memory.metadata.stale_reason,
+                ),
             )
 
-        # Insert relationships
-        if memory.relationships.depends_on:
-            cursor.executemany(
-                "INSERT INTO relationships (from_memory_id, to_memory_id, relationship_type) VALUES (?, ?, ?)",
-                [(memory.id, dep_id, "depends_on") for dep_id in memory.relationships.depends_on],
-            )
+            # Insert tags
+            if memory.metadata.tags:
+                cursor.executemany(
+                    "INSERT INTO tags (memory_id, tag) VALUES (?, ?)",
+                    [(memory.id, tag) for tag in memory.metadata.tags],
+                )
 
-        if memory.relationships.related_to:
-            cursor.executemany(
-                "INSERT INTO relationships (from_memory_id, to_memory_id, relationship_type) VALUES (?, ?, ?)",
-                [(memory.id, rel_id, "related_to") for rel_id in memory.relationships.related_to],
-            )
+            # Insert relationships
+            if memory.relationships.depends_on:
+                cursor.executemany(
+                    "INSERT INTO relationships (from_memory_id, to_memory_id, relationship_type) VALUES (?, ?, ?)",
+                    [
+                        (memory.id, dep_id, "depends_on")
+                        for dep_id in memory.relationships.depends_on
+                    ],
+                )
 
-        self.conn.commit()
+            if memory.relationships.related_to:
+                cursor.executemany(
+                    "INSERT INTO relationships (from_memory_id, to_memory_id, relationship_type) VALUES (?, ?, ?)",
+                    [
+                        (memory.id, rel_id, "related_to")
+                        for rel_id in memory.relationships.related_to
+                    ],
+                )
+
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            if not blob_existed:
+                try:
+                    content_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
 
     def _infer_chunk_type(self, content: MemoryContent) -> str:
         """Infer chunk type from content metadata."""
