@@ -39,6 +39,7 @@ def test_all_below_similarity_threshold():
 def test_tier1_full_text():
     cfg = BuilderConfig(base_budget=500, min_budget=100, max_budget=1000)
     builder = AdaptiveContextBuilder("debugging", 0.8, cfg)
+    # High similarity + top priority type (analysis for debugging) -> composite >= 0.75
     results = [_make_result(0.9, "analysis", "Important bug analysis about memory leak")]
     result = builder.build(results)
     assert result.block is not None

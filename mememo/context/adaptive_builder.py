@@ -41,7 +41,9 @@ class AdaptiveContextBuilder:
         self._config = config
 
     def _compute_effective_budget(self, best_composite: float) -> int:
-        quality_multiplier = 0.5 + best_composite
+        # Conservative scaling: only expand when quality is clearly high
+        # best_composite range ~0.3-1.0 -> multiplier range 0.6-1.2
+        quality_multiplier = 0.3 + best_composite * 0.9
         raw = int(self._config.base_budget * quality_multiplier)
         return max(self._config.min_budget, min(self._config.max_budget, raw))
 
@@ -128,11 +130,11 @@ class AdaptiveContextBuilder:
             mem = r.memory
 
             # Determine tier and format
-            if composite >= 0.7:
+            if composite >= 0.75:
                 entry = self._format_tier1(mem)
-            elif composite >= 0.5:
+            elif composite >= 0.55:
                 entry = self._format_tier2(mem)
-            elif composite >= 0.3:
+            elif composite >= 0.4:
                 entry = self._format_tier3(mem)
             else:
                 continue
@@ -141,7 +143,7 @@ class AdaptiveContextBuilder:
 
             # Downgrade tier if entry doesn't fit in budget
             if used_tokens + entry_tokens > effective_budget:
-                if composite >= 0.5:
+                if composite >= 0.55:
                     entry = self._format_tier2(mem)
                     entry_tokens = count_tokens(entry)
                 if used_tokens + entry_tokens > effective_budget:
