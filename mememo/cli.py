@@ -118,6 +118,67 @@ def _build_context_block(results, budget: int, min_similarity: float) -> str | N
     return "\n".join(lines)
 
 
+def _smart_context_build(results, user_prompt, cfg, srv):
+    """Build context using intent-aware adaptive builder with optional skill injection."""
+    from .context.adaptive_builder import AdaptiveContextBuilder, BuilderConfig
+    from .context.intent_classifier import IntentClassifier
+
+    classifier = IntentClassifier(
+        embedder=srv.memory_manager.embedder,
+        cache_dir=cfg.storage.base_dir,
+    )
+    prompt_embedding = srv.memory_manager.embedder.embed_query(user_prompt)
+    intent_result = classifier.classify(
+        prompt_embedding, confidence_threshold=cfg.hook.intent_confidence_threshold
+    )
+
+    # Skill injection (reuse the skill_store from server globals)
+    skill_block = None
+    skill_tokens_used = 0
+    if cfg.hook.skill_injection_enabled and srv.skill_store is not None:
+        skills = srv.skill_store.get_skills_for_intent(intent_result.intent, cfg.hook.skill_token_budget)
+        if skills:
+            skill_lines = [s.prompt.strip() for s in skills]
+            skill_block = "\n".join(skill_lines)
+            from .utils.token_counter import count_tokens
+
+            skill_tokens_used = count_tokens(skill_block)
+            print(
+                f"mememo inject: skills={len(skills)} skill_tokens={skill_tokens_used}",
+                file=sys.stderr,
+            )
+
+    builder_cfg = BuilderConfig(
+        base_budget=cfg.hook.inject_token_budget,
+        min_budget=cfg.hook.inject_token_budget_min,
+        max_budget=cfg.hook.inject_token_budget_max,
+        min_similarity=cfg.hook.inject_min_similarity,
+    )
+    builder = AdaptiveContextBuilder(
+        intent=intent_result.intent,
+        intent_confidence=intent_result.confidence,
+        config=builder_cfg,
+    )
+    build_result = builder.build(results, skill_tokens_used=skill_tokens_used)
+
+    # Combine skill block + memory block
+    combined_block = None
+    if skill_block and build_result.block:
+        combined_block = f"{skill_block}\n\n{build_result.block}"
+    elif skill_block:
+        combined_block = skill_block
+    elif build_result.block:
+        combined_block = build_result.block
+
+    print(
+        f"mememo inject: intent={intent_result.intent} confidence={intent_result.confidence:.2f}"
+        f" effective_budget={build_result.effective_budget} entries={build_result.entries_included}",
+        file=sys.stderr,
+    )
+
+    return combined_block, build_result
+
+
 async def cmd_capture() -> None:
     """Stop hook: read transcript tail and auto-capture memories."""
     from .server import initialize_mememo
@@ -158,8 +219,47 @@ async def cmd_capture() -> None:
     # Re-import after initialization to get populated globals
     import mememo.server as srv
 
+    # Response compression: preprocess transcript and find existing memories
+    existing_summaries = None
+    if cfg.hook.response_compression_enabled:
+        from .context.response_compressor import ResponseCompressor
+
+        compressor = ResponseCompressor()
+        original_len = len(text)
+        text = compressor.preprocess(text)
+        print(
+            f"mememo capture: compressed {original_len} -> {len(text)} chars",
+            file=sys.stderr,
+        )
+
+        # Find existing similar memories to prevent re-extraction
+        try:
+            from .types.memory import SearchParams
+
+            dedup_results = await srv.memory_manager.search_similar(
+                SearchParams(
+                    query=text[:500],  # use first 500 chars as query
+                    top_k=5,
+                    min_similarity=cfg.hook.capture_dedup_similarity,
+                    include_stale=False,
+                )
+            )
+            if dedup_results:
+                existing_summaries = [
+                    f"[{r.memory.content.type}] {r.memory.summary.one_line}"
+                    for r in dedup_results
+                ]
+                print(
+                    f"mememo capture: found {len(existing_summaries)} existing similar memories",
+                    file=sys.stderr,
+                )
+        except Exception as e:
+            print(f"mememo capture: dedup search failed: {e}", file=sys.stderr)
+
     params = CaptureParams(text=text)
-    result = await capture_impl(params, srv.memory_manager, srv.llm_adapter)
+    result = await capture_impl(
+        params, srv.memory_manager, srv.llm_adapter, existing_summaries=existing_summaries
+    )
 
     print(
         f"mememo capture: stored={result.stored_count} passthrough={result.passthrough}",
@@ -215,17 +315,27 @@ async def cmd_inject() -> None:
     )
     results = await srv.memory_manager.search_similar(search_params)
 
-    block = _build_context_block(
-        results,
-        budget=cfg.hook.inject_token_budget,
-        min_similarity=cfg.hook.inject_min_similarity,
-    )
+    if cfg.hook.smart_context_enabled:
+        block, inject_meta = _smart_context_build(results, user_prompt, cfg, srv)
+    else:
+        block = _build_context_block(
+            results,
+            budget=cfg.hook.inject_token_budget,
+            min_similarity=cfg.hook.inject_min_similarity,
+        )
+        inject_meta = None
 
     if block:
         system_msg = f"Relevant memories from previous sessions:\n{block}"
         token_count = count_tokens(system_msg)
+        meta_str = ""
+        if inject_meta:
+            meta_str = (
+                f" intent={inject_meta.intent}({inject_meta.intent_confidence:.2f})"
+                f" budget={inject_meta.effective_budget}"
+            )
         print(
-            f"mememo inject: candidates={len(results)} injected_tokens={token_count}",
+            f"mememo inject: candidates={len(results)} injected_tokens={token_count}{meta_str}",
             file=sys.stderr,
         )
         print(json.dumps({"continue": True, "systemMessage": system_msg}))
