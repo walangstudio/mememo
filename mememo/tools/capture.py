@@ -85,6 +85,7 @@ async def capture(
     params: CaptureParams,
     memory_manager: "MemoryManager",
     llm_adapter: "LLMAdapter",
+    existing_summaries: list[str] | None = None,
 ) -> CaptureResponse:
     if llm_adapter.is_passthrough():
         return CaptureResponse(
@@ -100,7 +101,13 @@ async def capture(
     if params.hint:
         user_prompt = f"Hint: {params.hint}\n\n{params.text}"
 
-    raw = await llm_adapter.complete(_SYSTEM_PROMPT, user_prompt)
+    system_prompt = _SYSTEM_PROMPT
+    if existing_summaries:
+        from ..context.response_compressor import ResponseCompressor
+
+        system_prompt = ResponseCompressor.build_enhanced_prompt(system_prompt, existing_summaries)
+
+    raw = await llm_adapter.complete(system_prompt, user_prompt)
     if raw is None:
         return CaptureResponse(
             success=True,

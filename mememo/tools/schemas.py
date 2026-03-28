@@ -448,3 +448,74 @@ class CaptureResponse(BaseModel):
         default=None,
         description="Extraction instructions for the calling model when passthrough=True",
     )
+
+
+# ============================================================================
+# manage_skill tool
+# ============================================================================
+
+
+class ManageSkillParams(BaseModel):
+    """Parameters for managing skill prompt templates."""
+
+    action: Literal["create", "list", "get", "delete"] = Field(
+        description="Action to perform: create, list, get, or delete"
+    )
+    name: str | None = Field(default=None, description="Skill name (required for create/get/delete)")
+    intent: str | None = Field(
+        default=None,
+        description="Intent category: coding, debugging, architecture, testing, review, general",
+    )
+    prompt: str | None = Field(default=None, description="Skill prompt text (required for create)")
+    priority: int | None = Field(default=None, description="Priority (higher = selected first)")
+    tags: list[str] | None = Field(default=None, description="Tags for categorization")
+
+
+class ManageSkillResponse(BaseModel):
+    """Response from manage_skill."""
+
+    success: bool = Field(description="Whether the operation was successful")
+    message: str = Field(description="Success or error message")
+    skills: list[dict] = Field(default_factory=list, description="Skill data")
+
+
+# ============================================================================
+# cleanup_memory tool
+# ============================================================================
+
+
+class CleanupMemoryParams(BaseModel):
+    """Parameters for controlled memory cleanup."""
+
+    older_than_days: int | None = Field(
+        default=None, description="Delete memories older than N days"
+    )
+    type: MemoryContentType | None = Field(
+        default=None, description="Only clean specific memory type"
+    )
+    dedup: bool = Field(
+        default=False, description="Remove exact-duplicate memories (same content checksum)"
+    )
+    dedup_similarity: float = Field(
+        default=0.95,
+        ge=0.0,
+        le=1.0,
+        description="Similarity threshold for dedup (unused when dedup uses checksum)",
+    )
+    stale_only: bool = Field(
+        default=False, description="Only delete stale code memories (source file changed)"
+    )
+    dry_run: bool = Field(
+        default=True, description="Preview what would be deleted without actually deleting"
+    )
+
+
+class CleanupMemoryResponse(BaseModel):
+    """Response from cleanup_memory."""
+
+    success: bool = Field(description="Whether cleanup was successful")
+    message: str = Field(description="Summary message")
+    candidates: list[dict] = Field(
+        default_factory=list, description="Memories that were (or would be) deleted"
+    )
+    deleted_count: int = Field(default=0, description="Number of memories actually deleted")
