@@ -18,6 +18,8 @@
 - **📂 Git-Aware**: Automatic branch isolation
 - **⚡ Incremental**: Only re-index changed files (Merkle DAG)
 - **🤖 Passive Hooks**: Auto-capture memories and inject context without any user action
+- **🧠 Smart Context**: Intent-aware injection with dynamic token budgets (22-43% savings)
+- **🧹 Manual Cleanup**: Controlled memory cleanup with dry-run preview (no silent auto-expiry)
 
 ### Passive Hooks (Claude Code)
 
@@ -28,6 +30,18 @@ mememo integrates with Claude Code hooks to make memory fully automatic:
 **UserPromptSubmit hook** — fires synchronously before Claude processes each message. Runs a semantic search against your memory store and injects relevant results as a system message, within a configurable token budget (800 tokens by default). Nothing is injected if no results exceed the similarity threshold.
 
 See [hooks/README.md](hooks/README.md) for setup instructions.
+
+### Smart Context Selection
+
+When `MEMEMO_SMART_CONTEXT_ENABLED=true` (default), the inject hook uses intent-aware context selection instead of fixed-budget injection:
+
+- **Intent classification**: Classifies each prompt into one of 6 categories (coding, debugging, architecture, testing, review, general) using embedding cosine similarity against pre-computed centroids. No LLM call, ~0.01ms latency.
+- **Adaptive budget**: Token budget dynamically scales based on result quality. High-relevance matches get more context, low-relevance queries get less noise.
+- **Progressive compression**: Memories are formatted at three tiers based on relevance — full text, one-line summary with location, or one-line summary only.
+- **Skill injection**: Reusable prompt templates stored as YAML files are automatically injected based on the detected intent. Manage skills via the `manage_skill` MCP tool.
+- **Response compression**: The capture hook preprocesses transcripts to strip tool blocks, progress bars, and redundant content before extraction — 55% token reduction on typical transcripts.
+
+Set `MEMEMO_SMART_CONTEXT_ENABLED=false` to revert to the legacy fixed-budget behavior.
 
 ### Supported Languages
 
@@ -171,13 +185,38 @@ export MEMEMO_HOOK_CAPTURE_LINES="100"
 export MEMEMO_HOOK_CAPTURE_ENABLED="true"
 export MEMEMO_HOOK_INJECT_ENABLED="true"
 
-# TTL for conversation memories in days — 0 = no expiry (default: 30)
-export MEMEMO_TTL_CONVERSATION_DAYS="30"
+# TTL for conversation memories in days — 0 = no expiry (default: 0)
+export MEMEMO_TTL_CONVERSATION_DAYS="0"
 
-# TTL for context memories in days — 0 = no expiry (default: 90)
-export MEMEMO_TTL_CONTEXT_DAYS="90"
+# TTL for context memories in days — 0 = no expiry (default: 0)
+export MEMEMO_TTL_CONTEXT_DAYS="0"
 
 # decision, analysis, and summary memories never auto-expire
+# Use the cleanup_memory MCP tool for manual, controlled cleanup
+```
+
+### Smart Context Configuration
+
+```bash
+# Enable intent-aware adaptive context selection (default: true)
+export MEMEMO_SMART_CONTEXT_ENABLED="true"
+
+# Min confidence for intent classification; below this, falls back to 'general' (default: 0.3)
+export MEMEMO_INTENT_CONFIDENCE_THRESHOLD="0.3"
+
+# Dynamic token budget bounds (default: 200-1200, base 800)
+export MEMEMO_HOOK_INJECT_TOKEN_BUDGET_MIN="200"
+export MEMEMO_HOOK_INJECT_TOKEN_BUDGET_MAX="1200"
+
+# Skill prompt injection (default: true, 200 token budget)
+export MEMEMO_SKILL_INJECTION_ENABLED="true"
+export MEMEMO_SKILL_TOKEN_BUDGET="200"
+
+# Response compression before capture (default: true)
+export MEMEMO_RESPONSE_COMPRESSION_ENABLED="true"
+
+# Similarity threshold for dedup during capture (default: 0.85)
+export MEMEMO_CAPTURE_DEDUP_SIMILARITY="0.85"
 ```
 
 ### Encryption (optional)
@@ -577,6 +616,7 @@ extensions:
 | `capture` | Extract and store memorable facts from raw text via LLM; deduplicates at 0.97 similarity |
 | `refresh_memory` | Update an existing memory's content |
 | `delete_memory` | Delete a memory by ID |
+| `cleanup_memory` | Manual cleanup: age-based, stale, or dedup (dry-run by default) |
 
 #### Memory Retrieval
 
@@ -597,6 +637,12 @@ extensions:
 | `index_repository` | Batch-index a codebase (incremental by default) |
 | `sync_commits` | Sync recent git commits to update stale code memories |
 | `end_session` | Close the session and persist indexes |
+
+#### Smart Context
+
+| Tool | Purpose |
+|------|---------|
+| `manage_skill` | Create, list, get, or delete skill prompt templates |
 
 #### Example usage
 
@@ -634,7 +680,7 @@ list_memories({
 
 ```
 mememo/
-├── server.py              # FastMCP server (15 MCP tools)
+├── server.py              # FastMCP server (17 MCP tools)
 ├── cli.py                 # Hook CLI (capture --hook, inject --hook)
 ├── core/                  # Core managers
 │   ├── memory_manager.py  # Orchestrates all memory ops
@@ -642,6 +688,11 @@ mememo/
 │   ├── storage_manager.py # SQLite + JSON blob storage
 │   ├── vector_index.py    # FAISS vector index (sharded)
 │   └── git_manager.py     # Git context detection
+├── context/               # Smart context selection
+│   ├── intent_classifier.py   # Embedding-based intent classification
+│   ├── adaptive_builder.py    # Dynamic budget context assembly
+│   ├── skill_store.py         # YAML skill template management
+│   └── response_compressor.py # Transcript preprocessing for capture
 ├── chunking/              # Code-aware chunking (AST + tree-sitter)
 ├── embeddings/            # Sentence transformers (MiniLM / Gemma)
 ├── indexing/              # Merkle DAG for incremental indexing
@@ -661,6 +712,12 @@ mememo/
 - Embedding: ~20ms/chunk
 - Search: <10ms for 10k memories
 - Index 1000 files: ~2-5 min
+- Intent classification: ~0.01ms (cached centroids)
+- Adaptive context build: ~0.3ms
+- Skill store query: ~0.07ms
+- Response compression: ~0.13ms
+- Token savings (inject): 22-43% vs legacy fixed-budget
+- Token savings (capture): ~55% via transcript preprocessing
 
 ## 🧪 Testing
 
