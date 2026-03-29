@@ -22,6 +22,7 @@ import numpy as np
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_mock_memory(mem_type, text, similarity, created_days_ago=0, file_path=None):
     r = MagicMock()
     r.similarity = similarity
@@ -36,18 +37,81 @@ def _make_mock_memory(mem_type, text, similarity, created_days_ago=0, file_path=
 
 
 SAMPLE_RESULTS = [
-    _make_mock_memory("decision", "Chose SQLite over PostgreSQL for metadata storage because it's embedded, zero-config, and sufficient for the expected data volume. PostgreSQL would add deployment complexity.", 0.82, 5),
-    _make_mock_memory("analysis", "Memory leak in vector index caused by shards not being evicted from LRU cache when branch switches. Fixed by clearing cache on branch change detection.", 0.75, 2),
-    _make_mock_memory("code_snippet", "def search_similar(self, params):\n    query_embedding = self.embedder.embed_query(params.query)\n    vi = self._get_vector_index(context.repo.id, context.branch.name)\n    distances, memory_ids = vi.search(query_embedding=query_embedding.tolist(), top_k=top_k)", 0.68, 1, "mememo/core/memory_manager.py"),
-    _make_mock_memory("context", "mememo uses FAISS with automatic sharding at 50k vectors per shard. Each shard is lazy-loaded and evicted after 5 minutes of inactivity.", 0.65, 10),
-    _make_mock_memory("code_snippet", "class VectorIndex:\n    SHARD_SIZE = 50000\n    def __init__(self, base_path, repo_id, branch, dimension):\n        self.base_path = base_path\n        self.repo_id = repo_id", 0.60, 3, "mememo/core/vector_index.py"),
-    _make_mock_memory("conversation", "Session: worked on passive hooks integration. Added stop hook for auto-capture and user-prompt-submit hook for context injection. Both working in Claude Code.", 0.55, 7),
-    _make_mock_memory("context", "The embedder supports two models: minilm (384-dim, 90MB, default) and gemma (768-dim, 1200MB, experimental). Device auto-detection: CUDA > MPS > CPU.", 0.50, 15),
-    _make_mock_memory("relationship", "memory_manager depends on storage_manager, vector_index, embedder, and git_manager", 0.45, 20),
-    _make_mock_memory("code_snippet", "def _build_context_block(results, budget, min_similarity):\n    code_types = {'code_snippet', 'relationship'}\n    persistent = []\n    code = []", 0.40, 1, "mememo/cli.py"),
-    _make_mock_memory("summary", "mememo v0.3.0 added passive hooks, capture tool, store_decision, recall_context, recent_context, multi-provider LLM adapter, and type-differentiated TTL.", 0.35, 30),
-    _make_mock_memory("context", "Incremental indexing uses a Merkle DAG with SHA-256 file hashes stored in ~/.mememo/merkle/file_hashes.json", 0.32, 25),
-    _make_mock_memory("decision", "Decided to use sentence-transformers/all-MiniLM-L6-v2 as default embedding model. Good balance of quality, speed, and size (90MB).", 0.30, 40),
+    _make_mock_memory(
+        "decision",
+        "Chose SQLite over PostgreSQL for metadata storage because it's embedded, zero-config, and sufficient for the expected data volume. PostgreSQL would add deployment complexity.",
+        0.82,
+        5,
+    ),
+    _make_mock_memory(
+        "analysis",
+        "Memory leak in vector index caused by shards not being evicted from LRU cache when branch switches. Fixed by clearing cache on branch change detection.",
+        0.75,
+        2,
+    ),
+    _make_mock_memory(
+        "code_snippet",
+        "def search_similar(self, params):\n    query_embedding = self.embedder.embed_query(params.query)\n    vi = self._get_vector_index(context.repo.id, context.branch.name)\n    distances, memory_ids = vi.search(query_embedding=query_embedding.tolist(), top_k=top_k)",
+        0.68,
+        1,
+        "mememo/core/memory_manager.py",
+    ),
+    _make_mock_memory(
+        "context",
+        "mememo uses FAISS with automatic sharding at 50k vectors per shard. Each shard is lazy-loaded and evicted after 5 minutes of inactivity.",
+        0.65,
+        10,
+    ),
+    _make_mock_memory(
+        "code_snippet",
+        "class VectorIndex:\n    SHARD_SIZE = 50000\n    def __init__(self, base_path, repo_id, branch, dimension):\n        self.base_path = base_path\n        self.repo_id = repo_id",
+        0.60,
+        3,
+        "mememo/core/vector_index.py",
+    ),
+    _make_mock_memory(
+        "conversation",
+        "Session: worked on passive hooks integration. Added stop hook for auto-capture and user-prompt-submit hook for context injection. Both working in Claude Code.",
+        0.55,
+        7,
+    ),
+    _make_mock_memory(
+        "context",
+        "The embedder supports two models: minilm (384-dim, 90MB, default) and gemma (768-dim, 1200MB, experimental). Device auto-detection: CUDA > MPS > CPU.",
+        0.50,
+        15,
+    ),
+    _make_mock_memory(
+        "relationship",
+        "memory_manager depends on storage_manager, vector_index, embedder, and git_manager",
+        0.45,
+        20,
+    ),
+    _make_mock_memory(
+        "code_snippet",
+        "def _build_context_block(results, budget, min_similarity):\n    code_types = {'code_snippet', 'relationship'}\n    persistent = []\n    code = []",
+        0.40,
+        1,
+        "mememo/cli.py",
+    ),
+    _make_mock_memory(
+        "summary",
+        "mememo v0.3.0 added passive hooks, capture tool, store_decision, recall_context, recent_context, multi-provider LLM adapter, and type-differentiated TTL.",
+        0.35,
+        30,
+    ),
+    _make_mock_memory(
+        "context",
+        "Incremental indexing uses a Merkle DAG with SHA-256 file hashes stored in ~/.mememo/merkle/file_hashes.json",
+        0.32,
+        25,
+    ),
+    _make_mock_memory(
+        "decision",
+        "Decided to use sentence-transformers/all-MiniLM-L6-v2 as default embedding model. Good balance of quality, speed, and size (90MB).",
+        0.30,
+        40,
+    ),
 ]
 
 SAMPLE_PROMPTS = {
@@ -137,6 +201,7 @@ user: That looks right. Can you also add a test for this?
 # 1. Intent Classification
 # ---------------------------------------------------------------------------
 
+
 def bench_intent_classification():
     print("=" * 70)
     print("1. INTENT CLASSIFICATION BENCHMARK")
@@ -169,8 +234,10 @@ def bench_intent_classification():
         latencies.extend(times)
         results[intent_name] = result
 
-    print(f"  Classification latency (cached): {statistics.mean(latencies):.3f}ms avg, "
-          f"{statistics.stdev(latencies):.3f}ms stdev, {max(latencies):.3f}ms max")
+    print(
+        f"  Classification latency (cached): {statistics.mean(latencies):.3f}ms avg, "
+        f"{statistics.stdev(latencies):.3f}ms stdev, {max(latencies):.3f}ms max"
+    )
 
     # Accuracy
     print("\n  Classification accuracy:")
@@ -194,6 +261,7 @@ def bench_intent_classification():
 # ---------------------------------------------------------------------------
 # 2. Adaptive Builder vs Legacy
 # ---------------------------------------------------------------------------
+
 
 def bench_adaptive_vs_legacy():
     print("\n" + "=" * 70)
@@ -221,17 +289,22 @@ def bench_adaptive_vs_legacy():
         adaptive_time = (time.perf_counter() - t0) * 1000
         adaptive_tokens = result.tokens_used
 
-        savings = ((legacy_tokens - adaptive_tokens) / legacy_tokens * 100) if legacy_tokens > 0 else 0
+        savings = (
+            ((legacy_tokens - adaptive_tokens) / legacy_tokens * 100) if legacy_tokens > 0 else 0
+        )
         print(f"\n  Intent: {intent}")
         print(f"    Legacy:   {legacy_tokens:4d} tokens, {legacy_time:.2f}ms")
-        print(f"    Adaptive: {adaptive_tokens:4d} tokens, {adaptive_time:.2f}ms, "
-              f"budget={result.effective_budget}, entries={result.entries_included}")
+        print(
+            f"    Adaptive: {adaptive_tokens:4d} tokens, {adaptive_time:.2f}ms, "
+            f"budget={result.effective_budget}, entries={result.entries_included}"
+        )
         print(f"    Token delta: {legacy_tokens - adaptive_tokens:+d} ({savings:+.1f}%)")
 
 
 # ---------------------------------------------------------------------------
 # 3. Skill Store
 # ---------------------------------------------------------------------------
+
 
 def bench_skill_store():
     print("\n" + "=" * 70)
@@ -246,7 +319,9 @@ def bench_skill_store():
     # Create skills
     for i in range(20):
         intent = ["coding", "debugging", "architecture", "testing", "review"][i % 5]
-        store.create_skill(f"skill-{i}", intent, f"Skill prompt content number {i} " * 10, priority=i)
+        store.create_skill(
+            f"skill-{i}", intent, f"Skill prompt content number {i} " * 10, priority=i
+        )
 
     # Cold load
     store2 = SkillStore(base_dir=tmpdir)
@@ -274,6 +349,7 @@ def bench_skill_store():
 # ---------------------------------------------------------------------------
 # 4. Response Compressor
 # ---------------------------------------------------------------------------
+
 
 def bench_response_compressor():
     print("\n" + "=" * 70)
@@ -315,12 +391,15 @@ def bench_response_compressor():
     # Enhanced prompt
     summaries = ["[decision] Chose SQLite over PostgreSQL", "[context] FAISS sharding at 50k"]
     enhanced = ResponseCompressor.build_enhanced_prompt("Base prompt.", summaries)
-    print(f"\n  Enhanced prompt adds {count_tokens(enhanced) - count_tokens('Base prompt.')} tokens for {len(summaries)} existing memories")
+    print(
+        f"\n  Enhanced prompt adds {count_tokens(enhanced) - count_tokens('Base prompt.')} tokens for {len(summaries)} existing memories"
+    )
 
 
 # ---------------------------------------------------------------------------
 # 5. End-to-end token comparison
 # ---------------------------------------------------------------------------
+
 
 def bench_e2e_token_comparison():
     print("\n" + "=" * 70)

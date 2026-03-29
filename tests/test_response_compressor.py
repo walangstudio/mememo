@@ -64,10 +64,13 @@ def test_build_enhanced_prompt_empty():
 
 
 def test_build_enhanced_prompt_with_summaries():
-    result = ResponseCompressor.build_enhanced_prompt("base prompt", [
-        "[decision] Use SQLite",
-        "[context] Python project",
-    ])
+    result = ResponseCompressor.build_enhanced_prompt(
+        "base prompt",
+        [
+            "[decision] Use SQLite",
+            "[context] Python project",
+        ],
+    )
     assert "Already stored" in result
     assert "Use SQLite" in result
     assert "Python project" in result

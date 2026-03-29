@@ -66,7 +66,4 @@ class ResponseCompressor:
             return base_prompt
 
         already_known = "\n".join(f"- {s}" for s in existing_summaries[:20])
-        return (
-            f"{base_prompt}\n\n"
-            f"Already stored (do NOT re-extract these):\n{already_known}"
-        )
+        return f"{base_prompt}\n\n" f"Already stored (do NOT re-extract these):\n{already_known}"

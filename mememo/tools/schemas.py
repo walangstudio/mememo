@@ -461,7 +461,9 @@ class ManageSkillParams(BaseModel):
     action: Literal["create", "list", "get", "delete"] = Field(
         description="Action to perform: create, list, get, or delete"
     )
-    name: str | None = Field(default=None, description="Skill name (required for create/get/delete)")
+    name: str | None = Field(
+        default=None, description="Skill name (required for create/get/delete)"
+    )
     intent: str | None = Field(
         default=None,
         description="Intent category: coding, debugging, architecture, testing, review, general",

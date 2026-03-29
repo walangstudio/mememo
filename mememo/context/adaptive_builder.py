@@ -52,7 +52,9 @@ class AdaptiveContextBuilder:
         age_days = (time.time() - created_at_epoch) / 86400
         return max(0.3, math.exp(-age_days / 60))
 
-    def _composite_score(self, similarity: float, memory_type: str, created_at_epoch: float) -> float:
+    def _composite_score(
+        self, similarity: float, memory_type: str, created_at_epoch: float
+    ) -> float:
         type_priority = IntentClassifier.get_type_priority(self._intent, memory_type)
         recency = self._recency_score(created_at_epoch)
         return similarity * 0.6 + type_priority * 0.3 + recency * 0.1
