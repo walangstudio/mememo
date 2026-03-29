@@ -3,9 +3,7 @@
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
-import pytest
-
-from mememo.context.adaptive_builder import AdaptiveContextBuilder, BuilderConfig, BuildResult
+from mememo.context.adaptive_builder import AdaptiveContextBuilder, BuilderConfig
 
 
 def _make_result(similarity, mem_type, text, created_days_ago=0, file_path=None):

@@ -30,6 +30,9 @@ from .tools import (
     check_memory as check_memory_impl,
 )
 from .tools import (
+    cleanup_memory as cleanup_memory_impl,
+)
+from .tools import (
     delete_memory as delete_memory_impl,
 )
 from .tools import (
@@ -40,6 +43,9 @@ from .tools import (
 )
 from .tools import (
     list_memories as list_memories_impl,
+)
+from .tools import (
+    manage_skill as manage_skill_impl,
 )
 from .tools import (
     recall_context as recall_context_impl,
@@ -68,17 +74,13 @@ from .tools import (
 from .tools import (
     sync_commits as sync_commits_impl,
 )
-from .tools import (
-    manage_skill as manage_skill_impl,
-)
-from .tools import (
-    cleanup_memory as cleanup_memory_impl,
-)
 from .tools.schemas import (
     CaptureParams,
     CaptureResponse,
     CheckMemoryParams,
     CheckMemoryResponse,
+    CleanupMemoryParams,
+    CleanupMemoryResponse,
     DeleteMemoryParams,
     DeleteMemoryResponse,
     EndSessionParams,
@@ -87,8 +89,6 @@ from .tools.schemas import (
     IndexRepositoryResponse,
     ListMemoriesParams,
     ListMemoriesResponse,
-    CleanupMemoryParams,
-    CleanupMemoryResponse,
     ManageSkillParams,
     ManageSkillResponse,
     RecallContextParams,

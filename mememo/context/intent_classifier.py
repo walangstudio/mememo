@@ -162,6 +162,9 @@ class IntentClassifier:
                 best_score = score
                 best_intent = intent
 
+        # Clamp to [0, 1] — cosine similarity can be negative with dissimilar vectors
+        best_score = max(0.0, min(1.0, best_score))
+
         if best_score < confidence_threshold:
             return IntentResult(intent="general", confidence=best_score)
 
