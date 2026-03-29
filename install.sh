@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# ── Config ────────────────────────────────────────────────
+# -- Config ------------------------------------------------
 VENV_DIR=".venv"
 MARKER="$VENV_DIR/.mememo_installed"
 PYTHON_MIN_VERSION="3.10"
@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_NAME="mememo"
 WORKSPACE_DIR="$PWD"
 
-# ── Defaults ──────────────────────────────────────────────
+# -- Defaults ----------------------------------------------
 FORCE=false
 UNINSTALL=false
 UPGRADE=false
@@ -82,7 +82,7 @@ EOF
     exit 0
 }
 
-# ── Parse args ────────────────────────────────────────────
+# -- Parse args --------------------------------------------
 while [[ $# -gt 0 ]]; do
     case $1 in
         -c|--client)
@@ -130,7 +130,7 @@ if [[ "$GLOBAL_CONFIG" == true && -n "$CLIENT" ]]; then
     esac
 fi
 
-# ── Python & venv ─────────────────────────────────────────
+# -- Python & venv -----------------------------------------
 check_python_version() {
     if ! command -v python3 &>/dev/null; then
         log_error "python3 not found. Install Python $PYTHON_MIN_VERSION+"
@@ -200,11 +200,11 @@ run_warmup() {
     if [ $? -eq 0 ]; then
         log_success "Warmup complete"
     else
-        log_warn "Warmup had a non-fatal error — first MCP startup may be slow"
+        log_warn "Warmup had a non-fatal error -- first MCP startup may be slow"
     fi
 }
 
-# ── MCP config paths ──────────────────────────────────────
+# -- MCP config paths --------------------------------------
 get_desktop_config_path() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "$HOME/Library/Application Support/Claude/claude_desktop_config.json"
@@ -287,7 +287,7 @@ get_goose_config_path() {
     echo "$HOME/.config/goose/config.yaml"
 }
 
-# ── Merge/remove helpers ──────────────────────────────────
+# -- Merge/remove helpers ----------------------------------
 # All use $venv_python set by configure_client (dynamic scoping).
 # Command format: python_path -m mememo
 
@@ -652,7 +652,7 @@ else:
 " "$config_path"
 }
 
-# ── Status helpers ─────────────────────────────────────────
+# -- Status helpers -----------------------------------------
 _check_in_json() {
     local config_path="$1"
     [[ -f "$config_path" ]] || { echo "NO"; return; }
@@ -678,10 +678,10 @@ show_status() {
     local _gh="$HOME"
 
     echo ""
-    echo "  mememo — Status"
-    echo "  ────────────────────────────────────────────────────────────────────────────"
+    echo "  mememo -- Status"
+    echo "  ----------------------------------------------------------------------------"
     printf "  %-30s %-9s %s\n" "Client" "Installed" "Config path"
-    echo "  ────────────────────────────────────────────────────────────────────────────"
+    echo "  ----------------------------------------------------------------------------"
 
     _row() {
         local label="$1" status="$2" path="$3"
@@ -712,7 +712,7 @@ show_status() {
     p="$_gh/.config/opencode/opencode.json";     s=$(_check_in_json "$p"); _row "opencode (global)" "$s" "$p"
     p="$(get_goose_config_path)";                s=$(_check_in_yaml "$p"); _row "goose" "$s" "$p"
 
-    echo "  ────────────────────────────────────────────────────────────────────────────"
+    echo "  ----------------------------------------------------------------------------"
     if [[ -n "$installed_version" ]]; then
         echo "  Package: v${installed_version} installed"
     else
@@ -721,7 +721,7 @@ show_status() {
     echo ""
 }
 
-# ── Configure client ──────────────────────────────────────
+# -- Configure client --------------------------------------
 configure_client() {
     local client_type="$1"
     local python_path="$2"
@@ -908,20 +908,20 @@ configure_client() {
     esac
 }
 
-# ── Banner ─────────────────────────────────────────────────
+# -- Banner -------------------------------------------------
 echo ""
 echo "======================================"
 echo "mememo Installer"
 echo "======================================"
 echo ""
 
-# ── Status ─────────────────────────────────────────────────
+# -- Status -------------------------------------------------
 if [[ "$STATUS" == true ]]; then
     show_status
     exit 0
 fi
 
-# ── Uninstall path ─────────────────────────────────────────
+# -- Uninstall path -----------------------------------------
 if [[ "$UNINSTALL" == true ]]; then
     VENV_PYTHON=$(get_venv_python 2>/dev/null) || true
 
@@ -958,7 +958,7 @@ if [[ "$UNINSTALL" == true ]]; then
     exit 0
 fi
 
-# ── Upgrade path ───────────────────────────────────────────
+# -- Upgrade path -------------------------------------------
 if [[ "$UPGRADE" == true ]]; then
     if [ ! -d "$VENV_DIR" ]; then
         log_error "No installation found. Run 'bash install.sh' first"
@@ -983,7 +983,7 @@ if [[ "$UPGRADE" == true ]]; then
     exit 0
 fi
 
-# ── Install path ───────────────────────────────────────────
+# -- Install path -------------------------------------------
 if [ -f "$MARKER" ] && [ -d "$VENV_DIR" ] && [[ "$FORCE" != true ]]; then
     log_info "mememo already installed ($(cat "$MARKER")). Use --upgrade to update."
     if [[ "$CLIENT_EXPLICIT" == true ]]; then
