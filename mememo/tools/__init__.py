@@ -26,6 +26,7 @@ from .delete_memory import delete_memory
 from .end_session import end_session
 from .index_repository import index_repository
 from .list_memories import list_memories
+from .manage_skill import manage_skill
 from .recall_context import recall_context
 from .recent_context import recent_context
 from .refresh_memory import refresh_memory
@@ -34,7 +35,6 @@ from .search_similar import search_similar
 from .store_decision import store_decision
 from .store_memory import store_memory
 from .summarize_context import summarize_context
-from .manage_skill import manage_skill
 from .sync_commits import sync_commits
 
 __all__ = [

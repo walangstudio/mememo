@@ -16,8 +16,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import numpy as np
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -207,8 +205,8 @@ def bench_intent_classification():
     print("1. INTENT CLASSIFICATION BENCHMARK")
     print("=" * 70)
 
-    from mememo.embeddings.embedder import Embedder
     from mememo.context.intent_classifier import IntentClassifier
+    from mememo.embeddings.embedder import Embedder
 
     embedder = Embedder(model_name="minilm", device="cpu")
     cache_dir = Path(tempfile.mkdtemp())
@@ -380,13 +378,13 @@ def bench_response_compressor():
     print(f"  Latency:    {compress_time:.2f}ms")
 
     # What was stripped
-    print(f"\n  Stripped content:")
+    print("\n  Stripped content:")
     if "<tool_use>" not in compressed:
-        print(f"    [OK] Tool blocks removed")
+        print("    [OK] Tool blocks removed")
     if "███" not in compressed:
-        print(f"    [OK] Progress bars removed")
+        print("    [OK] Progress bars removed")
     if "Relevant memories from previous sessions:" not in compressed:
-        print(f"    [OK] Mememo inject block removed")
+        print("    [OK] Mememo inject block removed")
 
     # Enhanced prompt
     summaries = ["[decision] Chose SQLite over PostgreSQL", "[context] FAISS sharding at 50k"]
@@ -417,7 +415,7 @@ def bench_e2e_token_comparison():
     legacy_block = _build_context_block(SAMPLE_RESULTS, budget=800, min_similarity=0.25)
     legacy_total = header_tokens + count_tokens(legacy_block) if legacy_block else 0
 
-    print(f"\n  Legacy (fixed 800 budget):")
+    print("\n  Legacy (fixed 800 budget):")
     print(f"    Injected tokens: {legacy_total}")
     if legacy_block:
         print(f"    Entries: {legacy_block.count(chr(10)) + 1}")
