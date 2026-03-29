@@ -21,6 +21,7 @@ def mock_embedder():
     embedder = MagicMock()
     embedder.model_name = "test-model"
     dim = 8
+
     # Return deterministic embeddings: hash-based so same phrase -> same vector
     def _embed_batch(texts):
         vecs = []

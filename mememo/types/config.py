@@ -247,9 +247,7 @@ class Config(BaseModel):
                 inject_token_budget_max=int(
                     os.getenv("MEMEMO_HOOK_INJECT_TOKEN_BUDGET_MAX", "1200")
                 ),
-                skill_injection_enabled=os.getenv(
-                    "MEMEMO_SKILL_INJECTION_ENABLED", "true"
-                ).lower()
+                skill_injection_enabled=os.getenv("MEMEMO_SKILL_INJECTION_ENABLED", "true").lower()
                 == "true",
                 skill_token_budget=int(os.getenv("MEMEMO_SKILL_TOKEN_BUDGET", "200")),
                 response_compression_enabled=os.getenv(

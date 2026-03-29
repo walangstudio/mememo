@@ -136,7 +136,9 @@ def _smart_context_build(results, user_prompt, cfg, srv):
     skill_block = None
     skill_tokens_used = 0
     if cfg.hook.skill_injection_enabled and srv.skill_store is not None:
-        skills = srv.skill_store.get_skills_for_intent(intent_result.intent, cfg.hook.skill_token_budget)
+        skills = srv.skill_store.get_skills_for_intent(
+            intent_result.intent, cfg.hook.skill_token_budget
+        )
         if skills:
             skill_lines = [s.prompt.strip() for s in skills]
             skill_block = "\n".join(skill_lines)
@@ -246,8 +248,7 @@ async def cmd_capture() -> None:
             )
             if dedup_results:
                 existing_summaries = [
-                    f"[{r.memory.content.type}] {r.memory.summary.one_line}"
-                    for r in dedup_results
+                    f"[{r.memory.content.type}] {r.memory.summary.one_line}" for r in dedup_results
                 ]
                 print(
                     f"mememo capture: found {len(existing_summaries)} existing similar memories",

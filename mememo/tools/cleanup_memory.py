@@ -36,12 +36,14 @@ async def cleanup_memory(
                 (cutoff,),
             )
         for row in cursor.fetchall():
-            candidates.append({
-                "id": row[0],
-                "type": row[1],
-                "file_path": row[2] or "",
-                "reason": f"older than {params.older_than_days} days",
-            })
+            candidates.append(
+                {
+                    "id": row[0],
+                    "type": row[1],
+                    "file_path": row[2] or "",
+                    "reason": f"older than {params.older_than_days} days",
+                }
+            )
             seen_ids.add(row[0])
 
     # Stale-only cleanup
@@ -51,12 +53,14 @@ async def cleanup_memory(
         )
         for row in cursor.fetchall():
             if row[0] not in seen_ids:
-                candidates.append({
-                    "id": row[0],
-                    "type": row[1],
-                    "file_path": row[2] or "",
-                    "reason": f"stale: {row[3] or 'source changed'}",
-                })
+                candidates.append(
+                    {
+                        "id": row[0],
+                        "type": row[1],
+                        "file_path": row[2] or "",
+                        "reason": f"stale: {row[3] or 'source changed'}",
+                    }
+                )
                 seen_ids.add(row[0])
 
     # Dedup cleanup via checksum (exact duplicates)
@@ -71,12 +75,14 @@ async def cleanup_memory(
             # Keep the first (oldest), mark the rest as duplicates
             for dup_id in ids[1:]:
                 if dup_id not in seen_ids:
-                    candidates.append({
-                        "id": dup_id,
-                        "type": "",
-                        "file_path": "",
-                        "reason": f"exact duplicate (checksum={row[0][:12]}...)",
-                    })
+                    candidates.append(
+                        {
+                            "id": dup_id,
+                            "type": "",
+                            "file_path": "",
+                            "reason": f"exact duplicate (checksum={row[0][:12]}...)",
+                        }
+                    )
                     seen_ids.add(dup_id)
 
     if params.dry_run:

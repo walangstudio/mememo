@@ -141,7 +141,9 @@ class IntentClassifier:
 
         return self._centroids
 
-    def classify(self, prompt_embedding: np.ndarray, confidence_threshold: float = 0.3) -> IntentResult:
+    def classify(
+        self, prompt_embedding: np.ndarray, confidence_threshold: float = 0.3
+    ) -> IntentResult:
         centroids = self._load_or_compute_centroids()
 
         # Normalize prompt embedding
