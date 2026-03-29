@@ -30,6 +30,9 @@ from .tools import (
     check_memory as check_memory_impl,
 )
 from .tools import (
+    cleanup_memory as cleanup_memory_impl,
+)
+from .tools import (
     delete_memory as delete_memory_impl,
 )
 from .tools import (
@@ -40,6 +43,9 @@ from .tools import (
 )
 from .tools import (
     list_memories as list_memories_impl,
+)
+from .tools import (
+    manage_skill as manage_skill_impl,
 )
 from .tools import (
     recall_context as recall_context_impl,
@@ -73,6 +79,8 @@ from .tools.schemas import (
     CaptureResponse,
     CheckMemoryParams,
     CheckMemoryResponse,
+    CleanupMemoryParams,
+    CleanupMemoryResponse,
     DeleteMemoryParams,
     DeleteMemoryResponse,
     EndSessionParams,
@@ -81,6 +89,8 @@ from .tools.schemas import (
     IndexRepositoryResponse,
     ListMemoriesParams,
     ListMemoriesResponse,
+    ManageSkillParams,
+    ManageSkillResponse,
     RecallContextParams,
     RecallContextResponse,
     RecentContextParams,
@@ -118,6 +128,7 @@ mcp = FastMCP("mememo", version=_VERSION)
 config: MemoConfig | None = None
 memory_manager: MemoryManager | None = None
 llm_adapter: LLMAdapter | None = None
+skill_store = None  # Initialized lazily in initialize_mememo
 
 
 @mcp.resource("config://mememo")
@@ -195,7 +206,7 @@ async def initialize_mememo():
     - Memory manager
     - LLM adapter (for capture tool)
     """
-    global config, memory_manager, llm_adapter
+    global config, memory_manager, llm_adapter, skill_store
 
     logger.info("=" * 60)
     logger.info("Initializing mememo v%s", _VERSION)
@@ -264,6 +275,12 @@ async def initialize_mememo():
     llm_adapter = LLMAdapter()
     mode = "passthrough" if llm_adapter.is_passthrough() else llm_adapter._provider()
     logger.info("LLM adapter initialized (provider: %s)", mode)
+
+    # Initialize skill store for smart context selection
+    from .context.skill_store import SkillStore
+
+    skill_store = SkillStore(base_dir=base_dir)
+    logger.info("Skill store initialized (dir: %s)", base_dir / "skills")
 
     logger.info("mememo v%s initialized successfully", _VERSION)
 
@@ -601,6 +618,47 @@ async def recent_context(params: RecentContextParams) -> RecentContextResponse:
     await ensure_initialized()
     _audit_log("recent_context")
     return await recent_context_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def manage_skill(params: ManageSkillParams) -> ManageSkillResponse:
+    """
+    Manage reusable skill prompt templates for smart context injection.
+
+    Skills are intent-based prompt templates automatically injected before
+    memory context when the user's message matches the skill's intent category.
+
+    Actions:
+    - create: Create a new skill (requires name, intent, prompt)
+    - list: List all skills
+    - get: Get a skill by name (returns full prompt)
+    - delete: Delete a skill by name
+
+    Intent categories: coding, debugging, architecture, testing, review, general.
+    """
+    await ensure_initialized()
+    _audit_log("manage_skill")
+    return await manage_skill_impl(params, skill_store)
+
+
+@mcp.tool()
+async def cleanup_memory(params: CleanupMemoryParams) -> CleanupMemoryResponse:
+    """
+    Manual, controlled memory cleanup.
+
+    Unlike auto-expiry, this tool gives you full control over what gets deleted.
+    Default is dry_run=True (preview only). Set dry_run=False to actually delete.
+
+    Cleanup modes (can combine):
+    - older_than_days: Delete memories older than N days (optionally filtered by type)
+    - stale_only: Delete code memories whose source file has changed
+    - dedup: Remove exact-duplicate memories (same content checksum)
+
+    Always preview with dry_run=True first before deleting.
+    """
+    await ensure_initialized()
+    _audit_log("cleanup_memory")
+    return await cleanup_memory_impl(params, memory_manager)
 
 
 def run():

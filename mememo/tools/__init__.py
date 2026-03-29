@@ -21,10 +21,12 @@ MCP tools for mememo.
 
 from .capture import capture
 from .check_memory import check_memory
+from .cleanup_memory import cleanup_memory
 from .delete_memory import delete_memory
 from .end_session import end_session
 from .index_repository import index_repository
 from .list_memories import list_memories
+from .manage_skill import manage_skill
 from .recall_context import recall_context
 from .recent_context import recent_context
 from .refresh_memory import refresh_memory
@@ -51,4 +53,6 @@ __all__ = [
     "sync_commits",
     "check_memory",
     "refresh_memory",
+    "manage_skill",
+    "cleanup_memory",
 ]

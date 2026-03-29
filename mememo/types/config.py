@@ -17,10 +17,10 @@ class StorageConfig(BaseModel):
     max_memory_size_mb: int = Field(default=10, gt=0, description="Max size per memory in MB")
     max_total_memories: int = Field(default=10000, gt=0, description="Max total memories")
     ttl_conversation_days: int = Field(
-        default=30, ge=0, description="TTL in days for conversation memories (0 = no expiry)"
+        default=0, ge=0, description="TTL in days for conversation memories (0 = no expiry)"
     )
     ttl_context_days: int = Field(
-        default=90, ge=0, description="TTL in days for context memories (0 = no expiry)"
+        default=0, ge=0, description="TTL in days for context memories (0 = no expiry)"
     )
 
     @field_validator("base_dir", mode="before")
@@ -141,6 +141,38 @@ class HookConfig(BaseModel):
     capture_enabled: bool = Field(default=True, description="Enable Stop hook capture")
     inject_enabled: bool = Field(default=True, description="Enable UserPromptSubmit injection")
 
+    # Smart context selection
+    smart_context_enabled: bool = Field(
+        default=True, description="Enable intent-aware adaptive context selection"
+    )
+    intent_confidence_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence for intent classification (below this, falls back to 'general')",
+    )
+    inject_token_budget_min: int = Field(
+        default=200, gt=0, description="Minimum dynamic token budget for injection"
+    )
+    inject_token_budget_max: int = Field(
+        default=1200, gt=0, description="Maximum dynamic token budget for injection"
+    )
+    skill_injection_enabled: bool = Field(
+        default=True, description="Enable skill prompt injection based on intent"
+    )
+    skill_token_budget: int = Field(
+        default=200, gt=0, description="Max tokens reserved for skill prompts"
+    )
+    response_compression_enabled: bool = Field(
+        default=True, description="Enable transcript compression before capture"
+    )
+    capture_dedup_similarity: float = Field(
+        default=0.85,
+        ge=0.0,
+        le=1.0,
+        description="Similarity threshold for dedup during capture (skip already-stored facts)",
+    )
+
 
 class Config(BaseModel):
     """Complete mememo configuration."""
@@ -169,8 +201,8 @@ class Config(BaseModel):
                 ),
                 max_memory_size_mb=int(os.getenv("MEMEMO_MAX_MEMORY_SIZE_MB", "10")),
                 max_total_memories=int(os.getenv("MEMEMO_MAX_TOTAL_MEMORIES", "10000")),
-                ttl_conversation_days=int(os.getenv("MEMEMO_TTL_CONVERSATION_DAYS", "30")),
-                ttl_context_days=int(os.getenv("MEMEMO_TTL_CONTEXT_DAYS", "90")),
+                ttl_conversation_days=int(os.getenv("MEMEMO_TTL_CONVERSATION_DAYS", "0")),
+                ttl_context_days=int(os.getenv("MEMEMO_TTL_CONTEXT_DAYS", "0")),
             ),
             embedding=EmbeddingConfig(
                 model_name=os.getenv("MEMEMO_EMBEDDING_MODEL", "minilm"),
@@ -204,6 +236,27 @@ class Config(BaseModel):
                 capture_transcript_lines=int(os.getenv("MEMEMO_HOOK_CAPTURE_LINES", "100")),
                 capture_enabled=os.getenv("MEMEMO_HOOK_CAPTURE_ENABLED", "true").lower() == "true",
                 inject_enabled=os.getenv("MEMEMO_HOOK_INJECT_ENABLED", "true").lower() == "true",
+                smart_context_enabled=os.getenv("MEMEMO_SMART_CONTEXT_ENABLED", "true").lower()
+                == "true",
+                intent_confidence_threshold=float(
+                    os.getenv("MEMEMO_INTENT_CONFIDENCE_THRESHOLD", "0.3")
+                ),
+                inject_token_budget_min=int(
+                    os.getenv("MEMEMO_HOOK_INJECT_TOKEN_BUDGET_MIN", "200")
+                ),
+                inject_token_budget_max=int(
+                    os.getenv("MEMEMO_HOOK_INJECT_TOKEN_BUDGET_MAX", "1200")
+                ),
+                skill_injection_enabled=os.getenv("MEMEMO_SKILL_INJECTION_ENABLED", "true").lower()
+                == "true",
+                skill_token_budget=int(os.getenv("MEMEMO_SKILL_TOKEN_BUDGET", "200")),
+                response_compression_enabled=os.getenv(
+                    "MEMEMO_RESPONSE_COMPRESSION_ENABLED", "true"
+                ).lower()
+                == "true",
+                capture_dedup_similarity=float(
+                    os.getenv("MEMEMO_CAPTURE_DEDUP_SIMILARITY", "0.85")
+                ),
             ),
         )
 
