@@ -191,6 +191,86 @@ class MemoryManager:
         logger.info(f"Created memory {memory_id} ({token_count} tokens)")
         return memory
 
+    async def create_memories_batch(
+        self, params_list: list[CreateMemoryParams], cwd: str | None = None
+    ) -> list[Memory]:
+        """
+        Create multiple memories in a single batch.
+
+        Optimizes: single git detect, batch embedding, batch vector add.
+        """
+        if not params_list:
+            return []
+
+        context = await self.git_manager.detect_context(cwd)
+
+        # Validate and prepare all memories
+        memories: list[Memory] = []
+        validated_contents: list[str] = []
+        checksums: list[str] = []
+
+        now = datetime.now()
+        for params in params_list:
+            validated_content = self._validate_content(params.content)
+            memory_id = str(uuid4())
+            checksum = calculate_checksum(validated_content)
+            token_count = count_tokens(validated_content)
+            one_line = self._generate_one_line(validated_content)
+            detailed_summary = (
+                self._generate_detailed_summary(validated_content) if token_count > 200 else None
+            )
+
+            memory = Memory(
+                id=memory_id,
+                repo=context.repo,
+                branch=context.branch,
+                content=MemoryContent(
+                    type=params.type,
+                    text=validated_content,
+                    language=params.language,
+                    file_path=params.file_path,
+                    line_range=params.line_range,
+                    function_name=params.function_name,
+                    class_name=params.class_name,
+                    docstring=params.docstring,
+                    decorators=params.decorators,
+                    parent_class=params.parent_class,
+                ),
+                metadata=MemoryMetadata(
+                    tags=params.tags or [],
+                    created_at=now,
+                    updated_at=now,
+                    checksum=checksum,
+                    token_count=token_count,
+                ),
+                relationships=params.relationships or MemoryRelationships(),
+                summary=MemorySummary(
+                    one_line=one_line,
+                    detailed=detailed_summary,
+                ),
+            )
+            memories.append(memory)
+            validated_contents.append(validated_content)
+            checksums.append(checksum)
+
+        # Batch embed
+        embeddings = self.embedder.embed(validated_contents)
+
+        # Batch save to storage
+        for memory in memories:
+            await self.storage_manager.save_memory(memory)
+
+        # Batch add to vector index
+        vi = self._get_vector_index(context.repo.id, context.branch.name)
+        vi.add(
+            embeddings=[e.tolist() for e in embeddings],
+            memory_ids=[m.id for m in memories],
+            checksums=checksums,
+        )
+
+        logger.info(f"Batch created {len(memories)} memories")
+        return memories
+
     async def retrieve_memory(self, memory_id: str, cwd: str | None = None) -> Memory:
         """
         Retrieve memory by ID.
@@ -272,6 +352,12 @@ class MemoryManager:
                 # Apply type filter if specified
                 if params.type and memory.content.type != params.type:
                     continue
+
+                # Apply tag filter (AND logic: all specified tags must be present)
+                if params.tags:
+                    memory_tags = set(memory.metadata.tags or [])
+                    if not all(t in memory_tags for t in params.tags):
+                        continue
 
                 results.append(
                     SearchResult(

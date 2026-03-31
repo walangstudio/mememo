@@ -5,6 +5,7 @@ Handles all git repository interactions with security-first approach.
 Provides repo/branch detection and context management.
 """
 
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -12,6 +13,8 @@ from typing import Literal
 
 from ..types import BranchContext, GitContext, RepoContext
 from ..utils.hashing import hash_path
+
+logger = logging.getLogger(__name__)
 
 # Whitelist of allowed git commands for security
 ALLOWED_GIT_COMMANDS = [
@@ -205,8 +208,18 @@ class GitManager:
             )
 
             return GitContext(repo=repo, branch=branch)
-        except Exception as e:
-            raise RuntimeError(f"Failed to detect git context: {str(e)}")
+        except Exception:
+            resolved = str(Path(working_dir).resolve())
+            logger.info("Not in a git repository (%s) - using default context", resolved)
+            return GitContext(
+                repo=RepoContext(
+                    id=hash_path(resolved),
+                    name=Path(resolved).name,
+                    path=resolved,
+                    remote_url=None,
+                ),
+                branch=BranchContext(name="main", commit_hash=""),
+            )
 
     async def is_git_repo(self, cwd: str | None = None) -> bool:
         """
