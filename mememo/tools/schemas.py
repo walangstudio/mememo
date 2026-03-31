@@ -54,6 +54,9 @@ class StoreMemoryParams(BaseModel):
     parent_class: str | None = Field(
         default=None, description="Parent class (auto-extracted from code)"
     )
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
 
 
 class StoreMemoryResponse(BaseModel):
@@ -75,6 +78,9 @@ class RetrieveMemoryParams(BaseModel):
     """Parameters for retrieving a memory by ID."""
 
     memory_id: str = Field(description="Memory ID to retrieve")
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
 
 
 class RetrieveMemoryResponse(BaseModel):
@@ -106,6 +112,9 @@ class SearchSimilarParams(BaseModel):
     include_stale: bool = Field(
         default=False,
         description="Include stale memories (source changed since indexing)",
+    )
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
     )
 
 
@@ -144,6 +153,9 @@ class ListMemoriesParams(BaseModel):
         description="Include stale memories (source changed since indexing)",
     )
     limit: int = Field(default=50, ge=1, le=500, description="Max results (1-500)")
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
 
 
 class ListMemoriesResponse(BaseModel):
@@ -174,6 +186,9 @@ class SummarizeContextParams(BaseModel):
     save_as_memory: bool = Field(
         default=False, description="If True, persist the summary as a 'summary' memory"
     )
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
 
 
 class SummarizeContextResponse(BaseModel):
@@ -199,6 +214,9 @@ class DeleteMemoryParams(BaseModel):
 
     memory_id: str = Field(description="Memory ID to delete")
     confirm: bool = Field(default=False, description="Confirmation flag (must be True)")
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
 
 
 class DeleteMemoryResponse(BaseModel):
@@ -252,6 +270,9 @@ class CheckMemoryParams(BaseModel):
     """Parameters for checking memory statistics."""
 
     include_git_info: bool = Field(default=True, description="Include git repository info")
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
 
 
 class CheckMemoryResponse(BaseModel):
@@ -274,6 +295,9 @@ class RefreshMemoryParams(BaseModel):
     memory_id: str = Field(description="Memory ID to refresh")
     new_content: str | None = Field(default=None, description="New content (if updating content)")
     tags: list[str] | None = Field(default=None, description="New tags (if updating tags)")
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
 
 
 class RefreshMemoryResponse(BaseModel):
@@ -327,6 +351,9 @@ class StoreDecisionParams(BaseModel):
     rationale: str = Field(description="Why this alternative was chosen")
     outcome: str | None = Field(default=None, description="Result or follow-up (if known)")
     tags: list[str] | None = Field(default=None, description="Tags for categorization")
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
 
 
 class StoreDecisionResponse(BaseModel):
@@ -349,6 +376,9 @@ class EndSessionParams(BaseModel):
 
     summary: str = Field(description="Summary of what was accomplished this session")
     tags: list[str] | None = Field(default=None, description="Tags for categorization")
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
 
 
 class EndSessionResponse(BaseModel):
@@ -377,6 +407,9 @@ class RecallContextParams(BaseModel):
         le=1.0,
         description="Minimum similarity threshold (0.0-1.0)",
     )
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
 
 
 class RecallContextResponse(BaseModel):
@@ -398,6 +431,9 @@ class RecentContextParams(BaseModel):
 
     limit: int = Field(default=10, ge=1, le=100, description="Number of recent memories to return")
     type: MemoryContentType | None = Field(default=None, description="Filter by memory type")
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
 
 
 class RecentContextResponse(BaseModel):
@@ -430,6 +466,9 @@ class CaptureParams(BaseModel):
     hint: str | None = Field(
         default=None,
         description="Optional hint to guide extraction (e.g. 'focus on decisions')",
+    )
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
     )
 
 

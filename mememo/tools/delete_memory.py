@@ -42,7 +42,7 @@ async def delete_memory(
             )
 
         # Delete memory via memory manager
-        await memory_manager.delete_memory(params.memory_id)
+        await memory_manager.delete_memory(params.memory_id, cwd=params.repo_path)
 
         return DeleteMemoryResponse(
             success=True,

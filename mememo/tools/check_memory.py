@@ -40,7 +40,7 @@ async def check_memory(
         git_context = None
         if params.include_git_info:
             try:
-                context = await memory_manager.git_manager.detect_context()
+                context = await memory_manager.git_manager.detect_context(cwd=params.repo_path)
                 git_context = {
                     "repo": context.repo.model_dump() if context.repo else None,
                     "branch": context.branch.model_dump() if context.branch else None,

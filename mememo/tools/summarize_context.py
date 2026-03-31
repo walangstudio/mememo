@@ -38,6 +38,7 @@ async def summarize_context(
         summary = await memory_manager.summarize_memories(
             memory_ids=params.memory_ids,
             max_tokens=params.max_tokens,
+            cwd=params.repo_path,
         )
 
         # Count tokens in summary
@@ -50,7 +51,7 @@ async def summarize_context(
                 type="summary",
                 relationships=MemoryRelationships(),
             )
-            saved_memory = await memory_manager.create_memory(create_params)
+            saved_memory = await memory_manager.create_memory(create_params, cwd=params.repo_path)
             saved_memory_id = saved_memory.id
 
         return SummarizeContextResponse(

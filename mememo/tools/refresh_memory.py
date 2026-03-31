@@ -35,12 +35,12 @@ async def refresh_memory(
     """
     try:
         # Retrieve existing memory
-        memory = await memory_manager.retrieve_memory(params.memory_id)
+        memory = await memory_manager.retrieve_memory(params.memory_id, cwd=params.repo_path)
 
         # Update content if provided
         if params.new_content is not None:
             # Delete old memory
-            await memory_manager.delete_memory(params.memory_id)
+            await memory_manager.delete_memory(params.memory_id, cwd=params.repo_path)
 
             # Create new memory with updated content
             from ..types.memory import CreateMemoryParams, MemoryRelationships
@@ -62,7 +62,7 @@ async def refresh_memory(
             )
 
             # Create updated memory
-            updated_memory = await memory_manager.create_memory(create_params)
+            updated_memory = await memory_manager.create_memory(create_params, cwd=params.repo_path)
 
             return RefreshMemoryResponse(
                 success=True,

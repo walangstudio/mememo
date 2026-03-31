@@ -30,7 +30,7 @@ async def retrieve_memory(
     """
     try:
         # Retrieve memory via memory manager
-        memory = await memory_manager.retrieve_memory(params.memory_id)
+        memory = await memory_manager.retrieve_memory(params.memory_id, cwd=params.repo_path)
 
         return RetrieveMemoryResponse(
             success=True,
