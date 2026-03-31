@@ -20,6 +20,8 @@
 - **🤖 Passive Hooks**: Auto-capture memories and inject context without any user action
 - **🧠 Smart Context**: Intent-aware injection with dynamic token budgets (22-43% savings)
 - **🧹 Manual Cleanup**: Controlled memory cleanup with dry-run preview (no silent auto-expiry)
+- **🔗 Orchestrator Support**: Works as a subprocess for external tools (borch, mageNT) via `repo_path` override and non-git directory fallback
+- **📦 Batch Operations**: Bulk memory storage with single-pass embedding and indexing
 
 ### Passive Hooks (Claude Code)
 
@@ -613,7 +615,8 @@ extensions:
 |------|---------|
 | `store_memory` | Store code snippets, decisions, context, or analysis |
 | `store_decision` | Store an architectural decision with rationale |
-| `capture` | Extract and store memorable facts from raw text via LLM; deduplicates at 0.97 similarity |
+| `batch_store` | Store multiple memories in one call (batch embedding + indexing) |
+| `capture` | Extract and store memorable facts from raw text via LLM; accepts pre-extracted memories; deduplicates at 0.97 similarity |
 | `refresh_memory` | Update an existing memory's content |
 | `delete_memory` | Delete a memory by ID |
 | `cleanup_memory` | Manual cleanup: age-based, stale, or dedup (dry-run by default) |
@@ -623,11 +626,11 @@ extensions:
 | Tool | Purpose |
 |------|---------|
 | `retrieve_memory` | Fetch a single memory by ID |
-| `search_similar` | Semantic vector search across all memories |
-| `list_memories` | List memories with filters (type, language, file, tag) |
-| `recall_context` | Search persistent memories (decisions, analysis, context) |
+| `search_similar` | Semantic vector search with optional tag filtering (AND logic) |
+| `list_memories` | List memories with filters (type, language, file, tags with AND logic) |
+| `recall_context` | Search persistent memories (decisions, analysis, context) with optional tag filtering |
 | `recent_context` | Fetch the most recently stored memories |
-| `summarize_context` | Generate a hierarchical summary of stored memories |
+| `summarize_context` | Summarize stored memories by ID or raw text directly |
 | `check_memory` | Show memory statistics |
 
 #### Repository Indexing
@@ -644,21 +647,28 @@ extensions:
 |------|---------|
 | `manage_skill` | Create, list, get, or delete skill prompt templates |
 
+#### Orchestrator Integration
+
+All tools accept an optional `repo_path` parameter to override cwd-based git detection. When mememo runs as a subprocess (spawned by borch, mageNT, or other orchestrators), `repo_path` ensures the correct repository context is used regardless of the process working directory. mememo also gracefully handles non-git directories by falling back to a default context.
+
 #### Example usage
 
 ```python
 # Store a decision
 store_decision({
-  "decision": "Use FAISS for vector search",
+  "problem": "Vector search backend",
+  "alternatives": ["FAISS", "ChromaDB", "Pinecone"],
+  "chosen": "FAISS",
   "rationale": "Local, no network dependency, supports sharding",
   "tags": ["architecture", "search"]
 })
 
-# Semantic search
+# Semantic search with tag filtering (AND logic)
 search_similar({
   "query": "function that processes data",
   "top_k": 5,
-  "min_similarity": 0.7
+  "min_similarity": 0.7,
+  "tags": ["architecture"]
 })
 
 # Index a repo
@@ -668,10 +678,32 @@ index_repository({
   "incremental": true
 })
 
-# List memories by filter
+# Batch store multiple memories at once
+batch_store({
+  "memories": [
+    {"content": "API rate limiting added", "type": "context", "tags": ["api"]},
+    {"content": "Error handler middleware", "type": "context", "tags": ["middleware"]}
+  ]
+})
+
+# Capture with pre-extracted memories (no LLM needed)
+capture({
+  "pre_extracted": [
+    {"type": "decision", "content": "Chose Redis for caching", "tags": ["infra"]},
+    {"type": "context", "content": "CI runs in 3 minutes", "tags": ["ci"]}
+  ]
+})
+
+# Summarize raw text directly
+summarize_context({
+  "text": "Long agent output to summarize...",
+  "max_tokens": 500
+})
+
+# List memories by filter with tag AND logic
 list_memories({
   "language": "python",
-  "function_name": "process_data",
+  "tags": ["api"],
   "limit": 50
 })
 ```
@@ -680,7 +712,7 @@ list_memories({
 
 ```
 mememo/
-├── server.py              # FastMCP server (17 MCP tools)
+├── server.py              # FastMCP server (18 MCP tools)
 ├── cli.py                 # Hook CLI (capture --hook, inject --hook)
 ├── core/                  # Core managers
 │   ├── memory_manager.py  # Orchestrates all memory ops
