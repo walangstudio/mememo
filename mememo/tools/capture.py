@@ -7,6 +7,9 @@ memory type automatically.
 
 When no LLM is configured (passthrough mode), returns a prompt the calling
 model can use to self-extract by calling store_memory directly.
+
+Also supports pre-extracted memories: the caller provides already-extracted
+items and mememo stores them directly (skipping LLM).
 """
 
 import json
@@ -81,12 +84,75 @@ def _parse_extracted(raw: str) -> list[dict]:
     return []
 
 
+async def _dedup_and_store(
+    items: list[tuple[str, str, list[str]]],
+    memory_manager: "MemoryManager",
+    cwd: str | None,
+) -> list[ExtractedMemory]:
+    """Dedup-check and store a list of (type, content, tags) tuples."""
+    extracted: list[ExtractedMemory] = []
+
+    for mem_type, content, tags in items:
+        # Dedup check — fail open so a search error never silently drops a memory
+        try:
+            dupes = await memory_manager.search_similar(
+                SearchParams(query=content, top_k=1, min_similarity=0.97),
+                cwd=cwd,
+            )
+            if dupes:
+                logger.debug("Skipping duplicate memory (similarity=%.3f)", dupes[0].similarity)
+                continue
+        except Exception as e:
+            logger.debug("Dedup check failed, proceeding to store: %s", e)
+
+        memory_id = ""
+        try:
+            create_params = CreateMemoryParams(
+                content=content,
+                type=mem_type,
+                tags=tags or None,
+                relationships=MemoryRelationships(),
+            )
+            memory = await memory_manager.create_memory(create_params, cwd=cwd)
+            memory_id = memory.id
+        except Exception as e:
+            logger.warning("Failed to store extracted memory: %s", e)
+
+        extracted.append(
+            ExtractedMemory(type=mem_type, content=content, tags=tags, memory_id=memory_id)
+        )
+
+    return extracted
+
+
 async def capture(
     params: CaptureParams,
     memory_manager: "MemoryManager",
     llm_adapter: "LLMAdapter",
     existing_summaries: list[str] | None = None,
 ) -> CaptureResponse:
+    # Pre-extracted path: caller already extracted, just store
+    if params.pre_extracted:
+        items = []
+        for pe in params.pre_extracted:
+            mem_type = pe.type if pe.type in _EXTRACT_TYPES else "context"
+            content = pe.content.strip()
+            if not content:
+                continue
+            tags = list(pe.tags) if pe.tags else []
+            items.append((mem_type, content, tags))
+
+        extracted = await _dedup_and_store(items, memory_manager, cwd=params.repo_path)
+        stored_count = sum(1 for e in extracted if e.memory_id)
+        return CaptureResponse(
+            success=True,
+            extracted=extracted,
+            stored_count=stored_count,
+            message=f"Stored {stored_count} of {len(extracted)} pre-extracted memories",
+            passthrough=False,
+        )
+
+    # Passthrough mode: no LLM configured
     if llm_adapter.is_passthrough():
         return CaptureResponse(
             success=True,
@@ -97,6 +163,7 @@ async def capture(
             passthrough_prompt=_build_passthrough_prompt(params.text, params.hint),
         )
 
+    # LLM extraction path
     user_prompt = params.text
     if params.hint:
         user_prompt = f"Hint: {params.hint}\n\n{params.text}"
@@ -118,47 +185,19 @@ async def capture(
             passthrough_prompt=_build_passthrough_prompt(params.text, params.hint),
         )
 
-    items = _parse_extracted(raw)
-    extracted: list[ExtractedMemory] = []
-
-    for item in items:
+    parsed_items = _parse_extracted(raw)
+    items = []
+    for item in parsed_items:
         mem_type = item.get("type", "context")
         if mem_type not in _EXTRACT_TYPES:
             mem_type = "context"
         content = str(item.get("content", "")).strip()
-        tags = [str(t) for t in item.get("tags", []) if t]
         if not content:
             continue
+        tags = [str(t) for t in item.get("tags", []) if t]
+        items.append((mem_type, content, tags))
 
-        # Dedup check — fail open so a search error never silently drops a memory
-        try:
-            dupes = await memory_manager.search_similar(
-                SearchParams(query=content, top_k=1, min_similarity=0.97),
-                cwd=params.repo_path,
-            )
-            if dupes:
-                logger.debug("Skipping duplicate memory (similarity=%.3f)", dupes[0].similarity)
-                continue
-        except Exception as e:
-            logger.debug("Dedup check failed, proceeding to store: %s", e)
-
-        memory_id = ""
-        try:
-            create_params = CreateMemoryParams(
-                content=content,
-                type=mem_type,
-                tags=tags or None,
-                relationships=MemoryRelationships(),
-            )
-            memory = await memory_manager.create_memory(create_params, cwd=params.repo_path)
-            memory_id = memory.id
-        except Exception as e:
-            logger.warning("Failed to store extracted memory: %s", e)
-
-        extracted.append(
-            ExtractedMemory(type=mem_type, content=content, tags=tags, memory_id=memory_id)
-        )
-
+    extracted = await _dedup_and_store(items, memory_manager, cwd=params.repo_path)
     stored_count = sum(1 for e in extracted if e.memory_id)
     return CaptureResponse(
         success=True,

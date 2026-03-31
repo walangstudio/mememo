@@ -113,6 +113,9 @@ class SearchSimilarParams(BaseModel):
         default=False,
         description="Include stale memories (source changed since indexing)",
     )
+    tags: list[str] | None = Field(
+        default=None, description="Filter by tags (AND logic, all must match)"
+    )
     repo_path: str | None = Field(
         default=None, description="Repository path (overrides cwd-based git detection)"
     )
@@ -174,9 +177,14 @@ class ListMemoriesResponse(BaseModel):
 
 
 class SummarizeContextParams(BaseModel):
-    """Parameters for summarizing memories."""
+    """Parameters for summarizing memories or raw text."""
 
-    memory_ids: list[str] = Field(description="List of memory IDs to summarize")
+    memory_ids: list[str] | None = Field(
+        default=None, description="List of memory IDs to summarize"
+    )
+    text: str | None = Field(
+        default=None, description="Raw text to summarize directly (bypasses memory lookup)"
+    )
     max_tokens: int = Field(
         default=500, ge=100, le=2000, description="Max tokens in summary (100-2000)"
     )
@@ -407,6 +415,9 @@ class RecallContextParams(BaseModel):
         le=1.0,
         description="Minimum similarity threshold (0.0-1.0)",
     )
+    tags: list[str] | None = Field(
+        default=None, description="Filter by tags (AND logic, all must match)"
+    )
     repo_path: str | None = Field(
         default=None, description="Repository path (overrides cwd-based git detection)"
     )
@@ -450,6 +461,14 @@ class RecentContextResponse(BaseModel):
 # ============================================================================
 
 
+class PreExtractedMemory(BaseModel):
+    """A memory pre-extracted by the caller (skips LLM extraction)."""
+
+    type: MemoryContentType = Field(description="Memory type")
+    content: str = Field(description="Memory content")
+    tags: list[str] | None = Field(default=None, description="Tags for categorization")
+
+
 class ExtractedMemory(BaseModel):
     """Single memory extracted by the LLM from raw text."""
 
@@ -462,10 +481,14 @@ class ExtractedMemory(BaseModel):
 class CaptureParams(BaseModel):
     """Parameters for passive memory capture via LLM extraction."""
 
-    text: str = Field(description="Raw text to extract memories from (conversation, notes, etc.)")
+    text: str = Field(default="", description="Raw text to extract memories from (conversation, notes, etc.)")
     hint: str | None = Field(
         default=None,
         description="Optional hint to guide extraction (e.g. 'focus on decisions')",
+    )
+    pre_extracted: list[PreExtractedMemory] | None = Field(
+        default=None,
+        description="Pre-extracted memories to store directly (skips LLM extraction)",
     )
     repo_path: str | None = Field(
         default=None, description="Repository path (overrides cwd-based git detection)"
@@ -560,3 +583,34 @@ class CleanupMemoryResponse(BaseModel):
         default_factory=list, description="Memories that were (or would be) deleted"
     )
     deleted_count: int = Field(default=0, description="Number of memories actually deleted")
+
+
+# ============================================================================
+# batch_store tool
+# ============================================================================
+
+
+class BatchStoreItemResult(BaseModel):
+    """Result for a single item in a batch store operation."""
+
+    memory_id: str = Field(default="", description="Stored memory ID (empty on failure)")
+    success: bool = Field(description="Whether this item was stored")
+    message: str = Field(default="", description="Error message on failure")
+
+
+class BatchStoreParams(BaseModel):
+    """Parameters for batch-storing multiple memories."""
+
+    memories: list[StoreMemoryParams] = Field(description="List of memories to store")
+    repo_path: str | None = Field(
+        default=None, description="Repository path (overrides cwd-based git detection)"
+    )
+
+
+class BatchStoreResponse(BaseModel):
+    """Response from batch store."""
+
+    success: bool = Field(description="Whether the batch operation completed")
+    results: list[BatchStoreItemResult] = Field(description="Per-item results")
+    stored_count: int = Field(default=0, description="Number of memories stored")
+    failed_count: int = Field(default=0, description="Number of failures")

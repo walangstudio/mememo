@@ -167,6 +167,7 @@ class SearchParams(BaseModel):
     repo_id: str | None = Field(None, description="Filter by repository")
     branch: str | None = Field(None, description="Filter by branch")
     include_stale: bool = Field(default=False, description="Include stale memories in results")
+    tags: list[str] | None = Field(None, description="Filter by tags (AND logic, all must match)")
 
 
 class SummarizeParams(BaseModel):

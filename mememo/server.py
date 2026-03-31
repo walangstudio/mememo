@@ -24,6 +24,9 @@ from .core.storage_manager import StorageManager
 from .core.vector_index import VectorIndex
 from .embeddings.embedder import Embedder
 from .tools import (
+    batch_store as batch_store_impl,
+)
+from .tools import (
     capture as capture_impl,
 )
 from .tools import (
@@ -75,6 +78,8 @@ from .tools import (
     sync_commits as sync_commits_impl,
 )
 from .tools.schemas import (
+    BatchStoreParams,
+    BatchStoreResponse,
     CaptureParams,
     CaptureResponse,
     CheckMemoryParams,
@@ -336,6 +341,20 @@ async def store_memory(params: StoreMemoryParams) -> StoreMemoryResponse:
     await ensure_initialized()
     _audit_log("store_memory")
     return await store_memory_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def batch_store(params: BatchStoreParams) -> BatchStoreResponse:
+    """
+    Store multiple memories in a single batch operation.
+
+    Optimized for bulk ingestion: single git context detection, batch
+    embedding generation, and batch vector indexing. Use when storing
+    results from multiple parallel agents or bulk imports.
+    """
+    await ensure_initialized()
+    _audit_log("batch_store")
+    return await batch_store_impl(params, memory_manager)
 
 
 @mcp.tool()
