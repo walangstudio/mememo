@@ -133,7 +133,8 @@ async def capture(
         # Dedup check — fail open so a search error never silently drops a memory
         try:
             dupes = await memory_manager.search_similar(
-                SearchParams(query=content, top_k=1, min_similarity=0.97)
+                SearchParams(query=content, top_k=1, min_similarity=0.97),
+                cwd=params.repo_path,
             )
             if dupes:
                 logger.debug("Skipping duplicate memory (similarity=%.3f)", dupes[0].similarity)
@@ -149,7 +150,7 @@ async def capture(
                 tags=tags or None,
                 relationships=MemoryRelationships(),
             )
-            memory = await memory_manager.create_memory(create_params)
+            memory = await memory_manager.create_memory(create_params, cwd=params.repo_path)
             memory_id = memory.id
         except Exception as e:
             logger.warning("Failed to store extracted memory: %s", e)

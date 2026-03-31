@@ -44,7 +44,7 @@ async def search_similar(
         )
 
         # Search via memory manager
-        results = await memory_manager.search_similar(search_params)
+        results = await memory_manager.search_similar(search_params, cwd=params.repo_path)
 
         # Apply language filter if specified
         if params.language:
