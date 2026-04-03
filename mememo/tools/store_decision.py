@@ -41,7 +41,7 @@ async def store_decision(
             tags=params.tags,
             relationships=MemoryRelationships(),
         )
-        memory = await memory_manager.create_memory(create_params)
+        memory = await memory_manager.create_memory(create_params, cwd=params.repo_path)
         return StoreDecisionResponse(
             success=True,
             memory_id=memory.id,

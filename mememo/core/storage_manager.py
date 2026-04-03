@@ -463,16 +463,22 @@ class StorageManager:
         if not filters.include_stale:
             conditions.append("m.stale = 0")
 
-        # Tag filter (requires join)
+        # Tag filter (requires join, AND logic: all tags must match)
         query = "SELECT DISTINCT m.* FROM memories m"
+        tag_count = 0
         if filters.tags:
+            tag_count = len(filters.tags)
             query += " INNER JOIN tags t ON m.id = t.memory_id"
-            placeholders = ",".join("?" * len(filters.tags))
+            placeholders = ",".join("?" * tag_count)
             conditions.append(f"t.tag IN ({placeholders})")
             params.extend(filters.tags)
 
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
+
+        # AND logic: require all tags present (not just any)
+        if tag_count > 1:
+            query += f" GROUP BY m.id HAVING COUNT(DISTINCT t.tag) = {tag_count}"
 
         # Sorting
         if filters.sort_by == "date":

@@ -23,7 +23,7 @@ async def end_session(
     try:
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         try:
-            git_context = await memory_manager.git_manager.detect_context()
+            git_context = await memory_manager.git_manager.detect_context(cwd=params.repo_path)
             branch = git_context.branch.name
         except Exception:
             branch = "unknown"
@@ -35,7 +35,7 @@ async def end_session(
             tags=params.tags,
             relationships=MemoryRelationships(),
         )
-        memory = await memory_manager.create_memory(create_params)
+        memory = await memory_manager.create_memory(create_params, cwd=params.repo_path)
         return EndSessionResponse(
             success=True,
             memory_id=memory.id,

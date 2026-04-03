@@ -26,7 +26,7 @@ async def recent_context(
             limit=params.limit,
             include_stale=False,
         )
-        memories = await memory_manager.find_memories(filters)
+        memories = await memory_manager.find_memories(filters, cwd=params.repo_path)
         memories = memories[: params.limit]
         return RecentContextResponse(
             success=True,

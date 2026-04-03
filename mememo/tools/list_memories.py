@@ -46,7 +46,7 @@ async def list_memories(
         )
 
         # Find memories via memory manager
-        memories = await memory_manager.find_memories(filters)
+        memories = await memory_manager.find_memories(filters, cwd=params.repo_path)
 
         # Get total count before limiting
         total = len(memories)
