@@ -28,8 +28,9 @@ async def recall_context(
             top_k=params.top_k * 3,
             min_similarity=params.min_similarity,
             include_stale=False,
+            tags=params.tags,
         )
-        results = await memory_manager.search_similar(search_params)
+        results = await memory_manager.search_similar(search_params, cwd=params.repo_path)
         filtered = [r for r in results if r.memory.content.type in RECALL_TYPES]
         filtered = filtered[: params.top_k]
         search_results = [SearchResult(memory=r.memory, similarity=r.similarity) for r in filtered]

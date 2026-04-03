@@ -19,6 +19,7 @@ MCP tools for mememo.
 - refresh_memory: Update existing memory
 """
 
+from .batch_store import batch_store
 from .capture import capture
 from .check_memory import check_memory
 from .cleanup_memory import cleanup_memory
@@ -38,6 +39,7 @@ from .summarize_context import summarize_context
 from .sync_commits import sync_commits
 
 __all__ = [
+    "batch_store",
     "store_memory",
     "store_decision",
     "capture",

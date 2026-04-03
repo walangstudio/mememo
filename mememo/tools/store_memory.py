@@ -54,9 +54,9 @@ async def store_memory(
             relationships=MemoryRelationships(),
         )
 
-        # Derive cwd from file_path if it's absolute
-        cwd = None
-        if params.file_path and Path(params.file_path).is_absolute():
+        # Derive cwd: explicit repo_path > file_path parent > None (auto-detect)
+        cwd = params.repo_path
+        if cwd is None and params.file_path and Path(params.file_path).is_absolute():
             cwd = str(Path(params.file_path).parent)
 
         # Create memory via memory manager
