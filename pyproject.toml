@@ -39,7 +39,7 @@ dependencies = [
 gpu = ["faiss-gpu>=1.7.0"]
 encryption = ["pysqlcipher3>=1.0.3"]
 dev = [
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
     "black>=24.0.0",
