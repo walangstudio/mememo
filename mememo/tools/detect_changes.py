@@ -13,10 +13,16 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 from ..core.risk_grader import grade_memory
 from ..types.memory import RiskGrade
+
+# Reject leading '-' so git treats the value as a revision, not a flag
+# (security audit 2026-05-13).
+_REF_RE = re.compile(r"^(?!-)[\w/.:~^@{}-]{1,200}$")
 
 if TYPE_CHECKING:
     from ..core.memory_manager import MemoryManager
@@ -28,6 +34,13 @@ class DetectChangesParams(BaseModel):
     repo_path: str = Field(description="Working directory inside the target git repo")
     base_ref: str = Field(description="Base ref (e.g. 'HEAD~1', 'main', a SHA)")
     head_ref: str = Field(default="HEAD", description="Head ref to diff against")
+
+    @field_validator("base_ref", "head_ref")
+    @classmethod
+    def _validate_ref(cls, v: str) -> str:
+        if not _REF_RE.match(v):
+            raise ValueError(f"ref must match [\\w/.:~^@{{}}-]+ without leading '-'; got {v!r}")
+        return v
 
 
 class AffectedMemory(BaseModel):

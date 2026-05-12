@@ -14,6 +14,7 @@ Called by:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -47,6 +48,21 @@ class MergeBranchResponse(BaseModel):
     target_branch: str | None = None
     merged_count: int = 0
     skipped_dup_count: int = 0
+    skipped_secrets_count: int = 0
+
+
+def _load_blob_text(storage_base: Path, content_ref: str) -> str:
+    """Best-effort: read the text blob for a memory.
+
+    Returns "" if the blob is missing or malformed — callers treat that as
+    "nothing to scan" rather than failing the whole merge.
+    """
+    try:
+        path = storage_base / content_ref
+        blob = json.loads(path.read_text(encoding="utf-8"))
+        return blob.get("text", "") or ""
+    except (OSError, json.JSONDecodeError):
+        return ""
 
 
 async def merge_branch(
@@ -109,11 +125,26 @@ async def merge_branch(
 
     merged = 0
     skipped_dup = 0
+    skipped_secrets = 0
+    # FR-034: re-run secrets detection on the content blob before copying
+    # across a branch boundary. The detector lives on memory_manager and may
+    # be disabled by config; respect that.
+    detector = memory_manager.secrets_detector if memory_manager.secrets_detection else None
+
     cursor = conn.cursor()
     for row in source_rows:
         if row["checksum"] in target_shas:
             skipped_dup += 1
             continue
+        if detector is not None:
+            text = _load_blob_text(storage.base_dir, row["content_ref"])
+            if text and detector.has_secrets(text):
+                logger.warning(
+                    "merge_branch: skipping memory %s — secrets detected in content blob",
+                    row["id"],
+                )
+                skipped_secrets += 1
+                continue
         new_id = str(uuid4())
         cursor.execute(
             """
@@ -151,14 +182,16 @@ async def merge_branch(
         merged += 1
     conn.commit()
 
+    secrets_note = f", {skipped_secrets} secret-skipped" if skipped_secrets else ""
     return MergeBranchResponse(
         success=True,
         message=(
             f"Merged {merged} memories from {params.source_branch} into "
-            f"{params.target_branch} ({skipped_dup} dup-skipped)"
+            f"{params.target_branch} ({skipped_dup} dup-skipped{secrets_note})"
         ),
         source_branch=params.source_branch,
         target_branch=params.target_branch,
         merged_count=merged,
         skipped_dup_count=skipped_dup,
+        skipped_secrets_count=skipped_secrets,
     )

@@ -823,36 +823,35 @@ class StorageManager:
         """Bulk replay — return the set of memory_ids alive at target_ts.
 
         Used by recall_at_commit (T010) to filter FAISS search results to the
-        subset that existed at the target SHA. O(events_up_to_ts) — for typical
-        repos this is small enough to compute on demand without materialised
-        snapshots (FR-005).
+        subset that existed at the target SHA. Implemented with a window
+        function (ROW_NUMBER OVER PARTITION BY memory_id ORDER BY ts DESC) so
+        the query is one pass + one sort rather than an O(E^2) correlated
+        subquery (performance audit 2026-05-13). Requires SQLite 3.25+.
+        FR-005: no materialised snapshots — pure replay against the event log.
         """
-        sql = (
-            "SELECT memory_id, op FROM memory_events e1 "
-            "WHERE ts <= ? "
-            "AND id = (SELECT MAX(e2.id) FROM memory_events e2 "
-            "          WHERE e2.memory_id = e1.memory_id AND e2.ts <= ?"
+        inner_where = ["ts <= ?"]
+        inner_params: list[object] = [target_ts]
+        if branch is not None:
+            inner_where.append("branch = ?")
+            inner_params.append(branch)
+        inner_sql = (
+            "SELECT memory_id, op, "
+            "ROW_NUMBER() OVER (PARTITION BY memory_id ORDER BY ts DESC, id DESC) AS rn "
+            f"FROM memory_events WHERE {' AND '.join(inner_where)}"
         )
-        params: list[object] = [target_ts, target_ts]
-        if branch is not None:
-            sql += " AND e2.branch = ?"
-            params.append(branch)
-        sql += ")"
-        if branch is not None:
-            sql += " AND e1.branch = ?"
-            params.append(branch)
-        if repo_id is not None:
-            # repo_id is not on memory_events; join through memories.
-            sql = (
-                "SELECT e.memory_id FROM (" + sql + ") e "
-                "INNER JOIN memories m ON m.id = e.memory_id "
-                "WHERE m.repo_id = ? AND e.op != 'DELETED'"
-            )
-            params.append(repo_id)
-            rows = self.conn.execute(sql, params).fetchall()
+        if repo_id is None:
+            sql = f"SELECT memory_id FROM ({inner_sql}) WHERE rn = 1 AND op != 'DELETED'"
+            rows = self.conn.execute(sql, inner_params).fetchall()
             return {r["memory_id"] for r in rows}
-        rows = self.conn.execute(sql, params).fetchall()
-        return {r["memory_id"] for r in rows if r["op"] != "DELETED"}
+
+        # repo_id is on memories, not memory_events — join.
+        sql = (
+            f"SELECT e.memory_id FROM ({inner_sql}) AS e "
+            "INNER JOIN memories m ON m.id = e.memory_id "
+            "WHERE e.rn = 1 AND e.op != 'DELETED' AND m.repo_id = ?"
+        )
+        rows = self.conn.execute(sql, [*inner_params, repo_id]).fetchall()
+        return {r["memory_id"] for r in rows}
 
     def get_last_indexed_commit(self, repo_id: str, branch: str) -> str | None:
         """Return the commit hash recorded during the last index_repository run, or None."""
@@ -993,12 +992,16 @@ class StorageManager:
 
     # ----- v0.4.0 down-migration (rollback) -------------------------------
 
-    def downgrade_v04_to_v03(self) -> dict[str, int]:
+    def downgrade_v04_to_v03(self, *, i_understand_this_is_destructive: bool = False) -> dict[str, int]:
         """Reverse the v0.4 schema additions for emergency rollback.
 
         Drops memory_events, branch_state, and the three new memories columns
         (created_at_sha, updated_at_sha, risk_grade). Requires SQLite 3.35+
         for ALTER TABLE DROP COLUMN.
+
+        The caller MUST pass i_understand_this_is_destructive=True. The flag
+        is deliberately ugly so accidental invocation from a CLI or test helper
+        is impossible (security audit 2026-05-13).
 
         Returns a dict with row counts of the rows that were destroyed —
         callers should persist this to a log so the data loss is auditable.
@@ -1009,6 +1012,18 @@ class StorageManager:
         idempotently, but any UPDATED / STALED / DELETED / RESTORED events
         emitted between the upgrade and the downgrade are permanently lost.
         """
+        if not i_understand_this_is_destructive:
+            raise RuntimeError(
+                "downgrade_v04_to_v03 refuses to run without "
+                "i_understand_this_is_destructive=True (destructive operation)."
+            )
+        import sqlite3 as _sqlite
+
+        if _sqlite.sqlite_version_info < (3, 35, 0):
+            raise RuntimeError(
+                f"downgrade_v04_to_v03 requires SQLite 3.35+ for ALTER TABLE DROP COLUMN; "
+                f"this build is {_sqlite.sqlite_version}"
+            )
         cursor = self.conn.cursor()
         counts: dict[str, int] = {}
         for table in ("memory_events", "branch_state"):

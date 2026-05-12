@@ -290,8 +290,10 @@ class GitManager:
         `git diff --name-status` so callers don't have to parse stdout.
         """
         try:
+            # Append '--' so git interprets the next token as a revision range,
+            # never an option (security audit 2026-05-13).
             output = await self._exec_git(
-                "diff", ["--name-status", f"{base}..{head}"], cwd
+                "diff", ["--name-status", f"{base}..{head}", "--"], cwd
             )
         except RuntimeError as e:
             raise RuntimeError(f"diff_between({base!r}, {head!r}) failed: {e}")
