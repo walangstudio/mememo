@@ -685,6 +685,37 @@ def test_t013_install_errors_on_non_git_dir(tmp_path: Path) -> None:
 # ---------- Server registration smoke ---------------------------------------
 
 
+def test_downgrade_v04_to_v03_drops_tables_and_columns(tmp_path: Path) -> None:
+    """Emergency rollback: down-migration removes the v0.4 surface cleanly."""
+    storage = _make_storage(tmp_path)
+    storage.append_event(
+        MemoryEvent(commit_sha=SHA_A, memory_id="m", op="CREATED", branch="main")
+    )
+    storage.upsert_branch_state(
+        BranchState(repo_id="r", branch="main", last_indexed_sha=SHA_A)
+    )
+
+    counts = storage.downgrade_v04_to_v03()
+    assert counts["memory_events"] >= 1
+    assert counts["branch_state"] >= 1
+
+    # Tables gone.
+    tables = {
+        r["name"]
+        for r in storage.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    assert "memory_events" not in tables
+    assert "branch_state" not in tables
+
+    # v0.4 memories columns gone.
+    cols = {row[1] for row in storage.conn.execute("PRAGMA table_info(memories)")}
+    assert "created_at_sha" not in cols
+    assert "updated_at_sha" not in cols
+    assert "risk_grade" not in cols
+
+
 def test_server_registers_v04_tools() -> None:
     """server.py imports cleanly with the new tools wired in.
 
