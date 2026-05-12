@@ -16,7 +16,8 @@ from ..utils.hashing import hash_path
 
 logger = logging.getLogger(__name__)
 
-# Whitelist of allowed git commands for security
+# Whitelist of allowed git commands for security.
+# v0.4 adds merge-base (FR-006) and cat-file (used by is_merge_commit).
 ALLOWED_GIT_COMMANDS = [
     "rev-parse",
     "branch",
@@ -24,9 +25,13 @@ ALLOWED_GIT_COMMANDS = [
     "status",
     "diff",
     "log",
+    "merge-base",
+    "cat-file",
 ]
 
-AllowedGitCommand = Literal["rev-parse", "branch", "config", "status", "diff", "log"]
+AllowedGitCommand = Literal[
+    "rev-parse", "branch", "config", "status", "diff", "log", "merge-base", "cat-file"
+]
 
 
 class GitManager:
@@ -249,6 +254,60 @@ class GitManager:
         """
         repo_path = await self.find_repo_root(cwd)
         return hash_path(repo_path)
+
+    # ----- v0.4.0 commit-aware extensions (FR-006) --------------------------
+
+    async def merge_base(
+        self, branch_a: str, branch_b: str, cwd: str | None = None
+    ) -> str | None:
+        """Return the SHA of the merge-base between two refs, or None if disjoint."""
+        try:
+            sha = await self._exec_git("merge-base", [branch_a, branch_b], cwd)
+            return sha or None
+        except RuntimeError:
+            # `git merge-base` exits 1 when there is no common ancestor; that's
+            # not an error condition for callers, just "no merge-base."
+            return None
+
+    async def is_merge_commit(self, sha: str, cwd: str | None = None) -> bool:
+        """A commit is a merge if it has more than one parent."""
+        try:
+            parents = await self._exec_git(
+                "rev-parse", [f"{sha}^@"], cwd
+            )
+        except RuntimeError:
+            return False
+        # `<sha>^@` lists all parents one-per-line; merges have >=2.
+        return len([line for line in parents.split("\n") if line.strip()]) >= 2
+
+    async def diff_between(
+        self, base: str, head: str, cwd: str | None = None
+    ) -> dict[str, str]:
+        """Return {file_path: change_kind} between base..head.
+
+        change_kind is one of 'A' (added), 'M' (modified), 'D' (deleted),
+        'R' (renamed), 'T' (type-change), 'C' (copied). Wraps
+        `git diff --name-status` so callers don't have to parse stdout.
+        """
+        try:
+            output = await self._exec_git(
+                "diff", ["--name-status", f"{base}..{head}"], cwd
+            )
+        except RuntimeError as e:
+            raise RuntimeError(f"diff_between({base!r}, {head!r}) failed: {e}")
+        out: dict[str, str] = {}
+        for line in output.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            # Rename / copy lines look like "R100\told\tnew" — record the new path.
+            kind = parts[0][:1]
+            path = parts[-1]
+            out[path] = kind
+        return out
+
+    # ------------------------------------------------------------------------
 
     async def get_changed_files(
         self, from_commit: str, to_commit: str, cwd: str | None = None

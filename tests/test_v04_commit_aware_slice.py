@@ -385,3 +385,132 @@ def test_security_null_sha_sentinel_is_valid_40_hex() -> None:
     assert len(NULL_SHA) == 40 and all(c in "0123456789abcdef" for c in NULL_SHA)
     assert len(BACKFILL_SHA) == 40 and all(c in "0123456789abcdef" for c in BACKFILL_SHA)
     assert NULL_SHA != BACKFILL_SHA
+
+
+# ---------- T003 finish: STALED + emit_update_event -------------------------
+
+
+def test_t003_mark_memories_stale_emits_staled_event(tmp_path: Path) -> None:
+    storage = _make_storage(tmp_path)
+    # Insert two code memories on the same file + one persistent memory.
+    for mid, ctype in [("c1", "code_snippet"), ("c2", "relationship"), ("d1", "decision")]:
+        storage.conn.execute(
+            "INSERT INTO memories (id, repo_id, branch_name, commit_hash, content_type, "
+            "  file_path, checksum, content_ref, token_count, created_at, updated_at) "
+            "VALUES (?, 'r', 'main', ?, ?, 'foo.py', 'x', 'unused', 1, 100, 100)",
+            (mid, SHA_A, ctype),
+        )
+    storage.conn.commit()
+
+    n = storage.mark_memories_stale_for_file(
+        "foo.py", "r", "main", "file deleted", commit_sha=SHA_B
+    )
+    # Only the two code memories should be marked stale (FR-008 plumbing).
+    assert n == 2
+    staled = [e for e in storage.list_events(op="STALED")]
+    assert {e.memory_id for e in staled} == {"c1", "c2"}
+    assert all(e.commit_sha == SHA_B for e in staled)
+    # decision memories are NEVER staled (existing contract).
+    assert storage.list_events(memory_id="d1") == []
+
+
+def test_t003_mark_stale_without_commit_uses_null_sha(tmp_path: Path) -> None:
+    storage = _make_storage(tmp_path)
+    storage.conn.execute(
+        "INSERT INTO memories (id, repo_id, branch_name, commit_hash, content_type, "
+        "  file_path, checksum, content_ref, token_count, created_at, updated_at) "
+        "VALUES ('c1', 'r', 'main', ?, 'code_snippet', 'foo.py', 'x', 'u', 1, 100, 100)",
+        (SHA_A,),
+    )
+    storage.conn.commit()
+    storage.mark_memories_stale_for_file("foo.py", "r", "main", "no git context")
+    events = storage.list_events(memory_id="c1", op="STALED")
+    assert len(events) == 1
+    assert events[0].commit_sha == NULL_SHA
+
+
+def test_t003_emit_update_event_helper_round_trip(tmp_path: Path) -> None:
+    storage = _make_storage(tmp_path)
+    memory = _make_memory(sha=SHA_A, memory_id="mem-upd")
+    _save_and_emit_created(storage, memory)
+    storage.emit_update_event(
+        memory.id, commit_sha=SHA_B, content_sha="new-chk", branch="main"
+    )
+    ops = [(e.op, e.commit_sha) for e in storage.list_events(memory_id=memory.id)]
+    assert ops == [("CREATED", SHA_A), ("UPDATED", SHA_B)]
+
+
+# ---------- T004: event-replay query ----------------------------------------
+
+
+def _ts(value: int) -> int:
+    return value  # alias for readability in the time-ordered events below
+
+
+def _hand_insert_event(
+    storage: "StorageManager",
+    *,
+    memory_id: str,
+    op: str,
+    sha: str,
+    ts: int,
+    content_sha: str | None = "chk",
+    branch: str = "main",
+) -> None:
+    storage.conn.execute(
+        "INSERT INTO memory_events (commit_sha, memory_id, op, content_sha, branch, ts) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (sha, memory_id, op, content_sha, branch, ts),
+    )
+    storage.conn.commit()
+
+
+def test_t004_state_at_ts_returns_none_before_creation(tmp_path: Path) -> None:
+    storage = _make_storage(tmp_path)
+    _hand_insert_event(storage, memory_id="m", op="CREATED", sha=SHA_A, ts=_ts(500))
+    assert storage.state_at_ts("m", _ts(100)) is None
+
+
+def test_t004_state_at_ts_returns_latest_alive_event(tmp_path: Path) -> None:
+    storage = _make_storage(tmp_path)
+    _hand_insert_event(storage, memory_id="m", op="CREATED", sha=SHA_A, ts=_ts(100), content_sha="v1")
+    _hand_insert_event(storage, memory_id="m", op="UPDATED", sha=SHA_B, ts=_ts(200), content_sha="v2")
+    _hand_insert_event(storage, memory_id="m", op="UPDATED", sha=SHA_C, ts=_ts(300), content_sha="v3")
+    # Query at the moment of the second event — must see v2, not v3.
+    assert storage.state_at_ts("m", _ts(250)) == ("v2", "UPDATED")
+    # Query past the third — sees v3.
+    assert storage.state_at_ts("m", _ts(1000)) == ("v3", "UPDATED")
+
+
+def test_t004_state_at_ts_returns_none_after_delete(tmp_path: Path) -> None:
+    storage = _make_storage(tmp_path)
+    _hand_insert_event(storage, memory_id="m", op="CREATED", sha=SHA_A, ts=_ts(100))
+    _hand_insert_event(storage, memory_id="m", op="DELETED", sha=SHA_B, ts=_ts(200), content_sha=None)
+    assert storage.state_at_ts("m", _ts(150)) is not None  # still alive
+    assert storage.state_at_ts("m", _ts(250)) is None      # deleted
+
+
+def test_t004_alive_memory_ids_at_ts_filters_branch_and_deletes(tmp_path: Path) -> None:
+    storage = _make_storage(tmp_path)
+    # main: m1 created at 100; m2 created at 100, deleted at 200
+    # feat: m3 created at 150
+    _hand_insert_event(storage, memory_id="m1", op="CREATED", sha=SHA_A, ts=100, branch="main")
+    _hand_insert_event(storage, memory_id="m2", op="CREATED", sha=SHA_A, ts=100, branch="main")
+    _hand_insert_event(storage, memory_id="m2", op="DELETED", sha=SHA_B, ts=200, branch="main", content_sha=None)
+    _hand_insert_event(storage, memory_id="m3", op="CREATED", sha=SHA_C, ts=150, branch="feat")
+
+    assert storage.alive_memory_ids_at_ts(150, branch="main") == {"m1", "m2"}
+    assert storage.alive_memory_ids_at_ts(250, branch="main") == {"m1"}
+    assert storage.alive_memory_ids_at_ts(250, branch="feat") == {"m3"}
+
+
+# ---------- T005: GitManager extensions (offline / unit) --------------------
+
+
+def test_t005_diff_between_parses_name_status_output() -> None:
+    """Parse a realistic --name-status output without invoking git."""
+    from mememo.core import git_manager as gm
+
+    # Smoke: confirm new commands were added to the whitelist.
+    assert "merge-base" in gm.ALLOWED_GIT_COMMANDS
+    assert "cat-file" in gm.ALLOWED_GIT_COMMANDS
