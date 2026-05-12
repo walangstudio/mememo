@@ -6,6 +6,9 @@ Usage:
     python -m mememo --version         # Show version
     python -m mememo capture --hook    # Stop hook: auto-capture from transcript
     python -m mememo inject --hook     # UserPromptSubmit hook: inject context
+    python -m mememo install-git-hooks --repo-path <path> [--force]
+                                       # Install opt-in post-merge / post-commit
+                                       # git hooks into <path>/.git/hooks/ (FR-033)
 """
 
 import sys
@@ -33,6 +36,21 @@ def main():
 
             run_inject()
             return
+
+    # v0.4 hook installer subcommand (FR-033, T013/T014).
+    if args and args[0] == "install-git-hooks":
+        import argparse as _argparse
+
+        ap = _argparse.ArgumentParser(prog="mememo install-git-hooks")
+        ap.add_argument("--repo-path", required=True)
+        ap.add_argument("--force", action="store_true", help="overwrite existing hooks")
+        ns = ap.parse_args(args[1:])
+
+        from .hooks.installer import install_git_hooks
+
+        result = install_git_hooks(ns.repo_path, force=ns.force)
+        print(result.report())
+        sys.exit(0 if result.ok else 1)
 
     import argparse
 

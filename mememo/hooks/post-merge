@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# mememo post-merge git hook (T013 / FR-010, FR-033).
+#
+# After a git merge completes, fold the source branch's alive memories into
+# the now-current branch via `mememo merge-branch`. Opt-in: installed only
+# by `mememo install-git-hooks`.
+#
+# git invokes this hook with no arguments. The merged-from ref is recorded
+# in .git/ORIG_HEAD; the now-current branch is HEAD. We resolve the source
+# branch via `git name-rev` and fall back gracefully if it's a detached ref.
+
+set -eu
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+TARGET_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+ORIG_HEAD="$(cat "$REPO_ROOT/.git/ORIG_HEAD" 2>/dev/null || true)"
+
+if [ -z "$ORIG_HEAD" ]; then
+  exit 0
+fi
+
+SOURCE_BRANCH="$(git name-rev --name-only --no-undefined "$ORIG_HEAD" 2>/dev/null || true)"
+if [ -z "$SOURCE_BRANCH" ] || [ "$SOURCE_BRANCH" = "$TARGET_BRANCH" ]; then
+  exit 0
+fi
+
+# Strip refs/heads/ or remotes/origin/ prefixes name-rev sometimes emits.
+SOURCE_BRANCH="${SOURCE_BRANCH#refs/heads/}"
+SOURCE_BRANCH="${SOURCE_BRANCH#remotes/origin/}"
+
+if ! command -v mememo >/dev/null 2>&1; then
+  exit 0
+fi
+
+mememo merge-branch \
+  --repo-path "$REPO_ROOT" \
+  --source "$SOURCE_BRANCH" \
+  --target "$TARGET_BRANCH" \
+  >/dev/null 2>&1 || true

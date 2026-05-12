@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# mememo post-commit git hook (T014 / FR-011, FR-033).
+#
+# After a commit lands, update branch_state.last_indexed_sha and trigger an
+# incremental reindex on changed files so memories stay aligned with HEAD.
+# Opt-in: installed only by `mememo install-git-hooks`.
+
+set -eu
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+if ! command -v mememo >/dev/null 2>&1; then
+  exit 0
+fi
+
+# Best-effort sync; never blocks the commit.
+mememo sync-commits --repo-path "$REPO_ROOT" >/dev/null 2>&1 || true

@@ -49,6 +49,25 @@ _stub_module(
     IndexIVFFlat=_StubFaissIndex,
 )
 
+
+class _StubFastMCP:  # pragma: no cover
+    def __init__(self, *a, **k) -> None: ...
+
+    def tool(self, *a, **k):
+        def deco(fn):
+            return fn
+        return deco
+
+    def resource(self, *a, **k):
+        def deco(fn):
+            return fn
+        return deco
+
+    def run(self, *a, **k) -> None: ...
+
+
+_stub_module("fastmcp", FastMCP=_StubFastMCP)
+
 import pytest  # noqa: E402
 
 from mememo.core.storage_manager import StorageManager  # noqa: E402
@@ -612,3 +631,68 @@ def test_t008_merge_branch_schemas_construct() -> None:
     assert p.merge_sha is None
     r = MergeBranchResponse(success=True, message="ok", merged_count=3)
     assert r.merged_count == 3
+
+
+# ---------- T013 / T014: hook installer -------------------------------------
+
+
+def test_t013_install_git_hooks_into_real_git_dir(tmp_path: Path) -> None:
+    """`mememo install-git-hooks` copies post-merge + post-commit into .git/hooks."""
+    from mememo.hooks.installer import install_git_hooks
+
+    repo = tmp_path / "repo"
+    (repo / ".git" / "hooks").mkdir(parents=True)
+
+    result = install_git_hooks(str(repo))
+    assert result.ok, result.errors
+    assert set(result.installed) == {"post-merge", "post-commit"}
+    for hook in result.installed:
+        path = repo / ".git" / "hooks" / hook
+        assert path.is_file()
+        content = path.read_text(encoding="utf-8")
+        assert "mememo" in content
+
+
+def test_t013_install_refuses_to_clobber_existing_hook(tmp_path: Path) -> None:
+    """A pre-existing hook is left alone unless force=True."""
+    from mememo.hooks.installer import install_git_hooks
+
+    repo = tmp_path / "repo"
+    (repo / ".git" / "hooks").mkdir(parents=True)
+    existing = repo / ".git" / "hooks" / "post-commit"
+    existing.write_text("# user's custom hook — do not touch\n", encoding="utf-8")
+
+    result = install_git_hooks(str(repo))
+    assert "post-commit" in result.skipped_existing
+    assert "post-merge" in result.installed
+    # Original content preserved.
+    assert "do not touch" in existing.read_text(encoding="utf-8")
+
+    # --force overwrites.
+    result_forced = install_git_hooks(str(repo), force=True)
+    assert "post-commit" in result_forced.installed
+    assert "do not touch" not in existing.read_text(encoding="utf-8")
+
+
+def test_t013_install_errors_on_non_git_dir(tmp_path: Path) -> None:
+    from mememo.hooks.installer import install_git_hooks
+
+    result = install_git_hooks(str(tmp_path))
+    assert not result.ok
+    assert any("not a git repository" in e for e in result.errors)
+
+
+# ---------- Server registration smoke ---------------------------------------
+
+
+def test_server_registers_v04_tools() -> None:
+    """server.py imports cleanly with the new tools wired in.
+
+    Smoke only — we don't actually start FastMCP; we just confirm the
+    module loads and exposes the three v0.4 tool callables.
+    """
+    import importlib
+
+    srv = importlib.import_module("mememo.server")
+    for name in ("detect_changes", "recall_at_commit", "merge_branch"):
+        assert hasattr(srv, name), f"server.py is missing {name} registration"
