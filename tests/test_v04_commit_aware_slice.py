@@ -514,3 +514,101 @@ def test_t005_diff_between_parses_name_status_output() -> None:
     # Smoke: confirm new commands were added to the whitelist.
     assert "merge-base" in gm.ALLOWED_GIT_COMMANDS
     assert "cat-file" in gm.ALLOWED_GIT_COMMANDS
+
+
+# ---------- T006: risk grader (pure function) -------------------------------
+
+
+def test_t006_deleted_file_grades_will_break() -> None:
+    from mememo.core.risk_grader import grade_memory
+
+    assert grade_memory("foo.py", (10, 20), {"foo.py": "D"}) == "WILL_BREAK"
+
+
+def test_t006_renamed_file_old_path_grades_will_break() -> None:
+    from mememo.core.risk_grader import grade_memory
+
+    assert grade_memory("old.py", (1, 5), {"old.py": "R"}) == "WILL_BREAK"
+
+
+def test_t006_modified_file_with_line_range_grades_likely_affected() -> None:
+    from mememo.core.risk_grader import grade_memory
+
+    assert grade_memory("foo.py", (10, 20), {"foo.py": "M"}) == "LIKELY_AFFECTED"
+
+
+def test_t006_modified_file_without_line_range_grades_may_need_testing() -> None:
+    from mememo.core.risk_grader import grade_memory
+
+    assert grade_memory("foo.py", None, {"foo.py": "M"}) == "MAY_NEED_TESTING"
+
+
+def test_t006_untouched_file_grades_none() -> None:
+    from mememo.core.risk_grader import grade_memory
+
+    assert grade_memory("foo.py", (10, 20), {"bar.py": "M"}) is None
+
+
+def test_t006_hunk_overlap_downgrades_when_lines_untouched() -> None:
+    """FR-009 SHOULD: lines untouched -> MAY_NEED_TESTING despite file edit."""
+    from mememo.core.risk_grader import grade_memory
+
+    grade = grade_memory(
+        "foo.py",
+        memory_line_range=(50, 60),
+        diff={"foo.py": "M"},
+        hunk_ranges={"foo.py": [(1, 10), (200, 210)]},  # no overlap with 50-60
+    )
+    assert grade == "MAY_NEED_TESTING"
+
+
+def test_t006_hunk_overlap_grades_likely_affected_when_lines_touched() -> None:
+    from mememo.core.risk_grader import grade_memory
+
+    grade = grade_memory(
+        "foo.py",
+        memory_line_range=(50, 60),
+        diff={"foo.py": "M"},
+        hunk_ranges={"foo.py": [(55, 65)]},  # overlaps 50-60
+    )
+    assert grade == "LIKELY_AFFECTED"
+
+
+# ---------- T010: recall_at_commit params (validation only) -----------------
+
+
+def test_t010_recall_params_validate() -> None:
+    from mememo.tools.recall_at_commit import RecallAtCommitParams
+
+    p = RecallAtCommitParams(query="hi", sha=SHA_A, repo_path="/tmp")
+    assert p.top_k == 5  # default
+    with pytest.raises(Exception):
+        RecallAtCommitParams(query="", sha=SHA_A, repo_path="/tmp")  # empty query
+
+
+# ---------- T007 / T008: tool schema smokes ---------------------------------
+
+
+def test_t007_detect_changes_schemas_construct() -> None:
+    from mememo.tools.detect_changes import (
+        AffectedMemory,
+        DetectChangesParams,
+        DetectChangesResponse,
+    )
+
+    p = DetectChangesParams(repo_path="/tmp", base_ref="HEAD~1")
+    assert p.head_ref == "HEAD"
+    am = AffectedMemory(
+        memory_id="m", file_path="foo.py", change_kind="D", risk_grade="WILL_BREAK"
+    )
+    r = DetectChangesResponse(success=True, message="ok", affected=[am])
+    assert r.affected[0].risk_grade == "WILL_BREAK"
+
+
+def test_t008_merge_branch_schemas_construct() -> None:
+    from mememo.tools.merge_branch import MergeBranchParams, MergeBranchResponse
+
+    p = MergeBranchParams(repo_path="/tmp", source_branch="feat", target_branch="main")
+    assert p.merge_sha is None
+    r = MergeBranchResponse(success=True, message="ok", merged_count=3)
+    assert r.merged_count == 3
