@@ -336,5 +336,160 @@ def test_server_registers_v05_graph_tools() -> None:
     import importlib
 
     srv = importlib.import_module("mememo.server")
-    for name in ("graph_neighbors", "graph_path"):
+    for name in ("graph_neighbors", "graph_path", "graph_impact"):
         assert hasattr(srv, name)
+
+
+# ---------- T015 follow-up: methods carry parent_class qualnames ------------
+
+
+def test_method_chunk_has_parent_class_via_unified_walk() -> None:
+    chunker = PythonASTChunker()
+    chunks, _ = chunker.chunk_with_edges(PY_SAMPLE, "pkg/mod.py")
+    methods = [c for c in chunks if c.chunk_type == "method"]
+    assert methods, "expected at least one method chunk"
+    assert all(m.parent_class == "MyClass" for m in methods)
+
+
+# ---------- T022: entity dedup pipeline -------------------------------------
+
+
+def test_t022_dedup_collapses_near_duplicates(tmp_path: Path) -> None:
+    rapidfuzz = pytest.importorskip("rapidfuzz")
+    from mememo.core.graph_analysis import DedupCandidate, dedup_entities
+
+    storage = StorageManager(base_dir=tmp_path / "store")
+    cands = [
+        DedupCandidate(memory_id="m1", label="UserController"),
+        DedupCandidate(memory_id="m2", label="UserControler"),     # one typo
+        DedupCandidate(memory_id="m3", label="DatabaseService"),
+        DedupCandidate(memory_id="m4", label="DatabaseServices"),  # plural variant
+        DedupCandidate(memory_id="m5", label="Unrelated"),
+    ]
+    result = dedup_entities(storage, cands, threshold=0.93)
+    # 3 canonical groups: {m1+m2}, {m3+m4}, {m5}
+    assert result.canonical_count == 3
+    assert result.alias_count == 2
+    rows = storage.conn.execute("SELECT * FROM entity_aliases ORDER BY alias_label").fetchall()
+    labels = {(r["canonical_memory_id"], r["alias_label"]) for r in rows}
+    assert ("m3", "DatabaseServices") in labels or ("m4", "DatabaseService") in labels
+
+
+# ---------- T021: clustering --------------------------------------------------
+
+
+def test_t021_clustering_deterministic_with_seed(tmp_path: Path) -> None:
+    pytest.importorskip("networkx")
+    from mememo.core.graph_analysis import cluster_relations
+
+    storage = StorageManager(base_dir=tmp_path / "store")
+    _seed_chain(storage)
+    # Add a parallel disconnected component to give Louvain a real choice.
+    from uuid import uuid4
+
+    storage.insert_relations([
+        Relation(
+            id=str(uuid4()), repo_id="r", branch="main",
+            source_memory_id="x", target_memory_id="y", type="CALLS",
+            confidence="EXTRACTED", created_at_sha=SHA,
+        ),
+        Relation(
+            id=str(uuid4()), repo_id="r", branch="main",
+            source_memory_id="y", target_memory_id="z", type="CALLS",
+            confidence="EXTRACTED", created_at_sha=SHA,
+        ),
+    ])
+
+    r1 = cluster_relations(storage, repo_id="r", branch="main", seed=42)
+    r2 = cluster_relations(storage, repo_id="r", branch="main", seed=42)
+    # Same seed -> identical community membership.
+    assert r1.communities == r2.communities
+    assert r1.modularity is not None
+    # The chain {a,b,c,d,e} and the chain {x,y,z} should land in different communities.
+    assert r1.communities["a"] != r1.communities["x"]
+
+
+# ---------- T025: graph_impact ----------------------------------------------
+
+
+def test_t025_graph_impact_downstream_cone(tmp_path: Path) -> None:
+    from mememo.tools.graph_impact import GraphImpactParams, graph_impact
+
+    storage = StorageManager(base_dir=tmp_path / "store")
+    _seed_chain(storage)
+    mm = _StubMM(storage)
+    resp = asyncio.run(
+        graph_impact(
+            GraphImpactParams(memory_id="a", direction="downstream", max_depth=4), mm
+        )
+    )
+    visited_ids = {m.memory_id for m in resp.impacted}
+    # a's downstream cone: b, c, d, e.
+    assert visited_ids == {"b", "c", "d", "e"}
+
+
+def test_t025_graph_impact_min_confidence_filter(tmp_path: Path) -> None:
+    from uuid import uuid4
+
+    from mememo.tools.graph_impact import GraphImpactParams, graph_impact
+
+    storage = StorageManager(base_dir=tmp_path / "store")
+    storage.insert_relations([
+        Relation(
+            id=str(uuid4()), repo_id="r", branch="main",
+            source_memory_id="a", target_memory_id="b", type="CALLS",
+            confidence="AMBIGUOUS", created_at_sha=SHA,
+        ),
+        Relation(
+            id=str(uuid4()), repo_id="r", branch="main",
+            source_memory_id="a", target_memory_id="c", type="CALLS",
+            confidence="EXTRACTED", created_at_sha=SHA,
+        ),
+    ])
+    mm = _StubMM(storage)
+    # min_confidence='INFERRED' excludes the AMBIGUOUS edge to b.
+    resp = asyncio.run(
+        graph_impact(
+            GraphImpactParams(memory_id="a", min_confidence="INFERRED"), mm
+        )
+    )
+    assert {m.memory_id for m in resp.impacted} == {"c"}
+
+
+def test_t025_graph_impact_decorates_with_risk_grade(tmp_path: Path) -> None:
+    from uuid import uuid4
+
+    from mememo.tools.graph_impact import GraphImpactParams, graph_impact
+
+    storage = StorageManager(base_dir=tmp_path / "store")
+    # Seed a memory row for 'b' with risk_grade=WILL_BREAK.
+    storage.conn.execute(
+        "INSERT INTO memories (id, repo_id, branch_name, content_type, file_path, "
+        "checksum, content_ref, token_count, created_at, updated_at, risk_grade) "
+        "VALUES ('b', 'r', 'main', 'code_snippet', 'foo.py', 'k', 'u', 1, 1, 1, 'WILL_BREAK')"
+    )
+    storage.conn.commit()
+    storage.insert_relations([
+        Relation(
+            id=str(uuid4()), repo_id="r", branch="main",
+            source_memory_id="a", target_memory_id="b", type="CALLS",
+            confidence="EXTRACTED", created_at_sha=SHA,
+        )
+    ])
+    mm = _StubMM(storage)
+    resp = asyncio.run(graph_impact(GraphImpactParams(memory_id="a"), mm))
+    assert resp.impacted[0].risk_grade == "WILL_BREAK"
+    assert resp.impacted[0].file_path == "foo.py"
+
+
+# ---------- T026: search_similar cluster_id filter (schema only) ------------
+
+
+def test_t026_search_similar_params_accepts_cluster_id() -> None:
+    from mememo.tools.schemas import SearchSimilarParams
+
+    p = SearchSimilarParams(query="q", cluster_id=3)
+    assert p.cluster_id == 3
+    # Default keeps backward-compat.
+    p2 = SearchSimilarParams(query="q")
+    assert p2.cluster_id is None

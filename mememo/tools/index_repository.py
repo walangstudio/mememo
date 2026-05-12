@@ -140,6 +140,14 @@ async def index_repository(
         duration = time.time() - start_time
         files_skipped = sum(skip_reasons.values())
 
+        # v0.5 post-pass (FR-013/015/017): emit + resolve + persist edges for
+        # every Python source file. Best-effort: on any failure we log and move
+        # on so the legacy chunk-only flow still produces a usable index.
+        try:
+            await _run_edge_pass(repo_path, memory_manager)
+        except Exception as e:
+            logger.warning(f"v0.5 edge pass failed (continuing without edges): {e}")
+
         # Record the commit hash at time of indexing so sync_commits can diff from here.
         # v0.4 (T009): also upsert into branch_state so event-replay and the new
         # commit-aware tools can read the canonical last-indexed SHA per branch.
@@ -268,3 +276,83 @@ def _find_matching_files(
             break
 
     return sorted(matching_files)[:max_files]
+
+
+# v0.5: edge-emission post-pass (FR-013, FR-015, FR-017) -----------------
+
+
+async def _run_edge_pass(repo_path: Path, memory_manager: "MemoryManager") -> None:
+    """Extract typed edges from every Python file, resolve against the
+    just-stored chunk-memories, and persist into the relations table.
+
+    Best-effort: any per-file syntax error or import-time fault is logged
+    and skipped. The legacy chunk-only behaviour stays intact when this
+    pass cannot run.
+    """
+    from ..chunking.base_chunker import RawEdge
+    from ..chunking.python_ast_chunker import (
+        PythonASTChunker,
+        file_path_to_module,
+    )
+    from ..core.symbol_resolver import SymbolEntry, resolve_edges
+    from ..types.memory import NULL_SHA
+
+    context = await memory_manager.git_manager.detect_context(str(repo_path))
+    repo_id = context.repo.id
+    branch = context.branch.name
+    commit_sha = context.branch.commit_hash or NULL_SHA
+    if len(commit_sha) != 40:
+        commit_sha = NULL_SHA
+
+    storage = memory_manager.storage_manager
+    rows = storage.conn.execute(
+        "SELECT id, file_path, class_name, function_name FROM memories "
+        "WHERE repo_id = ? AND branch_name = ? AND language = 'python' "
+        "AND stale = 0",
+        (repo_id, branch),
+    ).fetchall()
+
+    symbols: list[SymbolEntry] = []
+    for row in rows:
+        if not row["file_path"]:
+            continue
+        module = file_path_to_module(row["file_path"])
+        parts = [module]
+        if row["class_name"]:
+            parts.append(row["class_name"])
+        if row["function_name"]:
+            parts.append(row["function_name"])
+        symbols.append(SymbolEntry(memory_id=row["id"], qualname=".".join(parts)))
+
+    if not symbols:
+        return
+
+    chunker = PythonASTChunker()
+    all_edges: list[RawEdge] = []
+    py_files = [p for p in repo_path.rglob("*.py") if p.is_file()]
+    for f in py_files:
+        try:
+            content = f.read_text(encoding="utf-8")
+            rel = str(f.relative_to(repo_path)).replace("\\", "/")
+            _, edges = chunker.chunk_with_edges(content, rel)
+            all_edges.extend(edges)
+        except (UnicodeDecodeError, SyntaxError) as e:
+            logger.debug(f"edge pass: skipped {f}: {e}")
+            continue
+
+    if not all_edges:
+        return
+
+    relations = resolve_edges(
+        all_edges,
+        repo_id=repo_id,
+        branch=branch,
+        commit_sha=commit_sha,
+        symbols=symbols,
+    )
+    if relations:
+        inserted = storage.insert_relations(relations)
+        logger.info(
+            f"v0.5 edge pass: extracted {len(all_edges)} raw edges, "
+            f"resolved {len(relations)}, inserted {inserted}"
+        )

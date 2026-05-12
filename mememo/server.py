@@ -104,6 +104,11 @@ from .tools.graph_path import (
     GraphPathResponse,
     graph_path as graph_path_impl,
 )
+from .tools.graph_impact import (
+    GraphImpactParams,
+    GraphImpactResponse,
+    graph_impact as graph_impact_impl,
+)
 from .tools.schemas import (
     BatchStoreParams,
     BatchStoreResponse,
@@ -637,6 +642,23 @@ async def graph_neighbors(params: GraphNeighborsParams) -> GraphNeighborsRespons
     await ensure_initialized()
     _audit_log("graph_neighbors")
     return await graph_neighbors_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def graph_impact(params: GraphImpactParams) -> GraphImpactResponse:
+    """
+    Blast-radius reasoning over the memory graph (v0.5).
+
+    BFS over relations from the named memory, filtered by confidence floor
+    and edge type. Each reached memory is decorated with its current
+    risk_grade (WILL_BREAK / LIKELY_AFFECTED / MAY_NEED_TESTING) if set —
+    so you can ask "if I change THIS, what downstream code is already
+    graded as at-risk?". direction='upstream' inverts the walk to find
+    callers / dependents.
+    """
+    await ensure_initialized()
+    _audit_log("graph_impact")
+    return await graph_impact_impl(params, memory_manager)
 
 
 @mcp.tool()
