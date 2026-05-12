@@ -695,7 +695,11 @@ def test_downgrade_v04_to_v03_drops_tables_and_columns(tmp_path: Path) -> None:
         BranchState(repo_id="r", branch="main", last_indexed_sha=SHA_A)
     )
 
-    counts = storage.downgrade_v04_to_v03()
+    # Confirmation flag is required — refuses to run without it.
+    with pytest.raises(RuntimeError):
+        storage.downgrade_v04_to_v03()
+
+    counts = storage.downgrade_v04_to_v03(i_understand_this_is_destructive=True)
     assert counts["memory_events"] >= 1
     assert counts["branch_state"] >= 1
 
@@ -727,3 +731,55 @@ def test_server_registers_v04_tools() -> None:
     srv = importlib.import_module("mememo.server")
     for name in ("detect_changes", "recall_at_commit", "merge_branch"):
         assert hasattr(srv, name), f"server.py is missing {name} registration"
+
+
+# ---------- Security: option-injection guards (2026-05-13 audit) ------------
+
+
+def test_recall_at_commit_rejects_option_injection_sha() -> None:
+    from mememo.tools.recall_at_commit import RecallAtCommitParams
+
+    for bad in ["--upload-pack=evil", "--exec-path=/tmp", "-rev"]:
+        with pytest.raises(Exception):
+            RecallAtCommitParams(query="q", sha=bad, repo_path="/tmp")
+    # Real SHAs still pass.
+    p = RecallAtCommitParams(query="q", sha=SHA_A, repo_path="/tmp")
+    assert p.sha == SHA_A
+    # Short SHAs (4-40 chars) accepted for ergonomics.
+    p2 = RecallAtCommitParams(query="q", sha="abc1234", repo_path="/tmp")
+    assert p2.sha == "abc1234"
+
+
+def test_detect_changes_rejects_leading_dash_refs() -> None:
+    from mememo.tools.detect_changes import DetectChangesParams
+
+    for bad in ["--output=/tmp/exfil", "-rev", "--ext-diff=evil"]:
+        with pytest.raises(Exception):
+            DetectChangesParams(repo_path="/tmp", base_ref=bad)
+        with pytest.raises(Exception):
+            DetectChangesParams(repo_path="/tmp", base_ref="main", head_ref=bad)
+    # Normal refs pass.
+    p = DetectChangesParams(repo_path="/tmp", base_ref="HEAD~1", head_ref="HEAD")
+    assert p.base_ref == "HEAD~1"
+
+
+# ---------- FR-008 regression: STALED carries the real commit SHA -----------
+
+
+def test_mark_stale_records_provided_sha_not_null_sha(tmp_path: Path) -> None:
+    """Regression pin: sync_commits passes commit_sha=current_commit (FR-008)."""
+    storage = _make_storage(tmp_path)
+    storage.conn.execute(
+        "INSERT INTO memories (id, repo_id, branch_name, commit_hash, content_type, "
+        "  file_path, checksum, content_ref, token_count, created_at, updated_at) "
+        "VALUES ('c1', 'r', 'main', ?, 'code_snippet', 'foo.py', 'x', 'u', 1, 100, 100)",
+        (SHA_A,),
+    )
+    storage.conn.commit()
+    storage.mark_memories_stale_for_file(
+        "foo.py", "r", "main", "file changed", commit_sha=SHA_B
+    )
+    events = storage.list_events(memory_id="c1", op="STALED")
+    assert len(events) == 1
+    assert events[0].commit_sha == SHA_B, "FR-008: STALED event must carry the real commit SHA"
+    assert events[0].commit_sha != NULL_SHA

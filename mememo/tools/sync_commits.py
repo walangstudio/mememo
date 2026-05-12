@@ -100,12 +100,14 @@ async def sync_commits(
             to_commit=current_commit[:8],
         )
 
-    # 1. Mark code memories stale for every changed file
+    # 1. Mark code memories stale for every changed file.
+    # v0.4 (FR-008): pass current_commit so STALED events are tagged with the
+    # commit that actually caused the staling, not the NULL_SHA fallback.
     memories_staled = 0
     stale_reason = f"File changed in commit {current_commit[:8]}"
     for file_path in changed_files:
         count = memory_manager.storage_manager.mark_memories_stale_for_file(
-            file_path, repo_id, branch, stale_reason
+            file_path, repo_id, branch, stale_reason, commit_sha=current_commit
         )
         memories_staled += count
         logger.debug(f"Staled {count} memories for {file_path}")

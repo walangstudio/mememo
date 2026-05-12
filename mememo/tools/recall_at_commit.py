@@ -16,9 +16,16 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 from ..types import SearchParams, SearchResult
+
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{4,40}$")
+# Refs accept letters, digits, /, ., :, ~, ^, @, {}, -, and _; must NOT start with '-'
+# (git option injection guard). Cap at 200 chars to bound the attack surface.
+_REF_RE = re.compile(r"^(?!-)[\w/.:~^@{}-]{1,200}$")
 
 if TYPE_CHECKING:
     from ..core.memory_manager import MemoryManager
@@ -28,10 +35,19 @@ logger = logging.getLogger(__name__)
 
 class RecallAtCommitParams(BaseModel):
     query: str = Field(min_length=1)
-    sha: str = Field(description="Target git SHA (40-char hex) to recall as-of")
+    sha: str = Field(description="Target git SHA (4-40 hex chars) to recall as-of")
     repo_path: str = Field(description="Working directory inside the target git repo")
     top_k: int = Field(default=5, ge=1, le=100)
     min_similarity: float = Field(default=0.7, ge=0.0, le=1.0)
+
+    @field_validator("sha")
+    @classmethod
+    def _validate_sha(cls, v: str) -> str:
+        # Hardening: prevents git option-injection via sha='--upload-pack=...'
+        # (security audit 2026-05-13).
+        if not _SHA_RE.match(v):
+            raise ValueError(f"sha must be 4-40 hex chars; got {v!r}")
+        return v
 
 
 class RecallAtCommitResponse(BaseModel):
@@ -45,9 +61,11 @@ class RecallAtCommitResponse(BaseModel):
 
 async def _commit_ts(memory_manager: "MemoryManager", sha: str, cwd: str) -> int | None:
     """Resolve a SHA to its committer-timestamp (epoch seconds)."""
+    # Defence-in-depth: even with the Pydantic validator above, append '--' to
+    # force git to treat sha as a revision not an option.
     try:
         out = await memory_manager.git_manager._exec_git(
-            "log", ["-1", "--format=%ct", sha], cwd
+            "log", ["-1", "--format=%ct", sha, "--"], cwd
         )
     except RuntimeError as e:
         logger.debug("git log -1 --format=%%ct %s failed: %s", sha, e)

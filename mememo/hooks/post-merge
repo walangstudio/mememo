@@ -15,7 +15,10 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 TARGET_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 ORIG_HEAD="$(cat "$REPO_ROOT/.git/ORIG_HEAD" 2>/dev/null || true)"
 
-if [ -z "$ORIG_HEAD" ]; then
+# Reject anything that isn't a well-formed 40-char SHA — defends against
+# someone writing garbage (or a leading dash) into .git/ORIG_HEAD before
+# the hook fires.
+if ! printf '%s' "$ORIG_HEAD" | grep -Eq '^[0-9a-fA-F]{40}$'; then
   exit 0
 fi
 
@@ -27,6 +30,12 @@ fi
 # Strip refs/heads/ or remotes/origin/ prefixes name-rev sometimes emits.
 SOURCE_BRANCH="${SOURCE_BRANCH#refs/heads/}"
 SOURCE_BRANCH="${SOURCE_BRANCH#remotes/origin/}"
+
+# Whitelist the post-stripping branch name; reject anything exotic that
+# might confuse a downstream consumer.
+if ! printf '%s' "$SOURCE_BRANCH" | grep -Eq '^[A-Za-z0-9_/.-]+$'; then
+  exit 0
+fi
 
 if ! command -v mememo >/dev/null 2>&1; then
   exit 0
