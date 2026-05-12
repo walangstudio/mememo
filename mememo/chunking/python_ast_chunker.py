@@ -89,9 +89,11 @@ class PythonASTChunker(BaseChunker):
     ) -> tuple[list[Chunk], list[RawEdge]]:
         """Return ``(chunks, raw_edges)``.
 
-        Chunks are produced by the existing AST walk; raw edges are emitted
-        in a second pass that walks the same tree visiting Import, ImportFrom,
-        Call, ClassDef.bases, Attribute, and decorator nodes.
+        Single scope-aware traversal: every FunctionDef / ClassDef produces a
+        chunk with ``parent_class`` populated when the enclosing scope is a
+        class, and every Import / Call / ClassDef.bases / Attribute /
+        decorator emits a RawEdge whose ``source_qualname`` reflects the
+        enclosing scope (module / class / function).
 
         Resolution into target memory IDs is the symbol_resolver's job.
         """
@@ -100,9 +102,108 @@ class PythonASTChunker(BaseChunker):
         except SyntaxError as e:
             logger.warning(f"Python syntax error in {file_path}: {e}")
             raise
-        chunks = self.chunk(code, file_path)
         module = file_path_to_module(file_path)
-        edges = _emit_edges(tree, module)
+        lines = code.split("\n")
+        chunks: list[Chunk] = []
+        edges: list[RawEdge] = []
+        scope_stack: list[tuple[str, str]] = [("module", module)]
+
+        def cur_qualname() -> str:
+            return ".".join(part for _, part in scope_stack)
+
+        def enclosing_class() -> str | None:
+            for kind, name in reversed(scope_stack):
+                if kind == "class":
+                    return name
+            return None
+
+        def visit(node: ast.AST) -> None:
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    edges.append(RawEdge(module, alias.name, "IMPORTS"))
+                return
+            if isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                for alias in node.names:
+                    target = f"{base}.{alias.name}" if base else alias.name
+                    edges.append(RawEdge(module, target, "IMPORTS"))
+                return
+
+            if isinstance(node, ast.ClassDef):
+                qual = f"{cur_qualname()}.{node.name}"
+                # Chunk for the class itself.
+                start = node.lineno
+                end = node.end_lineno or start
+                chunks.append(Chunk(
+                    text="\n".join(lines[start - 1: end]),
+                    start_line=start, end_line=end,
+                    chunk_type="class",
+                    class_name=node.name,
+                    docstring=ast.get_docstring(node),
+                    decorators=[self._get_decorator_name(d) for d in node.decorator_list] or None,
+                    parent_class=enclosing_class(),
+                    language="python", file_path=file_path,
+                ))
+                for base in node.bases:
+                    tgt = _name_from_attr_chain(base)
+                    if tgt:
+                        edges.append(RawEdge(qual, tgt, "EXTENDS"))
+                for dec in node.decorator_list:
+                    tgt = _name_from_attr_chain(
+                        dec.func if isinstance(dec, ast.Call) else dec
+                    )
+                    if tgt:
+                        edges.append(RawEdge(qual, tgt, "DECORATED_BY"))
+                scope_stack.append(("class", node.name))
+                for child in ast.iter_child_nodes(node):
+                    visit(child)
+                scope_stack.pop()
+                return
+
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                parent = enclosing_class()
+                qual = f"{cur_qualname()}.{node.name}"
+                start = node.lineno
+                end = node.end_lineno or start
+                chunks.append(Chunk(
+                    text="\n".join(lines[start - 1: end]),
+                    start_line=start, end_line=end,
+                    chunk_type="method" if parent else "function",
+                    function_name=node.name,
+                    docstring=ast.get_docstring(node),
+                    decorators=[self._get_decorator_name(d) for d in node.decorator_list] or None,
+                    parent_class=parent,
+                    language="python", file_path=file_path,
+                ))
+                for dec in node.decorator_list:
+                    tgt = _name_from_attr_chain(
+                        dec.func if isinstance(dec, ast.Call) else dec
+                    )
+                    if tgt:
+                        edges.append(RawEdge(qual, tgt, "DECORATED_BY"))
+                scope_stack.append(("function", node.name))
+                for child in ast.iter_child_nodes(node):
+                    visit(child)
+                scope_stack.pop()
+                return
+
+            if isinstance(node, ast.Call):
+                tgt = _name_from_attr_chain(node.func)
+                if tgt:
+                    edges.append(RawEdge(cur_qualname(), tgt, "CALLS"))
+                for child in ast.iter_child_nodes(node):
+                    visit(child)
+                return
+
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                if node.value.id in ("self", "cls"):
+                    edges.append(RawEdge(cur_qualname(), node.attr, "USES"))
+
+            for child in ast.iter_child_nodes(node):
+                visit(child)
+
+        for child in ast.iter_child_nodes(tree):
+            visit(child)
         return chunks, edges
 
     def _extract_function(
