@@ -693,7 +693,12 @@ class StorageManager:
         }
 
     def mark_memories_stale_for_file(
-        self, file_path: str, repo_id: str, branch: str, reason: str
+        self,
+        file_path: str,
+        repo_id: str,
+        branch: str,
+        reason: str,
+        commit_sha: str | None = None,
     ) -> int:
         """
         Mark code memories for a file as stale.
@@ -701,13 +706,32 @@ class StorageManager:
         Only affects CODE_MEMORY_TYPES (code_snippet, relationship).
         Persistent types (decision, analysis, conversation, context, summary) are never staled.
 
+        v0.4 addition (FR-003): emit a STALED event per affected memory so the
+        event log can replay the staleness transition during time-travel. Pass
+        commit_sha to identify the commit that caused the staling; defaults to
+        NULL_SHA when the caller has no git context.
+
         Returns:
             Number of memories marked stale
         """
-        from ..types.memory import CODE_MEMORY_TYPES
+        from ..types.memory import CODE_MEMORY_TYPES, NULL_SHA
 
         placeholders = ",".join("?" * len(CODE_MEMORY_TYPES))
         cursor = self.conn.cursor()
+        # First collect the ids we are about to stale — needed for event emission.
+        cursor.execute(
+            f"""
+            SELECT id, checksum FROM memories
+            WHERE file_path = ? AND repo_id = ? AND branch_name = ?
+              AND content_type IN ({placeholders})
+              AND stale = 0
+            """,
+            (file_path, repo_id, branch, *CODE_MEMORY_TYPES),
+        )
+        affected = [(row["id"], row["checksum"]) for row in cursor.fetchall()]
+        if not affected:
+            return 0
+
         cursor.execute(
             f"""
             UPDATE memories
@@ -718,8 +742,117 @@ class StorageManager:
             """,
             (reason, file_path, repo_id, branch, *CODE_MEMORY_TYPES),
         )
+        rowcount = cursor.rowcount
+
+        # Emit STALED events (FR-003). Use NULL_SHA when caller has no commit context.
+        sha = commit_sha if commit_sha and len(commit_sha) == 40 else NULL_SHA
+        from datetime import datetime as _dt
+        ts = int(_dt.now().timestamp())
+        cursor.executemany(
+            """
+            INSERT INTO memory_events (commit_sha, memory_id, op, content_sha, branch, ts)
+            VALUES (?, ?, 'STALED', ?, ?, ?)
+            """,
+            [(sha, mid, chk, branch, ts) for mid, chk in affected],
+        )
         self.conn.commit()
-        return cursor.rowcount
+        return rowcount
+
+    def emit_update_event(
+        self,
+        memory_id: str,
+        *,
+        commit_sha: str,
+        content_sha: str | None,
+        branch: str,
+    ) -> int:
+        """Emit a single UPDATED event. Future update_memory paths call this
+        after persisting the new state. Returns inserted rowid.
+        """
+        return self.append_event(
+            MemoryEvent(
+                commit_sha=commit_sha,
+                memory_id=memory_id,
+                op="UPDATED",
+                content_sha=content_sha,
+                branch=branch,
+            )
+        )
+
+    # ----- T004: event-replay query (FR-004, FR-012) ----------------------
+
+    def state_at_ts(
+        self,
+        memory_id: str,
+        target_ts: int,
+        branch: str | None = None,
+    ) -> tuple[str, MemoryEventOp] | None:
+        """Reconstruct a memory's state at target_ts by replaying events.
+
+        Returns:
+            (content_sha, last_op) if the memory was alive at target_ts —
+              last_op is CREATED, UPDATED, STALED, or RESTORED.
+            None if the memory had no event at or before target_ts (it didn't
+              exist yet) OR if its most recent event was DELETED.
+
+        Per clarifications.json: replay is purely timestamp-based; the caller
+        is responsible for converting a target SHA into target_ts via git.
+        """
+        sql = (
+            "SELECT op, content_sha FROM memory_events "
+            "WHERE memory_id = ? AND ts <= ?"
+        )
+        params: list[object] = [memory_id, target_ts]
+        if branch is not None:
+            sql += " AND branch = ?"
+            params.append(branch)
+        sql += " ORDER BY ts DESC, id DESC LIMIT 1"
+        row = self.conn.execute(sql, params).fetchone()
+        if row is None:
+            return None
+        if row["op"] == "DELETED":
+            return None
+        return (row["content_sha"], row["op"])
+
+    def alive_memory_ids_at_ts(
+        self,
+        target_ts: int,
+        repo_id: str | None = None,
+        branch: str | None = None,
+    ) -> set[str]:
+        """Bulk replay — return the set of memory_ids alive at target_ts.
+
+        Used by recall_at_commit (T010) to filter FAISS search results to the
+        subset that existed at the target SHA. O(events_up_to_ts) — for typical
+        repos this is small enough to compute on demand without materialised
+        snapshots (FR-005).
+        """
+        sql = (
+            "SELECT memory_id, op FROM memory_events e1 "
+            "WHERE ts <= ? "
+            "AND id = (SELECT MAX(e2.id) FROM memory_events e2 "
+            "          WHERE e2.memory_id = e1.memory_id AND e2.ts <= ?"
+        )
+        params: list[object] = [target_ts, target_ts]
+        if branch is not None:
+            sql += " AND e2.branch = ?"
+            params.append(branch)
+        sql += ")"
+        if branch is not None:
+            sql += " AND e1.branch = ?"
+            params.append(branch)
+        if repo_id is not None:
+            # repo_id is not on memory_events; join through memories.
+            sql = (
+                "SELECT e.memory_id FROM (" + sql + ") e "
+                "INNER JOIN memories m ON m.id = e.memory_id "
+                "WHERE m.repo_id = ? AND e.op != 'DELETED'"
+            )
+            params.append(repo_id)
+            rows = self.conn.execute(sql, params).fetchall()
+            return {r["memory_id"] for r in rows}
+        rows = self.conn.execute(sql, params).fetchall()
+        return {r["memory_id"] for r in rows if r["op"] != "DELETED"}
 
     def get_last_indexed_commit(self, repo_id: str, branch: str) -> str | None:
         """Return the commit hash recorded during the last index_repository run, or None."""
