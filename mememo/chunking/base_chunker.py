@@ -10,6 +10,29 @@ from typing import Literal
 
 ChunkType = Literal["function", "method", "class", "module", "import", "text"]
 
+# v0.5 typed-edge taxonomy (FR-013, FR-014). Stored in the relations table.
+EdgeType = Literal["IMPORTS", "CALLS", "EXTENDS", "IMPLEMENTS", "USES", "DECORATED_BY"]
+
+# Edge confidence — every edge is born EXTRACTED. Resolver may downgrade
+# to INFERRED (fuzzy match) or AMBIGUOUS (no resolution).
+EdgeConfidence = Literal["EXTRACTED", "INFERRED", "AMBIGUOUS"]
+
+
+@dataclass
+class RawEdge:
+    """A single typed edge emitted by a chunker, pre-resolution.
+
+    `source_qualname` is the dotted-path identifier of the source chunk
+    (e.g. ``foo.bar.MyClass.method``). `target_label` is the unresolved
+    target — a name token from the AST. The symbol_resolver pass turns
+    target_label into target_memory_id where possible.
+    """
+
+    source_qualname: str
+    target_label: str
+    edge_type: EdgeType
+    confidence: EdgeConfidence = "EXTRACTED"
+
 
 @dataclass
 class Chunk:

@@ -13,6 +13,9 @@ from .memory import (
     BACKFILL_SHA,
     BranchContext,
     BranchState,
+    Relation,
+    RelationConfidence,
+    RelationType,
     CreateMemoryParams,
     GitContext,
     Memory,
@@ -63,4 +66,8 @@ __all__ = [
     "BranchState",
     "NULL_SHA",
     "BACKFILL_SHA",
+    # v0.5.0 graph layer
+    "Relation",
+    "RelationType",
+    "RelationConfidence",
 ]

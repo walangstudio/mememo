@@ -93,6 +93,17 @@ from .tools.recall_at_commit import (
     RecallAtCommitResponse,
     recall_at_commit as recall_at_commit_impl,
 )
+# v0.5 graph traversal tools (T023, T024)
+from .tools.graph_neighbors import (
+    GraphNeighborsParams,
+    GraphNeighborsResponse,
+    graph_neighbors as graph_neighbors_impl,
+)
+from .tools.graph_path import (
+    GraphPathParams,
+    GraphPathResponse,
+    graph_path as graph_path_impl,
+)
 from .tools.schemas import (
     BatchStoreParams,
     BatchStoreResponse,
@@ -611,6 +622,35 @@ async def recall_at_commit(params: RecallAtCommitParams) -> RecallAtCommitRespon
     await ensure_initialized()
     _audit_log("recall_at_commit")
     return await recall_at_commit_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def graph_neighbors(params: GraphNeighborsParams) -> GraphNeighborsResponse:
+    """
+    Depth-limited BFS over typed edges in the memory graph (v0.5).
+
+    Walks IMPORTS / CALLS / EXTENDS / USES / DECORATED_BY relations from
+    the given memory, returning visited memory ids and the traversed edges.
+    Use this when you need the local neighborhood of a function or class —
+    callers, callees, base classes, etc.
+    """
+    await ensure_initialized()
+    _audit_log("graph_neighbors")
+    return await graph_neighbors_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def graph_path(params: GraphPathParams) -> GraphPathResponse:
+    """
+    Shortest directed edge path between two memories (v0.5).
+
+    BFS over outbound relations. Returns the ordered list of memory_ids or
+    null if no path exists within max_depth. Useful for impact reasoning:
+    "does ServiceA reach DatabaseTable via any call chain?"
+    """
+    await ensure_initialized()
+    _audit_log("graph_path")
+    return await graph_path_impl(params, memory_manager)
 
 
 @mcp.tool()

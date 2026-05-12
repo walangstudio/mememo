@@ -24,6 +24,8 @@ from ..types import (
     MemoryMetadata,
     MemoryRelationships,
     MemorySummary,
+    Relation,
+    RelationType,
     RepoContext,
 )
 
@@ -210,6 +212,32 @@ class StorageManager:
                 last_indexed_sha TEXT,
                 parent_sha TEXT,
                 PRIMARY KEY (repo_id, branch)
+            );
+
+            -- v0.5 (FR-017): typed edge layer with confidence + commit SHA.
+            CREATE TABLE IF NOT EXISTS relations (
+                id TEXT PRIMARY KEY,
+                repo_id TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                source_memory_id TEXT NOT NULL,
+                target_memory_id TEXT,
+                target_symbol TEXT,
+                type TEXT NOT NULL CHECK (type IN ('IMPORTS','CALLS','EXTENDS','IMPLEMENTS','USES','DECORATED_BY')),
+                confidence TEXT NOT NULL CHECK (confidence IN ('EXTRACTED','INFERRED','AMBIGUOUS')),
+                created_at_sha TEXT NOT NULL CHECK (length(created_at_sha) = 40),
+                stale INTEGER DEFAULT 0,
+                community INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_rel_src ON relations(source_memory_id, type);
+            CREATE INDEX IF NOT EXISTS idx_rel_tgt ON relations(target_memory_id, type);
+            CREATE INDEX IF NOT EXISTS idx_rel_repo ON relations(repo_id, branch);
+
+            -- v0.5 (FR-019): entity dedup alias map; populated by graph_analysis.
+            CREATE TABLE IF NOT EXISTS entity_aliases (
+                canonical_memory_id TEXT NOT NULL,
+                alias_label TEXT NOT NULL,
+                similarity REAL NOT NULL,
+                PRIMARY KEY (canonical_memory_id, alias_label)
             );
         """)
         self.conn.commit()
@@ -989,6 +1017,74 @@ class StorageManager:
             f"UPDATE memories SET {', '.join(sets)} WHERE id = ?", params
         )
         self.conn.commit()
+
+    # ----- v0.5.0 typed-edge layer (FR-017, FR-020, FR-021, FR-022) -------
+
+    def insert_relations(self, relations: list[Relation]) -> int:
+        """Bulk-insert edges. Returns rowcount."""
+        if not relations:
+            return 0
+        cursor = self.conn.cursor()
+        cursor.executemany(
+            """
+            INSERT INTO relations (
+                id, repo_id, branch, source_memory_id, target_memory_id,
+                target_symbol, type, confidence, created_at_sha, stale, community
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    r.id, r.repo_id, r.branch, r.source_memory_id, r.target_memory_id,
+                    r.target_symbol, r.type, r.confidence, r.created_at_sha,
+                    1 if r.stale else 0, r.community,
+                )
+                for r in relations
+            ],
+        )
+        self.conn.commit()
+        return cursor.rowcount
+
+    def list_relations(
+        self,
+        *,
+        repo_id: str | None = None,
+        branch: str | None = None,
+        source_memory_id: str | None = None,
+        target_memory_id: str | None = None,
+        type: RelationType | None = None,
+    ) -> list[Relation]:
+        conditions: list[str] = []
+        params: list[object] = []
+        for col, val in [
+            ("repo_id", repo_id),
+            ("branch", branch),
+            ("source_memory_id", source_memory_id),
+            ("target_memory_id", target_memory_id),
+            ("type", type),
+        ]:
+            if val is not None:
+                conditions.append(f"{col} = ?")
+                params.append(val)
+        sql = "SELECT * FROM relations"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        rows = self.conn.execute(sql, params).fetchall()
+        return [
+            Relation(
+                id=row["id"],
+                repo_id=row["repo_id"],
+                branch=row["branch"],
+                source_memory_id=row["source_memory_id"],
+                target_memory_id=row["target_memory_id"],
+                target_symbol=row["target_symbol"],
+                type=row["type"],
+                confidence=row["confidence"],
+                created_at_sha=row["created_at_sha"],
+                stale=bool(row["stale"]),
+                community=row["community"],
+            )
+            for row in rows
+        ]
 
     # ----- v0.4.0 down-migration (rollback) -------------------------------
 
