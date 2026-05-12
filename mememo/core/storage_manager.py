@@ -991,6 +991,45 @@ class StorageManager:
         )
         self.conn.commit()
 
+    # ----- v0.4.0 down-migration (rollback) -------------------------------
+
+    def downgrade_v04_to_v03(self) -> dict[str, int]:
+        """Reverse the v0.4 schema additions for emergency rollback.
+
+        Drops memory_events, branch_state, and the three new memories columns
+        (created_at_sha, updated_at_sha, risk_grade). Requires SQLite 3.35+
+        for ALTER TABLE DROP COLUMN.
+
+        Returns a dict with row counts of the rows that were destroyed —
+        callers should persist this to a log so the data loss is auditable.
+
+        WARNING: this is a destructive, one-way operation. The synthetic
+        CREATED events seeded by the v0.3 -> v0.4 backfill are part of
+        what gets dropped; re-running the upgrade will recreate them
+        idempotently, but any UPDATED / STALED / DELETED / RESTORED events
+        emitted between the upgrade and the downgrade are permanently lost.
+        """
+        cursor = self.conn.cursor()
+        counts: dict[str, int] = {}
+        for table in ("memory_events", "branch_state"):
+            row = cursor.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
+            counts[table] = row["n"] if row else 0
+        cursor.executescript(
+            """
+            DROP INDEX IF EXISTS idx_events_unique_create;
+            DROP INDEX IF EXISTS idx_events_branch;
+            DROP INDEX IF EXISTS idx_events_memory;
+            DROP INDEX IF EXISTS idx_events_commit;
+            DROP TABLE IF EXISTS memory_events;
+            DROP TABLE IF EXISTS branch_state;
+            ALTER TABLE memories DROP COLUMN risk_grade;
+            ALTER TABLE memories DROP COLUMN updated_at_sha;
+            ALTER TABLE memories DROP COLUMN created_at_sha;
+            """
+        )
+        self.conn.commit()
+        return counts
+
     # ----------------------------------------------------------------------
 
     def close(self) -> None:
