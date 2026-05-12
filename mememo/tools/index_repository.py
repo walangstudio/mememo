@@ -340,6 +340,35 @@ async def _run_edge_pass(repo_path: Path, memory_manager: "MemoryManager") -> No
             logger.debug(f"edge pass: skipped {f}: {e}")
             continue
 
+    # v0.5 (FR-014): also emit edges from TypeScript / JavaScript / Go files
+    # when tree-sitter is available. Best-effort — skip per-file on any error.
+    try:
+        from ..chunking.tree_sitter_chunker import TreeSitterChunker
+        from ..chunking.language_detector import detect_language
+
+        ts_chunker = TreeSitterChunker()
+    except Exception as e:
+        logger.debug(f"edge pass: tree-sitter unavailable, skipping TS/JS/Go: {e}")
+        ts_chunker = None
+
+    if ts_chunker is not None:
+        ts_globs = ("*.ts", "*.tsx", "*.js", "*.jsx", "*.go")
+        ts_files: list[Path] = []
+        for pattern in ts_globs:
+            ts_files.extend(p for p in repo_path.rglob(pattern) if p.is_file())
+        for f in ts_files:
+            try:
+                content = f.read_text(encoding="utf-8")
+                rel = str(f.relative_to(repo_path)).replace("\\", "/")
+                lang = detect_language(rel)
+                if lang not in ("typescript", "tsx", "javascript", "go"):
+                    continue
+                _, edges = ts_chunker.chunk_with_edges(content, rel, lang)
+                all_edges.extend(edges)
+            except (UnicodeDecodeError, Exception) as e:
+                logger.debug(f"edge pass: skipped {f}: {e}")
+                continue
+
     if not all_edges:
         return
 
