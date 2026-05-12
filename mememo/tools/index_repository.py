@@ -140,11 +140,37 @@ async def index_repository(
         duration = time.time() - start_time
         files_skipped = sum(skip_reasons.values())
 
-        # Record the commit hash at time of indexing so sync_commits can diff from here
+        # Record the commit hash at time of indexing so sync_commits can diff from here.
+        # v0.4 (T009): also upsert into branch_state so event-replay and the new
+        # commit-aware tools can read the canonical last-indexed SHA per branch.
         try:
             context = await memory_manager.git_manager.detect_context(str(repo_path))
             memory_manager.storage_manager.set_last_indexed_commit(
                 context.repo.id, context.branch.name, context.branch.commit_hash
+            )
+            from ..types.memory import BranchState
+
+            parent_sha: str | None = None
+            try:
+                # Best-effort: find merge-base against the conventional default branch.
+                for default in ("main", "master"):
+                    if default == context.branch.name:
+                        continue
+                    parent_sha = await memory_manager.git_manager.merge_base(
+                        context.branch.name, default, cwd=str(repo_path)
+                    )
+                    if parent_sha:
+                        break
+            except Exception:  # merge-base is best-effort metadata, never blocking
+                parent_sha = None
+
+            memory_manager.storage_manager.upsert_branch_state(
+                BranchState(
+                    repo_id=context.repo.id,
+                    branch=context.branch.name,
+                    last_indexed_sha=context.branch.commit_hash or None,
+                    parent_sha=parent_sha,
+                )
             )
         except Exception as e:
             logger.warning(f"Could not record indexed commit (non-git repo?): {e}")

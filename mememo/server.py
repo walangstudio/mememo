@@ -12,7 +12,7 @@ All-Python code-aware memory server with:
 import json
 import logging
 import time
-from importlib.metadata import version as pkg_version
+from importlib.metadata import PackageNotFoundError, version as pkg_version
 from pathlib import Path
 
 from fastmcp import FastMCP
@@ -77,6 +77,22 @@ from .tools import (
 from .tools import (
     sync_commits as sync_commits_impl,
 )
+# v0.4 commit-aware MCP tools (T007, T008, T010)
+from .tools.detect_changes import (
+    DetectChangesParams,
+    DetectChangesResponse,
+    detect_changes as detect_changes_impl,
+)
+from .tools.merge_branch import (
+    MergeBranchParams,
+    MergeBranchResponse,
+    merge_branch as merge_branch_impl,
+)
+from .tools.recall_at_commit import (
+    RecallAtCommitParams,
+    RecallAtCommitResponse,
+    recall_at_commit as recall_at_commit_impl,
+)
 from .tools.schemas import (
     BatchStoreParams,
     BatchStoreResponse,
@@ -117,7 +133,11 @@ from .tools.schemas import (
 )
 from .types.config import MemoConfig
 
-_VERSION = pkg_version("mememo")
+try:
+    _VERSION = pkg_version("mememo")
+except PackageNotFoundError:
+    # Running from a source checkout without pip install -e .
+    _VERSION = "0.0.0+local"
 
 # Initialize logger
 logging.basicConfig(
@@ -552,6 +572,62 @@ async def sync_commits(params: SyncCommitsParams) -> SyncCommitsResponse:
     await ensure_initialized()
     _audit_log("sync_commits")
     return await sync_commits_impl(params, memory_manager)
+
+
+# ---------- v0.4 commit-aware MCP tools (FR-007, FR-010, FR-012) -----------
+
+
+@mcp.tool()
+async def detect_changes(params: DetectChangesParams) -> DetectChangesResponse:
+    """
+    Map git diff between two refs to affected memories with risk grades.
+
+    Returns a list of {memory_id, file_path, line_range, change_kind, risk_grade}
+    where risk_grade is one of:
+    - WILL_BREAK       — source file deleted or renamed
+    - LIKELY_AFFECTED  — file modified and the memory has a line_range
+    - MAY_NEED_TESTING — file modified but no line_range, or unclassified change
+
+    Read-only: does NOT mark memories stale or persist risk_grade. Use
+    sync_commits when you want the staleness side-effects.
+    """
+    await ensure_initialized()
+    _audit_log("detect_changes")
+    return await detect_changes_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def recall_at_commit(params: RecallAtCommitParams) -> RecallAtCommitResponse:
+    """
+    Time-travel semantic search: recall memory state as-of a target commit SHA.
+
+    Resolves the SHA to its commit timestamp, replays the append-only event
+    log up to that timestamp to compute the alive memory set, then runs
+    semantic search and filters results to that set.
+
+    Use cases: "what did we know before this refactor?", auditing decisions
+    against the code state when they were made.
+    """
+    await ensure_initialized()
+    _audit_log("recall_at_commit")
+    return await recall_at_commit_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def merge_branch(params: MergeBranchParams) -> MergeBranchResponse:
+    """
+    Union the source branch's alive memories into the target branch.
+
+    Mirrors a git merge at the memory layer: dedupes by content checksum so
+    you never get two copies of the same insight, and emits RESTORED events
+    tagged at the merge SHA so event-replay can see the merge boundary.
+
+    Typically called from the opt-in post-merge git hook installed via
+    `mememo install-git-hooks`, but can be invoked manually after any merge.
+    """
+    await ensure_initialized()
+    _audit_log("merge_branch")
+    return await merge_branch_impl(params, memory_manager)
 
 
 @mcp.tool()
