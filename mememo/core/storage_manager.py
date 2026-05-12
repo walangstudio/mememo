@@ -12,10 +12,14 @@ from datetime import datetime
 from pathlib import Path
 
 from ..types import (
+    BACKFILL_SHA,
     BranchContext,
+    BranchState,
     GitContext,
     Memory,
     MemoryContent,
+    MemoryEvent,
+    MemoryEventOp,
     MemoryFilters,
     MemoryMetadata,
     MemoryRelationships,
@@ -166,12 +170,104 @@ class StorageManager:
             "ALTER TABLE memories ADD COLUMN stale INTEGER DEFAULT 0",
             "ALTER TABLE memories ADD COLUMN stale_reason TEXT",
             "ALTER TABLE repo_index_metadata ADD COLUMN last_indexed_commit TEXT",
+            # v0.4.0 commit-aware foundation (FR-001, FR-002, FR-007)
+            "ALTER TABLE memories ADD COLUMN created_at_sha TEXT",
+            "ALTER TABLE memories ADD COLUMN updated_at_sha TEXT",
+            "ALTER TABLE memories ADD COLUMN risk_grade TEXT",
         ]
         for sql in migrations:
             try:
                 self.conn.execute(sql)
             except sqlite3.OperationalError:
                 pass  # Column already exists
+        self.conn.commit()
+
+        # v0.4.0 new tables — memory_events (FR-003) and branch_state (FR-011).
+        # commit_sha is NOT NULL and length-checked at the DB layer to defend
+        # against empty-string sentinels leaking into the event log (security
+        # finding from magent-security_engineer audit, 2026-05-12).
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS memory_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                commit_sha TEXT NOT NULL CHECK (length(commit_sha) = 40),
+                memory_id TEXT NOT NULL,
+                op TEXT NOT NULL CHECK (op IN ('CREATED','UPDATED','STALED','DELETED','RESTORED')),
+                content_sha TEXT,
+                branch TEXT NOT NULL,
+                ts INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_events_commit ON memory_events(commit_sha);
+            CREATE INDEX IF NOT EXISTS idx_events_memory ON memory_events(memory_id, ts);
+            CREATE INDEX IF NOT EXISTS idx_events_branch ON memory_events(branch, ts);
+            -- Defends against duplicate synthetic events under concurrent startup;
+            -- a memory may only be CREATED once per (memory_id, commit_sha).
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_events_unique_create
+                ON memory_events(memory_id, commit_sha) WHERE op = 'CREATED';
+
+            CREATE TABLE IF NOT EXISTS branch_state (
+                repo_id TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                last_indexed_sha TEXT,
+                parent_sha TEXT,
+                PRIMARY KEY (repo_id, branch)
+            );
+        """)
+        self.conn.commit()
+
+        # v0.3 -> v0.4 idempotent backfill (FR-001, FR-002, FR-003 / Task T011).
+        # If memories exist without created_at_sha, seed from branch.commit_hash
+        # (the existing per-memory commit) and emit a synthetic CREATED event so
+        # event-replay reconstruction works on data minted before this release.
+        self._backfill_v04_commit_metadata()
+
+    def _backfill_v04_commit_metadata(self) -> None:
+        """One-shot, idempotent backfill of created_at_sha + seed memory_events.
+
+        Runs inside a single transaction. Safe to call repeatedly: each statement
+        is a no-op once data has been seeded.
+
+        Pre-v0.4 rows that lack a real commit_hash receive the BACKFILL_SHA
+        sentinel (distinct from NULL_SHA used by live non-repo writes) so the
+        replay path can tell them apart. The CHECK(length=40) constraint plus
+        the unique CREATED index defend against bad sentinels and concurrent
+        double-seeds (magent-security_engineer audit, 2026-05-12).
+        """
+        cursor = self.conn.cursor()
+        # Backfill created_at_sha / updated_at_sha from the existing commit_hash
+        # column on memories that pre-date v0.4. Only rows that actually had a
+        # valid-length commit_hash get it; everything else stays NULL on the
+        # memories row (the synthetic event below carries BACKFILL_SHA instead).
+        cursor.execute(
+            "UPDATE memories SET created_at_sha = commit_hash "
+            "WHERE created_at_sha IS NULL AND length(commit_hash) = 40"
+        )
+        cursor.execute(
+            "UPDATE memories SET updated_at_sha = commit_hash "
+            "WHERE updated_at_sha IS NULL AND length(commit_hash) = 40"
+        )
+        # Seed a synthetic CREATED event per pre-existing memory that has no event yet.
+        # Use the row's commit_hash when it's a real SHA, else BACKFILL_SHA.
+        # INSERT OR IGNORE makes the operation a no-op on the second startup
+        # thanks to idx_events_unique_create.
+        cursor.execute(
+            f"""
+            INSERT OR IGNORE INTO memory_events (commit_sha, memory_id, op, content_sha, branch, ts)
+            SELECT
+                CASE
+                    WHEN length(m.commit_hash) = 40 THEN m.commit_hash
+                    ELSE '{BACKFILL_SHA}'
+                END AS commit_sha,
+                m.id,
+                'CREATED',
+                m.checksum,
+                m.branch_name,
+                m.created_at
+            FROM memories m
+            WHERE NOT EXISTS (
+                SELECT 1 FROM memory_events e WHERE e.memory_id = m.id
+            )
+            """
+        )
         self.conn.commit()
 
     def _get_content_path(self, checksum: str) -> Path:
@@ -230,8 +326,9 @@ class StorageManager:
                     content_type, file_path, line_start, line_end,
                     function_name, class_name, language, chunk_type,
                     checksum, content_ref, token_count, created_at, updated_at,
-                    embedding_shard, embedding_index, stale, stale_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    embedding_shard, embedding_index, stale, stale_reason,
+                    created_at_sha, updated_at_sha, risk_grade
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     memory.id,
@@ -257,6 +354,10 @@ class StorageManager:
                     memory.metadata.embedding_index,
                     1 if memory.metadata.stale else 0,
                     memory.metadata.stale_reason,
+                    # v0.4.0 commit-aware columns
+                    memory.metadata.created_at_sha,
+                    memory.metadata.updated_at_sha,
+                    memory.metadata.risk_grade,
                 ),
             )
 
@@ -403,6 +504,10 @@ class StorageManager:
                 embedding_index=row["embedding_index"],
                 stale=bool(row.get("stale", 0)),
                 stale_reason=row.get("stale_reason"),
+                # v0.4.0 commit-aware metadata (may be None on rows pre-backfill)
+                created_at_sha=row.get("created_at_sha"),
+                updated_at_sha=row.get("updated_at_sha"),
+                risk_grade=row.get("risk_grade"),
             ),
             relationships=MemoryRelationships(
                 depends_on=depends_on if depends_on else None,
@@ -639,6 +744,121 @@ class StorageManager:
             (repo_id, branch, commit_hash),
         )
         self.conn.commit()
+
+    # ----- v0.4.0 commit-aware additions ----------------------------------
+
+    def append_event(self, event: MemoryEvent) -> int:
+        """Append a memory_event row (FR-003). Returns the inserted rowid."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO memory_events (commit_sha, memory_id, op, content_sha, branch, ts)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.commit_sha,
+                event.memory_id,
+                event.op,
+                event.content_sha,
+                event.branch,
+                int(event.ts.timestamp()),
+            ),
+        )
+        self.conn.commit()
+        return cursor.lastrowid or 0
+
+    def list_events(
+        self,
+        memory_id: str | None = None,
+        branch: str | None = None,
+        op: MemoryEventOp | None = None,
+    ) -> list[MemoryEvent]:
+        """Read memory_events filtered by any subset of (memory_id, branch, op)."""
+        conditions: list[str] = []
+        params: list[object] = []
+        if memory_id is not None:
+            conditions.append("memory_id = ?")
+            params.append(memory_id)
+        if branch is not None:
+            conditions.append("branch = ?")
+            params.append(branch)
+        if op is not None:
+            conditions.append("op = ?")
+            params.append(op)
+        sql = "SELECT * FROM memory_events"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY ts ASC, id ASC"
+        cursor = self.conn.cursor()
+        cursor.execute(sql, params)
+        out: list[MemoryEvent] = []
+        for row in cursor.fetchall():
+            out.append(
+                MemoryEvent(
+                    id=row["id"],
+                    commit_sha=row["commit_sha"],
+                    memory_id=row["memory_id"],
+                    op=row["op"],
+                    content_sha=row["content_sha"],
+                    branch=row["branch"],
+                    ts=datetime.fromtimestamp(row["ts"]),
+                )
+            )
+        return out
+
+    def get_branch_state(self, repo_id: str, branch: str) -> BranchState | None:
+        """Read the persisted branch_state row, or None."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM branch_state WHERE repo_id = ? AND branch = ?",
+            (repo_id, branch),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return BranchState(
+            repo_id=row["repo_id"],
+            branch=row["branch"],
+            last_indexed_sha=row["last_indexed_sha"],
+            parent_sha=row["parent_sha"],
+        )
+
+    def upsert_branch_state(self, state: BranchState) -> None:
+        """Upsert branch_state (FR-011)."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO branch_state (repo_id, branch, last_indexed_sha, parent_sha)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(repo_id, branch) DO UPDATE SET
+                last_indexed_sha = excluded.last_indexed_sha,
+                parent_sha = excluded.parent_sha
+            """,
+            (state.repo_id, state.branch, state.last_indexed_sha, state.parent_sha),
+        )
+        self.conn.commit()
+
+    def update_memory_shas(
+        self, memory_id: str, *, created_at_sha: str | None = None, updated_at_sha: str | None = None
+    ) -> None:
+        """Surgical update of the v0.4 SHA columns; leaves nulls intact when not provided."""
+        sets: list[str] = []
+        params: list[object] = []
+        if created_at_sha is not None:
+            sets.append("created_at_sha = ?")
+            params.append(created_at_sha)
+        if updated_at_sha is not None:
+            sets.append("updated_at_sha = ?")
+            params.append(updated_at_sha)
+        if not sets:
+            return
+        params.append(memory_id)
+        self.conn.execute(
+            f"UPDATE memories SET {', '.join(sets)} WHERE id = ?", params
+        )
+        self.conn.commit()
+
+    # ----------------------------------------------------------------------
 
     def close(self) -> None:
         """Close database connection."""
