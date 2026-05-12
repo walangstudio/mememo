@@ -161,6 +161,39 @@ class BranchState(BaseModel):
     )
 
 
+# v0.5 (FR-017): typed edges in the memory graph
+RelationType = Literal["IMPORTS", "CALLS", "EXTENDS", "IMPLEMENTS", "USES", "DECORATED_BY"]
+RelationConfidence = Literal["EXTRACTED", "INFERRED", "AMBIGUOUS"]
+
+
+class Relation(BaseModel):
+    """A persisted edge between memories.
+
+    Either ``target_memory_id`` (when the resolver found a match) or
+    ``target_symbol`` (when unresolved) is populated. ``confidence`` records
+    how the edge was resolved.
+    """
+
+    id: str
+    repo_id: str
+    branch: str
+    source_memory_id: str
+    target_memory_id: str | None = None
+    target_symbol: str | None = None
+    type: RelationType
+    confidence: RelationConfidence = "EXTRACTED"
+    created_at_sha: str
+    stale: bool = False
+    community: int | None = None
+
+    @field_validator("created_at_sha")
+    @classmethod
+    def _validate_sha(cls, v: str) -> str:
+        if len(v) != 40:
+            raise ValueError(f"created_at_sha must be 40 chars; got len={len(v)}")
+        return v
+
+
 class MemoryRelationships(BaseModel):
     """Relationships between memories."""
 

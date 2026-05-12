@@ -3,14 +3,31 @@ Python AST-based chunker.
 
 Uses Python's ast module to extract functions, classes, and methods
 with rich metadata (docstrings, decorators, type hints).
+
+v0.5 (FR-013): adds chunk_with_edges() which returns a tuple of
+(chunks, raw_edges). raw_edges carry the IMPORTS / CALLS / EXTENDS /
+USES / DECORATED_BY taxonomy and feed the symbol_resolver pass.
 """
 
 import ast
 import logging
+from pathlib import PurePosixPath
 
-from .base_chunker import BaseChunker, Chunk
+from .base_chunker import BaseChunker, Chunk, RawEdge
 
 logger = logging.getLogger(__name__)
+
+
+def file_path_to_module(file_path: str) -> str:
+    """Map ``mememo/core/storage_manager.py`` -> ``mememo.core.storage_manager``.
+
+    Drops the .py extension and replaces path separators with dots. The result
+    is used as the module prefix when building qualnames for chunks emitted
+    from that file.
+    """
+    p = PurePosixPath(file_path.replace("\\", "/"))
+    parts = list(p.with_suffix("").parts)
+    return ".".join(parts)
 
 
 class PythonASTChunker(BaseChunker):
@@ -64,6 +81,29 @@ class PythonASTChunker(BaseChunker):
 
         logger.debug(f"Extracted {len(chunks)} chunks from {file_path}")
         return chunks
+
+    # ----- v0.5 edge emission (FR-013) ------------------------------------
+
+    def chunk_with_edges(
+        self, code: str, file_path: str
+    ) -> tuple[list[Chunk], list[RawEdge]]:
+        """Return ``(chunks, raw_edges)``.
+
+        Chunks are produced by the existing AST walk; raw edges are emitted
+        in a second pass that walks the same tree visiting Import, ImportFrom,
+        Call, ClassDef.bases, Attribute, and decorator nodes.
+
+        Resolution into target memory IDs is the symbol_resolver's job.
+        """
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            logger.warning(f"Python syntax error in {file_path}: {e}")
+            raise
+        chunks = self.chunk(code, file_path)
+        module = file_path_to_module(file_path)
+        edges = _emit_edges(tree, module)
+        return chunks, edges
 
     def _extract_function(
         self,
@@ -195,3 +235,98 @@ class PythonASTChunker(BaseChunker):
             return decorator.attr
 
         return str(decorator)
+
+
+def _name_from_attr_chain(node: ast.expr) -> str:
+    """Render an ast.Name / ast.Attribute chain back to dotted form.
+
+    ``ast.Attribute(ast.Name('os'), 'path')`` -> ``"os.path"``. Used by the
+    edge emitter to recover qualified targets like ``module.submod.func``
+    from Call.func and ClassDef.bases nodes.
+    """
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _name_from_attr_chain(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    return ""
+
+
+def _emit_edges(tree: ast.AST, module: str) -> list[RawEdge]:
+    """Second-pass walker that emits IMPORTS / CALLS / EXTENDS / USES /
+    DECORATED_BY edges. The source_qualname of every edge is the qualified
+    path of the enclosing function/class/module, never just ``module``."""
+    edges: list[RawEdge] = []
+
+    # Track the enclosing scope stack so we know which function / class
+    # produces each edge. Pure DFS — simple parents-during-walk pattern.
+    scope_stack: list[str] = [module]  # module is the implicit outer scope
+
+    def cur() -> str:
+        return ".".join(scope_stack)
+
+    def walk(node: ast.AST) -> None:
+        # Imports always sit at the module scope of THIS file.
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                edges.append(RawEdge(module, alias.name, "IMPORTS"))
+            return
+        if isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            for alias in node.names:
+                target = f"{base}.{alias.name}" if base else alias.name
+                edges.append(RawEdge(module, target, "IMPORTS"))
+            return
+
+        if isinstance(node, ast.ClassDef):
+            qual = f"{cur()}.{node.name}"
+            # EXTENDS edges per base class.
+            for base in node.bases:
+                tgt = _name_from_attr_chain(base)
+                if tgt:
+                    edges.append(RawEdge(qual, tgt, "EXTENDS"))
+            # DECORATED_BY on the class itself.
+            for dec in node.decorator_list:
+                tgt = _name_from_attr_chain(
+                    dec.func if isinstance(dec, ast.Call) else dec
+                )
+                if tgt:
+                    edges.append(RawEdge(qual, tgt, "DECORATED_BY"))
+            scope_stack.append(node.name)
+            for child in ast.iter_child_nodes(node):
+                walk(child)
+            scope_stack.pop()
+            return
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            qual = f"{cur()}.{node.name}"
+            for dec in node.decorator_list:
+                tgt = _name_from_attr_chain(
+                    dec.func if isinstance(dec, ast.Call) else dec
+                )
+                if tgt:
+                    edges.append(RawEdge(qual, tgt, "DECORATED_BY"))
+            scope_stack.append(node.name)
+            for child in ast.iter_child_nodes(node):
+                walk(child)
+            scope_stack.pop()
+            return
+
+        if isinstance(node, ast.Call):
+            tgt = _name_from_attr_chain(node.func)
+            if tgt:
+                edges.append(RawEdge(cur(), tgt, "CALLS"))
+            for child in ast.iter_child_nodes(node):
+                walk(child)
+            return
+
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            # ``self.foo`` access inside a method — emit a USES edge to ``foo``.
+            if node.value.id in ("self", "cls"):
+                edges.append(RawEdge(cur(), node.attr, "USES"))
+
+        for child in ast.iter_child_nodes(node):
+            walk(child)
+
+    walk(tree)
+    return edges
