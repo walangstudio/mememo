@@ -36,6 +36,12 @@ def main():
 
             run_inject()
             return
+        if args[0] == "pre-tool":
+            # v0.6 PreToolUse hook (T032 / FR-028).
+            from .cli import run_pre_tool
+
+            run_pre_tool()
+            return
 
     # v0.4 hook installer subcommand (FR-033, T013/T014).
     if args and args[0] == "install-git-hooks":
@@ -44,13 +50,24 @@ def main():
         ap = _argparse.ArgumentParser(prog="mememo install-git-hooks")
         ap.add_argument("--repo-path", required=True)
         ap.add_argument("--force", action="store_true", help="overwrite existing hooks")
+        ap.add_argument(
+            "--with-pretool",
+            action="store_true",
+            help="also register PreToolUse hook in .claude/settings.json (T032)",
+        )
         ns = ap.parse_args(args[1:])
 
-        from .hooks.installer import install_git_hooks
+        from .hooks.installer import install_git_hooks, register_claude_pretool_hook
 
         result = install_git_hooks(ns.repo_path, force=ns.force)
         print(result.report())
-        sys.exit(0 if result.ok else 1)
+        ok = result.ok
+        if ns.with_pretool:
+            pre = register_claude_pretool_hook(ns.repo_path, force=ns.force)
+            print(f"pre-tool: {pre.get('status')} ({pre.get('settings_path')})")
+            if pre.get("status") == "error":
+                ok = False
+        sys.exit(0 if ok else 1)
 
     # v0.6 worktree migration subcommand (FR-025, T030).
     if args and args[0] == "migrate-worktrees":
