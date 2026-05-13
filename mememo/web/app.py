@@ -61,9 +61,16 @@ def create_app(storage_getter=None) -> FastAPI:
     def list_memories(
         repo_id: str | None = None,
         branch: str | None = None,
+        as_of_sha: str | None = None,
         limit: int = Query(default=50, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, Any]:
+        """List memories, optionally filtered to those alive at a target SHA.
+
+        When ``as_of_sha`` is given, ``total`` and pagination reflect the
+        alive set — not the full table — so the client doesn't have to
+        re-paginate after filtering.
+        """
         storage = _storage()
         conditions: list[str] = []
         params: list = []
@@ -73,6 +80,29 @@ def create_app(storage_getter=None) -> FastAPI:
         if branch:
             conditions.append("branch_name = ?")
             params.append(branch)
+        if as_of_sha:
+            from ..types import SHA_PREFIX_PATTERN
+
+            if not SHA_PREFIX_PATTERN.match(as_of_sha):
+                raise HTTPException(400, f"as_of_sha must be 4-40 hex chars; got {as_of_sha!r}")
+            ts_row = storage.conn.execute(
+                "SELECT ts FROM memory_events WHERE commit_sha LIKE ? "
+                "ORDER BY ts DESC LIMIT 1",
+                (as_of_sha + "%",),
+            ).fetchone()
+            if ts_row is None:
+                return {"total": 0, "offset": offset, "limit": limit, "items": [],
+                        "as_of_sha": as_of_sha, "target_ts": None}
+            alive = storage.alive_memory_ids_at_ts(
+                target_ts=int(ts_row["ts"]), repo_id=repo_id, branch=branch
+            )
+            if not alive:
+                return {"total": 0, "offset": offset, "limit": limit, "items": [],
+                        "as_of_sha": as_of_sha, "target_ts": int(ts_row["ts"])}
+            alive_list = sorted(alive)
+            placeholders = ",".join("?" * len(alive_list))
+            conditions.append(f"id IN ({placeholders})")
+            params.extend(alive_list)
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         total = storage.conn.execute(
             f"SELECT COUNT(*) AS n FROM memories{where}", params
@@ -144,11 +174,9 @@ def create_app(storage_getter=None) -> FastAPI:
         repo_id: str | None = None,
         branch: str | None = None,
     ) -> dict[str, Any]:
-        # SHA must look like a real git SHA — defence in depth (same guard
-        # the v0.4 audit added on recall_at_commit).
-        import re
+        from ..types import SHA_PREFIX_PATTERN
 
-        if not re.match(r"^[0-9a-fA-F]{4,40}$", sha):
+        if not SHA_PREFIX_PATTERN.match(sha):
             raise HTTPException(400, f"sha must be 4-40 hex chars; got {sha!r}")
         storage = _storage()
         # Resolve SHA -> commit ts by looking at the events log; we accept

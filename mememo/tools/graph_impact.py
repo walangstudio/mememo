@@ -60,63 +60,68 @@ def _passes_confidence(edge_conf: str, floor: RelationConfidence) -> bool:
 async def graph_impact(
     params: GraphImpactParams, memory_manager: "MemoryManager"
 ) -> GraphImpactResponse:
-    storage = memory_manager.storage_manager
+    """Batched BFS over outbound (downstream) or inbound (upstream) edges.
+
+    One SQL per level via an IN clause on the frontier; risk_grade + file
+    metadata are joined in a single trailing query.
+    """
+    conn = memory_manager.storage_manager.conn
     visited: set[str] = {params.memory_id}
-    queue: deque[tuple[str, int, RelationType | None, RelationConfidence | None]] = deque(
-        [(params.memory_id, 0, None, None)]
-    )
+    frontier: set[str] = {params.memory_id}
     impacted: list[ImpactedMemory] = []
+    type_filter = set(params.edge_types) if params.edge_types else None
+    join_col = "source_memory_id" if params.direction == "downstream" else "target_memory_id"
+    other_col = "target_memory_id" if params.direction == "downstream" else "source_memory_id"
 
-    # Pull risk_grade + file/class/function metadata in one shot at the end.
-    def _enrich(memory_ids: list[str]) -> dict[str, dict]:
-        if not memory_ids:
-            return {}
-        placeholders = ",".join("?" * len(memory_ids))
-        rows = storage.conn.execute(
-            f"SELECT id, risk_grade, file_path, function_name, class_name "
-            f"FROM memories WHERE id IN ({placeholders})",
-            memory_ids,
-        ).fetchall()
-        return {row["id"]: dict(row) for row in rows}
-
-    while queue:
-        node, depth, _, _ = queue.popleft()
-        if depth >= params.max_depth:
-            continue
-        if params.direction == "downstream":
-            edges = storage.list_relations(source_memory_id=node)
-        else:
-            edges = storage.list_relations(target_memory_id=node)
-        for r in edges:
-            if not _passes_confidence(r.confidence, params.min_confidence):
-                continue
-            if params.edge_types and r.type not in params.edge_types:
-                continue
-            other = (
-                r.target_memory_id if params.direction == "downstream" else r.source_memory_id
-            )
-            if not other or other in visited:
-                continue
-            visited.add(other)
-            queue.append((other, depth + 1, r.type, r.confidence))
-            impacted.append(
-                ImpactedMemory(
-                    memory_id=other,
-                    depth=depth + 1,
-                    via_edge_type=r.type,
-                    via_confidence=r.confidence,
+    for depth in range(1, params.max_depth + 1):
+        if not frontier:
+            break
+        next_frontier: set[str] = set()
+        for f_ids in _chunked(sorted(frontier), 500):
+            placeholders = ",".join("?" * len(f_ids))
+            rows = conn.execute(
+                f"SELECT {other_col} AS other, type, confidence "
+                f"FROM relations WHERE {join_col} IN ({placeholders})",
+                f_ids,
+            ).fetchall()
+            for r in rows:
+                if not _passes_confidence(r["confidence"], params.min_confidence):
+                    continue
+                if type_filter and r["type"] not in type_filter:
+                    continue
+                other = r["other"]
+                if not other or other in visited:
+                    continue
+                visited.add(other)
+                next_frontier.add(other)
+                impacted.append(
+                    ImpactedMemory(
+                        memory_id=other, depth=depth,
+                        via_edge_type=r["type"], via_confidence=r["confidence"],
+                    )
                 )
-            )
+        frontier = next_frontier
 
-    # Enrich with risk_grade + file metadata.
-    meta = _enrich([m.memory_id for m in impacted])
-    for m in impacted:
-        info = meta.get(m.memory_id)
-        if info:
-            m.risk_grade = info.get("risk_grade")
-            m.file_path = info.get("file_path")
-            m.function_name = info.get("function_name")
-            m.class_name = info.get("class_name")
+    # Enrich with risk_grade + file metadata in one query.
+    if impacted:
+        ids = [m.memory_id for m in impacted]
+        meta: dict[str, dict] = {}
+        for batch in _chunked(ids, 500):
+            placeholders = ",".join("?" * len(batch))
+            rows = conn.execute(
+                f"SELECT id, risk_grade, file_path, function_name, class_name "
+                f"FROM memories WHERE id IN ({placeholders})",
+                batch,
+            ).fetchall()
+            for row in rows:
+                meta[row["id"]] = dict(row)
+        for m in impacted:
+            info = meta.get(m.memory_id)
+            if info:
+                m.risk_grade = info.get("risk_grade")
+                m.file_path = info.get("file_path")
+                m.function_name = info.get("function_name")
+                m.class_name = info.get("class_name")
 
     will_break = sum(1 for m in impacted if m.risk_grade == "WILL_BREAK")
     return GraphImpactResponse(
@@ -129,3 +134,8 @@ async def graph_impact(
         direction=params.direction,
         impacted=impacted,
     )
+
+
+def _chunked(items, size):
+    for i in range(0, len(items), size):
+        yield items[i : i + size]

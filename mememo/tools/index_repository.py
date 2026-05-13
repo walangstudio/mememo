@@ -89,31 +89,37 @@ async def index_repository(
         chunks_created = 0
         skip_reasons: dict[str, int] = {}
 
+        # Accumulate (rel_path, content, lang) and SymbolEntry rows during the
+        # main loop so the v0.5 edge pass doesn't have to re-walk + re-read +
+        # re-query SQLite. Each entry already lives in memory here.
+        from ..chunking.python_ast_chunker import file_path_to_module
+        from ..core.symbol_resolver import SymbolEntry
+
+        edge_inputs: list[tuple[str, str, str]] = []
+        symbols: list[SymbolEntry] = []
+
         def _skip(reason: str) -> None:
             skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
 
         for file_path in files_to_index:
             try:
-                # Read file content
                 content = file_path.read_text(encoding="utf-8")
-
-                # Chunk file with code-aware chunking
                 chunks = chunker_factory.chunk_file(content, str(file_path))
-
                 if not chunks:
                     _skip("empty_chunks")
-                    logger.debug(f"Skipped {file_path.relative_to(repo_path)} (0 chunks produced)")
                     continue
 
-                # Store each chunk as a memory
+                rel_path = str(file_path.relative_to(repo_path)).replace("\\", "/")
+                module = file_path_to_module(rel_path)
+                file_lang = chunks[0].language
+
                 for chunk in chunks:
                     create_params = CreateMemoryParams(
                         content=chunk.text,
                         type="code_snippet",
                         language=chunk.language,
-                        file_path=str(file_path.relative_to(repo_path)),
+                        file_path=rel_path,
                         line_range=(chunk.start_line, chunk.end_line) if chunk.start_line else None,
-                        # Code-aware metadata
                         function_name=chunk.function_name,
                         class_name=chunk.class_name,
                         docstring=chunk.docstring,
@@ -122,17 +128,23 @@ async def index_repository(
                         tags=["indexed", "repository"],
                         relationships=MemoryRelationships(),
                     )
-
-                    # Create memory (with embedding, using repo path for git context)
-                    await memory_manager.create_memory(create_params, cwd=str(repo_path))
+                    memory = await memory_manager.create_memory(create_params, cwd=str(repo_path))
                     chunks_created += 1
 
+                    parts = [module]
+                    if chunk.class_name:
+                        parts.append(chunk.class_name)
+                    if chunk.function_name:
+                        parts.append(chunk.function_name)
+                    symbols.append(SymbolEntry(memory_id=memory.id, qualname=".".join(parts)))
+
+                if file_lang in ("python", "typescript", "tsx", "javascript", "go"):
+                    edge_inputs.append((rel_path, content, file_lang))
+
                 files_indexed += 1
-                logger.debug(f"Indexed {file_path.relative_to(repo_path)} ({len(chunks)} chunks)")
 
             except UnicodeDecodeError:
                 _skip("binary")
-                logger.debug(f"Skipped binary file: {file_path}")
             except Exception as e:
                 _skip("error")
                 logger.warning(f"Error indexing {file_path}: {e}")
@@ -140,11 +152,11 @@ async def index_repository(
         duration = time.time() - start_time
         files_skipped = sum(skip_reasons.values())
 
-        # v0.5 post-pass (FR-013/015/017): emit + resolve + persist edges for
-        # every Python source file. Best-effort: on any failure we log and move
-        # on so the legacy chunk-only flow still produces a usable index.
+        # v0.5 edge pass — emit + resolve + persist edges using the in-memory
+        # symbol table and source already loaded above. No second filesystem
+        # walk, no SQL rebuild. Best-effort: log and continue on failure.
         try:
-            await _run_edge_pass(repo_path, memory_manager)
+            await _run_edge_pass(repo_path, memory_manager, edge_inputs, symbols)
         except Exception as e:
             logger.warning(f"v0.5 edge pass failed (continuing without edges): {e}")
 
@@ -281,93 +293,55 @@ def _find_matching_files(
 # v0.5: edge-emission post-pass (FR-013, FR-015, FR-017) -----------------
 
 
-async def _run_edge_pass(repo_path: Path, memory_manager: "MemoryManager") -> None:
-    """Extract typed edges from every Python file, resolve against the
-    just-stored chunk-memories, and persist into the relations table.
+async def _run_edge_pass(
+    repo_path: Path,
+    memory_manager: "MemoryManager",
+    edge_inputs: list[tuple[str, str, str]],
+    symbols: list,
+) -> None:
+    """Extract typed edges from the files already chunked by the main loop.
 
-    Best-effort: any per-file syntax error or import-time fault is logged
-    and skipped. The legacy chunk-only behaviour stays intact when this
-    pass cannot run.
+    ``edge_inputs`` is a list of ``(rel_path, content, language)`` triples and
+    ``symbols`` is the pre-built ``SymbolEntry`` list for every chunk just
+    persisted — no second filesystem walk, no SQL rebuild.
+
+    Best-effort: per-file failures are logged and skipped so the legacy
+    chunk-only flow still produces a usable index.
     """
+    if not edge_inputs or not symbols:
+        return
+
     from ..chunking.base_chunker import RawEdge
-    from ..chunking.python_ast_chunker import (
-        PythonASTChunker,
-        file_path_to_module,
-    )
-    from ..core.symbol_resolver import SymbolEntry, resolve_edges
-    from ..types.memory import NULL_SHA
+    from ..chunking.python_ast_chunker import PythonASTChunker
+    from ..core.symbol_resolver import resolve_edges
+    from ..types.memory import coerce_sha
 
     context = await memory_manager.git_manager.detect_context(str(repo_path))
     repo_id = context.repo.id
     branch = context.branch.name
-    commit_sha = context.branch.commit_hash or NULL_SHA
-    if len(commit_sha) != 40:
-        commit_sha = NULL_SHA
+    commit_sha = coerce_sha(context.branch.commit_hash)
 
-    storage = memory_manager.storage_manager
-    rows = storage.conn.execute(
-        "SELECT id, file_path, class_name, function_name FROM memories "
-        "WHERE repo_id = ? AND branch_name = ? AND language = 'python' "
-        "AND stale = 0",
-        (repo_id, branch),
-    ).fetchall()
-
-    symbols: list[SymbolEntry] = []
-    for row in rows:
-        if not row["file_path"]:
-            continue
-        module = file_path_to_module(row["file_path"])
-        parts = [module]
-        if row["class_name"]:
-            parts.append(row["class_name"])
-        if row["function_name"]:
-            parts.append(row["function_name"])
-        symbols.append(SymbolEntry(memory_id=row["id"], qualname=".".join(parts)))
-
-    if not symbols:
-        return
-
-    chunker = PythonASTChunker()
-    all_edges: list[RawEdge] = []
-    py_files = [p for p in repo_path.rglob("*.py") if p.is_file()]
-    for f in py_files:
-        try:
-            content = f.read_text(encoding="utf-8")
-            rel = str(f.relative_to(repo_path)).replace("\\", "/")
-            _, edges = chunker.chunk_with_edges(content, rel)
-            all_edges.extend(edges)
-        except (UnicodeDecodeError, SyntaxError) as e:
-            logger.debug(f"edge pass: skipped {f}: {e}")
-            continue
-
-    # v0.5 (FR-014): also emit edges from TypeScript / JavaScript / Go files
-    # when tree-sitter is available. Best-effort — skip per-file on any error.
+    py_chunker = PythonASTChunker()
+    ts_chunker = None
     try:
         from ..chunking.tree_sitter_chunker import TreeSitterChunker
-        from ..chunking.language_detector import detect_language
 
         ts_chunker = TreeSitterChunker()
     except Exception as e:
-        logger.debug(f"edge pass: tree-sitter unavailable, skipping TS/JS/Go: {e}")
-        ts_chunker = None
+        logger.debug(f"edge pass: tree-sitter unavailable: {e}")
 
-    if ts_chunker is not None:
-        ts_globs = ("*.ts", "*.tsx", "*.js", "*.jsx", "*.go")
-        ts_files: list[Path] = []
-        for pattern in ts_globs:
-            ts_files.extend(p for p in repo_path.rglob(pattern) if p.is_file())
-        for f in ts_files:
-            try:
-                content = f.read_text(encoding="utf-8")
-                rel = str(f.relative_to(repo_path)).replace("\\", "/")
-                lang = detect_language(rel)
-                if lang not in ("typescript", "tsx", "javascript", "go"):
-                    continue
-                _, edges = ts_chunker.chunk_with_edges(content, rel, lang)
-                all_edges.extend(edges)
-            except (UnicodeDecodeError, Exception) as e:
-                logger.debug(f"edge pass: skipped {f}: {e}")
+    all_edges: list[RawEdge] = []
+    for rel_path, content, lang in edge_inputs:
+        try:
+            if lang == "python":
+                _, edges = py_chunker.chunk_with_edges(content, rel_path)
+            elif lang in ("typescript", "tsx", "javascript", "go") and ts_chunker is not None:
+                _, edges = ts_chunker.chunk_with_edges(content, rel_path, lang)
+            else:
                 continue
+            all_edges.extend(edges)
+        except SyntaxError as e:
+            logger.debug(f"edge pass: skipped {rel_path}: {e}")
 
     if not all_edges:
         return
@@ -380,7 +354,7 @@ async def _run_edge_pass(repo_path: Path, memory_manager: "MemoryManager") -> No
         symbols=symbols,
     )
     if relations:
-        inserted = storage.insert_relations(relations)
+        inserted = memory_manager.storage_manager.insert_relations(relations)
         logger.info(
             f"v0.5 edge pass: extracted {len(all_edges)} raw edges, "
             f"resolved {len(relations)}, inserted {inserted}"

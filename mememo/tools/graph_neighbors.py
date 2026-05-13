@@ -44,38 +44,36 @@ class GraphNeighborsResponse(BaseModel):
 async def graph_neighbors(
     params: GraphNeighborsParams, memory_manager: "MemoryManager"
 ) -> GraphNeighborsResponse:
-    storage = memory_manager.storage_manager
+    """Batched BFS: one SQL per level (not per-node) using IN-clause filters."""
+    conn = memory_manager.storage_manager.conn
     visited: set[str] = {params.memory_id}
     frontier: set[str] = {params.memory_id}
     edges_out: list[EdgeSummary] = []
+    type_filter = set(params.edge_types) if params.edge_types else None
 
     for _ in range(params.depth):
         if not frontier:
             break
         next_frontier: set[str] = set()
-        for mid in frontier:
-            rels: list = []
+        # One SQL per direction per level — IN-clause batch over the frontier.
+        for f_ids in _chunked(sorted(frontier), 500):
+            placeholders = ",".join("?" * len(f_ids))
             if params.direction in ("out", "both"):
-                rels += storage.list_relations(source_memory_id=mid)
+                rows = conn.execute(
+                    f"SELECT source_memory_id, target_memory_id, target_symbol, "
+                    f"       type, confidence FROM relations "
+                    f"WHERE source_memory_id IN ({placeholders})",
+                    f_ids,
+                ).fetchall()
+                _consume(rows, edges_out, visited, next_frontier, type_filter)
             if params.direction in ("in", "both"):
-                rels += storage.list_relations(target_memory_id=mid)
-            for r in rels:
-                if params.edge_types and r.type not in params.edge_types:
-                    continue
-                edges_out.append(
-                    EdgeSummary(
-                        source_memory_id=r.source_memory_id,
-                        target_memory_id=r.target_memory_id,
-                        target_symbol=r.target_symbol,
-                        type=r.type,
-                        confidence=r.confidence,
-                    )
-                )
-                # Frontier extension: follow only edges with a resolved target.
-                if r.target_memory_id and r.target_memory_id not in visited:
-                    next_frontier.add(r.target_memory_id)
-                if r.source_memory_id != mid and r.source_memory_id not in visited:
-                    next_frontier.add(r.source_memory_id)
+                rows = conn.execute(
+                    f"SELECT source_memory_id, target_memory_id, target_symbol, "
+                    f"       type, confidence FROM relations "
+                    f"WHERE target_memory_id IN ({placeholders})",
+                    f_ids,
+                ).fetchall()
+                _consume(rows, edges_out, visited, next_frontier, type_filter)
         visited |= next_frontier
         frontier = next_frontier
 
@@ -85,3 +83,26 @@ async def graph_neighbors(
         visited=sorted(visited),
         edges=edges_out,
     )
+
+
+def _chunked(items, size):
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
+def _consume(rows, edges_out, visited, next_frontier, type_filter):
+    for r in rows:
+        if type_filter and r["type"] not in type_filter:
+            continue
+        edges_out.append(
+            EdgeSummary(
+                source_memory_id=r["source_memory_id"],
+                target_memory_id=r["target_memory_id"],
+                target_symbol=r["target_symbol"],
+                type=r["type"],
+                confidence=r["confidence"],
+            )
+        )
+        for candidate in (r["target_memory_id"], r["source_memory_id"]):
+            if candidate and candidate not in visited and candidate not in next_frontier:
+                next_frontier.add(candidate)

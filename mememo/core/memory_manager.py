@@ -16,7 +16,6 @@ from uuid import uuid4
 
 from ..embeddings import Embedder
 from ..types import (
-    NULL_SHA,
     CreateMemoryParams,
     Memory,
     MemoryContent,
@@ -27,6 +26,7 @@ from ..types import (
     MemorySummary,
     SearchParams,
     SearchResult,
+    coerce_sha,
 )
 from ..utils import SecretsDetector, calculate_checksum, count_tokens, truncate_to_tokens
 from .git_manager import GitManager
@@ -172,8 +172,8 @@ class MemoryManager:
                 # v0.4.0 — stamp every memory with the commit SHA it was minted at (FR-001/FR-002).
                 # branch.commit_hash may be "" when not in a git repo; we still stamp so the
                 # field is non-null and downstream filters work consistently.
-                created_at_sha=(context.branch.commit_hash or NULL_SHA),
-                updated_at_sha=(context.branch.commit_hash or NULL_SHA),
+                created_at_sha=coerce_sha(context.branch.commit_hash),
+                updated_at_sha=coerce_sha(context.branch.commit_hash),
             ),
             relationships=params.relationships or MemoryRelationships(),
             summary=MemorySummary(
@@ -189,7 +189,7 @@ class MemoryManager:
         # 9b. Append a CREATED event for time-travel + branch-merge reconstruction (FR-003).
         self.storage_manager.append_event(
             MemoryEvent(
-                commit_sha=context.branch.commit_hash or NULL_SHA,
+                commit_sha=coerce_sha(context.branch.commit_hash),
                 memory_id=memory_id,
                 op="CREATED",
                 content_sha=checksum,
@@ -261,8 +261,8 @@ class MemoryManager:
                     updated_at=now,
                     checksum=checksum,
                     token_count=token_count,
-                    created_at_sha=(context.branch.commit_hash or NULL_SHA),
-                    updated_at_sha=(context.branch.commit_hash or NULL_SHA),
+                    created_at_sha=coerce_sha(context.branch.commit_hash),
+                    updated_at_sha=coerce_sha(context.branch.commit_hash),
                 ),
                 relationships=params.relationships or MemoryRelationships(),
                 summary=MemorySummary(
@@ -282,7 +282,7 @@ class MemoryManager:
             await self.storage_manager.save_memory(memory)
             self.storage_manager.append_event(
                 MemoryEvent(
-                    commit_sha=context.branch.commit_hash or NULL_SHA,
+                    commit_sha=coerce_sha(context.branch.commit_hash),
                     memory_id=memory.id,
                     op="CREATED",
                     content_sha=memory.metadata.checksum,
@@ -418,7 +418,7 @@ class MemoryManager:
         # Emit a DELETED event so event-replay sees the tombstone (FR-003 / FR-004).
         self.storage_manager.append_event(
             MemoryEvent(
-                commit_sha=context.branch.commit_hash or NULL_SHA,
+                commit_sha=coerce_sha(context.branch.commit_hash),
                 memory_id=memory_id,
                 op="DELETED",
                 content_sha=None,

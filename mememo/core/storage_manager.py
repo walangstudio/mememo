@@ -742,7 +742,7 @@ class StorageManager:
         Returns:
             Number of memories marked stale
         """
-        from ..types.memory import CODE_MEMORY_TYPES, NULL_SHA
+        from ..types.memory import CODE_MEMORY_TYPES, coerce_sha
 
         placeholders = ",".join("?" * len(CODE_MEMORY_TYPES))
         cursor = self.conn.cursor()
@@ -772,10 +772,9 @@ class StorageManager:
         )
         rowcount = cursor.rowcount
 
-        # Emit STALED events (FR-003). Use NULL_SHA when caller has no commit context.
-        sha = commit_sha if commit_sha and len(commit_sha) == 40 else NULL_SHA
-        from datetime import datetime as _dt
-        ts = int(_dt.now().timestamp())
+        # NULL_SHA fallback when the caller has no real git context.
+        sha = coerce_sha(commit_sha)
+        ts = int(datetime.now().timestamp())
         cursor.executemany(
             """
             INSERT INTO memory_events (commit_sha, memory_id, op, content_sha, branch, ts)
