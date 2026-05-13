@@ -52,6 +52,68 @@ def main():
         print(result.report())
         sys.exit(0 if result.ok else 1)
 
+    # v0.6 worktree migration subcommand (FR-025, T030).
+    if args and args[0] == "migrate-worktrees":
+        import argparse as _argparse
+        import asyncio as _asyncio
+        import json as _json
+
+        ap = _argparse.ArgumentParser(prog="mememo migrate-worktrees")
+        ap.add_argument("--repo-path", required=True,
+                        help="working directory inside the target repo")
+        ap.add_argument("--dry-run", action="store_true",
+                        help="report what would change without modifying the store")
+        ns = ap.parse_args(args[1:])
+
+        from .core.git_manager import GitManager
+        from .core.storage_manager import StorageManager
+        from .types.config import MemoConfig
+        from .utils.hashing import hash_path
+
+        cfg = MemoConfig.from_env()
+        storage = StorageManager(base_dir=cfg.storage.path)
+        git = GitManager()
+
+        async def _do() -> int:
+            canonical = await git.canonical_repo_root(ns.repo_path)
+            canonical_id = hash_path(canonical)
+            # Find every repo_id whose stored path differs from canonical.
+            rows = storage.conn.execute(
+                "SELECT DISTINCT repo_id, repo_path FROM memories WHERE repo_path IS NOT NULL"
+            ).fetchall()
+            migrations: list[tuple[str, str]] = []
+            for row in rows:
+                if not row["repo_path"]:
+                    continue
+                if hash_path(row["repo_path"]) == canonical_id:
+                    continue
+                # Resolve this repo_path's canonical root.
+                try:
+                    other_canonical = await git.canonical_repo_root(row["repo_path"])
+                except RuntimeError:
+                    continue
+                if hash_path(other_canonical) == canonical_id:
+                    migrations.append((row["repo_id"], canonical_id))
+
+            if not migrations:
+                print("migrate-worktrees: no orphaned repo_ids found.")
+                return 0
+
+            total: dict[str, int] = {}
+            for old, new in migrations:
+                if ns.dry_run:
+                    print(f"would reassign {old[:12]} -> {new[:12]}")
+                    continue
+                counts = storage.reassign_repo_id(old, new)
+                print(f"reassigned {old[:12]} -> {new[:12]}: {_json.dumps(counts)}")
+                for t, n in counts.items():
+                    total[t] = total.get(t, 0) + n
+            if not ns.dry_run:
+                print(f"totals: {_json.dumps(total)}")
+            return 0
+
+        sys.exit(_asyncio.run(_do()))
+
     import argparse
 
     from .server import run
