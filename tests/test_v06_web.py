@@ -129,6 +129,22 @@ def test_memories_branch_filter(client: TestClient) -> None:
     assert r.json()["total"] == 0
 
 
+def test_memories_as_of_sha_filters_server_side(client: TestClient) -> None:
+    """as_of_sha must affect both total AND items so pagination math stays
+    consistent — fixes the snapshot-vs-pagination bug from the quality audit.
+    """
+    r = client.get("/memories", params={"repo_id": "r", "as_of_sha": SHA[:8]})
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["total"] == 2  # m1 + m2 alive under SHA_A
+    assert {item["id"] for item in payload["items"]} == {"m1", "m2"}
+
+
+def test_memories_as_of_sha_validates_hex(client: TestClient) -> None:
+    r = client.get("/memories", params={"as_of_sha": "--evil"})
+    assert r.status_code == 400
+
+
 def test_relations_returns_edges(client: TestClient) -> None:
     r = client.get("/relations", params={"repo_id": "r", "branch": "main"})
     assert r.status_code == 200

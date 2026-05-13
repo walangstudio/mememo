@@ -282,21 +282,28 @@ def _projection_alias(proj: _Projection) -> str:
     return f"col_{proj.var}_{proj.prop}"
 
 
-def translate_to_sql(query: CypherQuery) -> tuple[str, list]:
+def translate_to_sql(
+    query: CypherQuery,
+) -> tuple[str, list, list[tuple[str, str]]]:
     """Translate parsed CypherQuery into a parametrised SQL string + params.
 
-    Projects only the columns named in RETURN with explicit aliases so the
-    consumer can read them back without column-name collisions across the
-    relations + two-memories join.
+    Returns ``(sql, params, projection_keys)`` where ``projection_keys`` is
+    a list of ``(user_key, sql_column_alias)`` pairs in projection order.
+    Callers iterate that mapping to read rows back without needing to know
+    the SQL alias scheme.
     """
     sql_parts: list[str] = []
     params: list = []
 
     # Build SELECT list from projections — each gets a stable alias.
     select_parts: list[str] = []
+    projection_keys: list[tuple[str, str]] = []
     for proj in query.projections:
         col = _column_for(proj.var, proj.prop, query)
-        select_parts.append(f"{col} AS {_projection_alias(proj)}")
+        alias = _projection_alias(proj)
+        select_parts.append(f"{col} AS {alias}")
+        user_key = proj.alias or f"{proj.var}.{proj.prop}"
+        projection_keys.append((user_key, alias))
     sql_parts.append("SELECT " + ", ".join(select_parts))
 
     sql_parts.append(
@@ -324,7 +331,7 @@ def translate_to_sql(query: CypherQuery) -> tuple[str, list]:
         sql_parts.append("LIMIT ?")
         params.append(query.limit)
 
-    return " ".join(sql_parts), params
+    return " ".join(sql_parts), params, projection_keys
 
 
 # Custom REGEXP function for sqlite3 — installed lazily by the tool layer so

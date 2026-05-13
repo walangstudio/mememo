@@ -15,7 +15,6 @@ from pydantic import BaseModel, Field
 
 from ..core.cypher_parser import (
     UnsupportedCypherError,
-    _projection_alias,
     install_regexp,
     parse_cypher,
     translate_to_sql,
@@ -44,7 +43,7 @@ async def cypher_query(
 ) -> CypherQueryResponse:
     try:
         ast = parse_cypher(params.query)
-        sql, sql_params = translate_to_sql(ast)
+        sql, sql_params, projection_keys = translate_to_sql(ast)
     except UnsupportedCypherError as e:
         return CypherQueryResponse(
             success=False,
@@ -67,14 +66,9 @@ async def cypher_query(
             error_kind="sql",
         )
 
-    # Each projection has a stable SQL alias; map it back to the user-facing key.
     rows_out: list[dict] = []
     for row in all_rows:
-        record: dict = {}
-        for proj in ast.projections:
-            key = proj.alias or f"{proj.var}.{proj.prop}"
-            record[key] = row[_projection_alias(proj)]
-        rows_out.append(record)
+        rows_out.append({user_key: row[alias] for user_key, alias in projection_keys})
 
     return CypherQueryResponse(
         success=True,

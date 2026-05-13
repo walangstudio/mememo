@@ -19,7 +19,8 @@ const state = {
   page: 0,
   pageSize: 50,
   total: 0,
-  aliveSet: null, // null = live; Set<string> = filtered to those ids
+  asOfSha: null, // null = live; sha prefix = filter to memories alive at that SHA
+  aliveSet: null, // populated from /snapshots so the graph view can dim nodes
 };
 
 const $ = (id) => document.getElementById(id);
@@ -79,25 +80,22 @@ async function loadCommunities() {
   });
 }
 
-function rowMeetsFilter(row) {
-  if (!state.aliveSet) return true;
-  return state.aliveSet.has(row.id);
-}
-
 async function loadMemories() {
+  // Server-side as_of_sha keeps total + pagination math consistent with the
+  // alive set; no client-side filtering required.
   const data = await fetchJson(
     '/memories' +
       qs({
         repo_id: state.repoId,
         branch: state.branch,
+        as_of_sha: state.asOfSha,
         limit: state.pageSize,
         offset: state.page * state.pageSize,
       })
   );
   state.total = data.total;
-  const visible = data.items.filter(rowMeetsFilter);
   tbody.innerHTML = '';
-  visible.forEach((row) => {
+  data.items.forEach((row) => {
     const tr = document.createElement('tr');
     const cls = row.class_name ? `${row.class_name}.` : '';
     const fn = row.function_name || '';
@@ -111,9 +109,10 @@ async function loadMemories() {
       <td class="id">${(row.created_at_sha || '').slice(0, 8)}</td>`;
     tbody.appendChild(tr);
   });
-  pageInfo.textContent = `${state.page * state.pageSize + 1}–${
-    state.page * state.pageSize + visible.length
-  } of ${data.total}${state.aliveSet ? ` (filtered to ${state.aliveSet.size} alive)` : ''}`;
+  const start = data.total === 0 ? 0 : state.page * state.pageSize + 1;
+  pageInfo.textContent = `${start}–${
+    state.page * state.pageSize + data.items.length
+  } of ${data.total}${state.asOfSha ? ` (as of ${state.asOfSha})` : ''}`;
 }
 
 async function loadGraph() {
@@ -232,18 +231,24 @@ function renderGraph(edges) {
 async function applySnapshot() {
   const sha = shaInput.value.trim();
   if (!sha) return;
+  // Hit /snapshots to populate the graph's alive set; /memories uses
+  // as_of_sha server-side so total + pagination stay accurate.
   const data = await fetchJson(
     `/snapshots/${encodeURIComponent(sha)}` +
       qs({ repo_id: state.repoId, branch: state.branch })
   );
+  state.asOfSha = sha;
   state.aliveSet = new Set(data.alive_memory_ids);
+  state.page = 0;
   snapshotState.textContent = `snapshot ${sha} (${state.aliveSet.size} alive)`;
   snapshotState.className = 'state-snapshot';
   await refresh();
 }
 
 function clearSnapshot() {
+  state.asOfSha = null;
   state.aliveSet = null;
+  state.page = 0;
   snapshotState.textContent = 'live';
   snapshotState.className = 'state-live';
   refresh();

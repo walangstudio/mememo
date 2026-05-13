@@ -23,7 +23,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from ..types.memory import MemoryEvent, NULL_SHA
+from ..types.memory import MemoryEvent, coerce_sha
 
 if TYPE_CHECKING:
     from ..core.memory_manager import MemoryManager
@@ -85,9 +85,7 @@ async def merge_branch(
         return MergeBranchResponse(success=False, message=str(e))
 
     repo_id = context.repo.id
-    merge_sha = params.merge_sha or context.branch.commit_hash or NULL_SHA
-    if len(merge_sha) != 40:
-        merge_sha = NULL_SHA
+    merge_sha = coerce_sha(params.merge_sha or context.branch.commit_hash)
 
     storage = memory_manager.storage_manager
     conn = storage.conn
@@ -126,27 +124,56 @@ async def merge_branch(
     merged = 0
     skipped_dup = 0
     skipped_secrets = 0
-    # FR-034: re-run secrets detection on the content blob before copying
-    # across a branch boundary. The detector lives on memory_manager and may
-    # be disabled by config; respect that.
     detector = memory_manager.secrets_detector if memory_manager.secrets_detection else None
+    # Cache blob scans by content_ref — multiple memories can share a blob.
+    blob_secrets_cache: dict[str, bool] = {}
 
-    cursor = conn.cursor()
+    def _blob_has_secrets(content_ref: str) -> bool:
+        cached = blob_secrets_cache.get(content_ref)
+        if cached is not None:
+            return cached
+        text = _load_blob_text(storage.base_dir, content_ref)
+        verdict = bool(text and detector.has_secrets(text))
+        blob_secrets_cache[content_ref] = verdict
+        return verdict
+
+    # Collect rows + events; insert in one transaction at the end so we
+    # don't fsync per row.
+    memory_rows: list[tuple] = []
+    new_events: list[MemoryEvent] = []
+    now = int(time.time())
     for row in source_rows:
         if row["checksum"] in target_shas:
             skipped_dup += 1
             continue
-        if detector is not None:
-            text = _load_blob_text(storage.base_dir, row["content_ref"])
-            if text and detector.has_secrets(text):
-                logger.warning(
-                    "merge_branch: skipping memory %s — secrets detected in content blob",
-                    row["id"],
-                )
-                skipped_secrets += 1
-                continue
+        if detector is not None and _blob_has_secrets(row["content_ref"]):
+            logger.warning(
+                "merge_branch: skipping memory %s — secrets detected", row["id"]
+            )
+            skipped_secrets += 1
+            continue
         new_id = str(uuid4())
-        cursor.execute(
+        memory_rows.append((
+            new_id, row["repo_id"], row["repo_name"], row["repo_path"],
+            params.target_branch, merge_sha,
+            row["content_type"], row["file_path"], row["line_start"], row["line_end"],
+            row["function_name"], row["class_name"], row["language"], row["chunk_type"],
+            row["checksum"], row["content_ref"], row["token_count"],
+            row["created_at"], now,
+            None, None,  # embeddings stay per-branch
+            0, None,
+            merge_sha, merge_sha, None,
+        ))
+        new_events.append(MemoryEvent(
+            commit_sha=merge_sha, memory_id=new_id, op="RESTORED",
+            content_sha=row["checksum"], branch=params.target_branch,
+        ))
+        target_shas.add(row["checksum"])  # avoid duplicating within this run
+        merged += 1
+
+    if memory_rows:
+        cursor = conn.cursor()
+        cursor.executemany(
             """
             INSERT INTO memories (
                 id, repo_id, repo_name, repo_path, branch_name, commit_hash,
@@ -157,30 +184,15 @@ async def merge_branch(
                 created_at_sha, updated_at_sha, risk_grade
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                new_id, row["repo_id"], row["repo_name"], row["repo_path"],
-                params.target_branch, merge_sha,
-                row["content_type"], row["file_path"], row["line_start"], row["line_end"],
-                row["function_name"], row["class_name"], row["language"], row["chunk_type"],
-                row["checksum"], row["content_ref"], row["token_count"],
-                row["created_at"], int(time.time()),
-                None, None,  # embeddings stay per-branch; not copied
-                0, None,
-                merge_sha, merge_sha, None,
-            ),
+            memory_rows,
         )
-        storage.append_event(
-            MemoryEvent(
-                commit_sha=merge_sha,
-                memory_id=new_id,
-                op="RESTORED",
-                content_sha=row["checksum"],
-                branch=params.target_branch,
-            )
+        cursor.executemany(
+            "INSERT INTO memory_events (commit_sha, memory_id, op, content_sha, branch, ts) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [(e.commit_sha, e.memory_id, e.op, e.content_sha, e.branch,
+              int(e.ts.timestamp())) for e in new_events],
         )
-        target_shas.add(row["checksum"])  # avoid duplicating within this run
-        merged += 1
-    conn.commit()
+        conn.commit()
 
     secrets_note = f", {skipped_secrets} secret-skipped" if skipped_secrets else ""
     return MergeBranchResponse(

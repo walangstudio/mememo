@@ -52,7 +52,7 @@ dev = [
 ]
 
 [project.scripts]
-mememo = "mememo.server:main"
+mememo = "mememo.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

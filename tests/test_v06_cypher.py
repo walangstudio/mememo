@@ -128,7 +128,7 @@ def test_rejects_unknown_property() -> None:
 
 def test_sql_translation_basic() -> None:
     q = parse_cypher("MATCH (a)-[r:CALLS]->(b) RETURN a.id, b.id LIMIT 5")
-    sql, params = translate_to_sql(q)
+    sql, params, _ = translate_to_sql(q)
     assert "FROM relations r" in sql
     assert "INNER JOIN memories src" in sql
     assert "LEFT JOIN memories tgt" in sql
@@ -141,7 +141,7 @@ def test_sql_translation_with_regex() -> None:
     q = parse_cypher(
         'MATCH (a)-[r:IMPORTS]->(b) WHERE a.file_path =~ "mememo/.*" RETURN b.id'
     )
-    sql, params = translate_to_sql(q)
+    sql, params, _ = translate_to_sql(q)
     assert "REGEXP ?" in sql
     assert params == ["IMPORTS", "mememo/.*"]
 

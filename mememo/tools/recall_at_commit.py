@@ -16,16 +16,9 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import re
-
 from pydantic import BaseModel, Field, field_validator
 
-from ..types import SearchParams, SearchResult
-
-_SHA_RE = re.compile(r"^[0-9a-fA-F]{4,40}$")
-# Refs accept letters, digits, /, ., :, ~, ^, @, {}, -, and _; must NOT start with '-'
-# (git option injection guard). Cap at 200 chars to bound the attack surface.
-_REF_RE = re.compile(r"^(?!-)[\w/.:~^@{}-]{1,200}$")
+from ..types import SHA_PREFIX_PATTERN, SearchParams, SearchResult
 
 if TYPE_CHECKING:
     from ..core.memory_manager import MemoryManager
@@ -45,7 +38,7 @@ class RecallAtCommitParams(BaseModel):
     def _validate_sha(cls, v: str) -> str:
         # Hardening: prevents git option-injection via sha='--upload-pack=...'
         # (security audit 2026-05-13).
-        if not _SHA_RE.match(v):
+        if not SHA_PREFIX_PATTERN.match(v):
             raise ValueError(f"sha must be 4-40 hex chars; got {v!r}")
         return v
 

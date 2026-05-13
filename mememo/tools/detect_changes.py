@@ -97,15 +97,22 @@ async def detect_changes(
         )
 
     # Pull every memory bound to a file mentioned in the diff, then grade.
+    # The diff can be arbitrarily large (e.g. HEAD~N..HEAD with N huge); chunk
+    # the IN clause to stay under SQLITE_MAX_VARIABLE_NUMBER on stock builds.
     affected: list[AffectedMemory] = []
     conn = memory_manager.storage_manager.conn
-    placeholders = ",".join("?" * len(diff))
-    rows = conn.execute(
-        f"SELECT id, file_path, line_start, line_end, function_name, class_name "
-        f"FROM memories WHERE repo_id = ? AND branch_name = ? "
-        f"AND file_path IN ({placeholders})",
-        (context.repo.id, context.branch.name, *diff.keys()),
-    ).fetchall()
+    paths = list(diff.keys())
+    CHUNK = 500
+    rows: list = []
+    for i in range(0, len(paths), CHUNK):
+        batch = paths[i : i + CHUNK]
+        placeholders = ",".join("?" * len(batch))
+        rows.extend(conn.execute(
+            f"SELECT id, file_path, line_start, line_end, function_name, class_name "
+            f"FROM memories WHERE repo_id = ? AND branch_name = ? "
+            f"AND file_path IN ({placeholders})",
+            (context.repo.id, context.branch.name, *batch),
+        ).fetchall())
 
     for row in rows:
         line_range = (

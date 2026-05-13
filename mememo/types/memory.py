@@ -114,8 +114,26 @@ class MemoryMetadata(BaseModel):
     )
 
 
+# Full git SHA-1 (40 hex chars) and short-prefix forms. Exported so tools /
+# routes / hooks share one validation rule.
+SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
+SHA_PREFIX_PATTERN = re.compile(r"^[0-9a-fA-F]{4,40}$")
+_SHA_PATTERN = SHA_PATTERN  # legacy alias used by the MemoryEvent validator below
+
+
+def coerce_sha(value: str | None) -> str:
+    """Normalize an optional commit hash into a known-safe SHA value.
+
+    Returns the input when it matches a full 40-char hex SHA, otherwise
+    the ``NULL_SHA`` sentinel. Centralises the "empty / non-hex / short /
+    None" fallback dance every commit-aware write path was repeating.
+    """
+    if value and SHA_PATTERN.match(value):
+        return value
+    return NULL_SHA
+
+
 # NEW in v0.4.0 — append-only event log for time-travel + branch merge (FR-003, FR-004)
-_SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 class MemoryEvent(BaseModel):
