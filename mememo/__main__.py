@@ -61,7 +61,15 @@ def _cmd_serve(args: list[str]) -> int:
     ap.add_argument("--port", type=int, default=5757)
     ns = ap.parse_args(args)
 
-    from .web.app import run as _serve
+    try:
+        from .web.app import run as _serve
+    except ImportError as e:
+        sys.stderr.write(
+            "mememo serve requires the optional 'web' extras. Install with:\n"
+            "    pip install 'mememo[web]'\n"
+            f"(underlying error: {e})\n"
+        )
+        return 1
 
     _serve(host=ns.host, port=ns.port)
     return 0
