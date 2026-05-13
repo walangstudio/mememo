@@ -111,6 +111,12 @@ from .tools.graph_impact import (
 )
 # v0.6 MCP resources (T031)
 from . import resources as _resources
+# v0.6 Cypher subset query tool (T035)
+from .tools.cypher_query import (
+    CypherQueryParams,
+    CypherQueryResponse,
+    cypher_query as cypher_query_impl,
+)
 from .tools.schemas import (
     BatchStoreParams,
     BatchStoreResponse,
@@ -713,6 +719,23 @@ async def community_resource(repo_id: str, community_id: int) -> str:
     await ensure_initialized()
     _audit_log("resource:community")
     return _resources.community_summary(memory_manager, repo_id, int(community_id))
+
+
+@mcp.tool()
+async def cypher_query(params: CypherQueryParams) -> CypherQueryResponse:
+    """
+    Cypher subset query over the memory graph (v0.6).
+
+    Supports a documented subset: ``MATCH (a)-[r:TYPE]->(b)`` single-hop
+    patterns; ``WHERE`` with `=`, `<>`, `=~` (regex), `AND`, `OR`;
+    ``RETURN ident.prop [AS alias]`` projections; ``LIMIT n``. Returns
+    a structured error (error_kind="unsupported") naming the construct
+    when the query uses anything else (WITH, MERGE/CREATE/DELETE,
+    variable-length paths, aggregations, ...).
+    """
+    await ensure_initialized()
+    _audit_log("cypher_query")
+    return await cypher_query_impl(params, memory_manager)
 
 
 @mcp.tool()
