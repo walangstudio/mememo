@@ -38,6 +38,18 @@ dependencies = [
 [project.optional-dependencies]
 gpu = ["faiss-gpu>=1.7.0"]
 encryption = ["pysqlcipher3>=1.0.3"]
+# Optional web UI (v0.6 T033/T034). Only required for `mememo serve`;
+# the MCP server, hooks, and CLI work without these.
+web = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+]
+# Optional graph analysis. cluster_relations + dedup_entities raise a
+# clear ImportError on call if these aren't installed.
+graph = [
+    "networkx>=3.0",
+    "rapidfuzz>=3.0",
+]
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=0.23.0",
