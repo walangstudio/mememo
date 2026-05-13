@@ -69,6 +69,21 @@ def main():
                 ok = False
         sys.exit(0 if ok else 1)
 
+    # v0.6 web UI subcommand (T033 / FR-030).
+    if args and args[0] == "serve":
+        import argparse as _argparse
+
+        ap = _argparse.ArgumentParser(prog="mememo serve")
+        ap.add_argument("--host", default="127.0.0.1",
+                        help="bind host (refused unless 127.0.0.1 / localhost)")
+        ap.add_argument("--port", type=int, default=5757)
+        ns = ap.parse_args(args[1:])
+
+        from .web.app import run as _serve
+
+        _serve(host=ns.host, port=ns.port)
+        return
+
     # v0.6 worktree migration subcommand (FR-025, T030).
     if args and args[0] == "migrate-worktrees":
         import argparse as _argparse
