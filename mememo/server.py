@@ -109,6 +109,8 @@ from .tools.graph_impact import (
     GraphImpactResponse,
     graph_impact as graph_impact_impl,
 )
+# v0.6 MCP resources (T031)
+from . import resources as _resources
 from .tools.schemas import (
     BatchStoreParams,
     BatchStoreResponse,
@@ -673,6 +675,44 @@ async def graph_path(params: GraphPathParams) -> GraphPathResponse:
     await ensure_initialized()
     _audit_log("graph_path")
     return await graph_path_impl(params, memory_manager)
+
+
+# ---------- v0.6 MCP resources (FR-026, FR-027) ----------------------------
+
+
+@mcp.resource("mememo://repo/{repo_id}/stats")
+async def repo_stats_resource(repo_id: str) -> str:
+    """Counts of memories, edges, communities, stale fraction, last-indexed SHA
+    per branch. Payload capped at 4 KB."""
+    await ensure_initialized()
+    _audit_log("resource:repo_stats")
+    return _resources.repo_stats(memory_manager, repo_id)
+
+
+@mcp.resource("mememo://repo/{repo_id}/stale")
+async def repo_stale_resource(repo_id: str) -> str:
+    """Up to 50 most-recently-stale memories with their risk_grade and
+    stale_reason. Use detect_changes for the full list."""
+    await ensure_initialized()
+    _audit_log("resource:repo_stale")
+    return _resources.repo_stale(memory_manager, repo_id)
+
+
+@mcp.resource("mememo://repo/{repo_id}/branch/{branch}/summary")
+async def branch_summary_resource(repo_id: str, branch: str) -> str:
+    """Per-branch counts of memories, relations, events; current
+    last_indexed_sha + parent_sha."""
+    await ensure_initialized()
+    _audit_log("resource:branch_summary")
+    return _resources.branch_summary(memory_manager, repo_id, branch)
+
+
+@mcp.resource("mememo://repo/{repo_id}/community/{community_id}")
+async def community_resource(repo_id: str, community_id: int) -> str:
+    """Members of a community + top-degree nodes within it."""
+    await ensure_initialized()
+    _audit_log("resource:community")
+    return _resources.community_summary(memory_manager, repo_id, int(community_id))
 
 
 @mcp.tool()

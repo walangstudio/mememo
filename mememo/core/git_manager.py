@@ -81,6 +81,28 @@ class GitManager:
         except subprocess.TimeoutExpired:
             raise RuntimeError("Git command timed out after 30s")
 
+    async def canonical_repo_root(self, cwd: str | None = None) -> str:
+        """Return the canonical repo root, collapsing linked worktrees (FR-024).
+
+        Uses ``git rev-parse --git-common-dir`` so that worktrees created via
+        ``git worktree add`` resolve to the same path as the primary checkout.
+        Falls back to ``find_repo_root`` when the git-common-dir output is
+        ``.git`` (the legacy single-checkout case).
+        """
+        try:
+            common_dir = await self._exec_git("rev-parse", ["--git-common-dir"], cwd)
+        except RuntimeError:
+            return await self.find_repo_root(cwd)
+        # git prints either a path ending in `.git` (canonical case) or just
+        # `.git` (relative to repo root). Strip and normalize.
+        common_path = Path(common_dir)
+        if not common_path.is_absolute():
+            # Resolve relative to cwd.
+            common_path = (Path(cwd or os.getcwd()) / common_dir).resolve()
+        if common_path.name == ".git":
+            common_path = common_path.parent
+        return str(common_path)
+
     async def find_repo_root(self, cwd: str | None = None) -> str:
         """
         Find the root directory of the git repository.
@@ -184,8 +206,9 @@ class GitManager:
         working_dir = cwd or os.getcwd()
 
         try:
-            # Find repo root
-            repo_path = await self.find_repo_root(working_dir)
+            # v0.6 (FR-024): use canonical_repo_root so linked worktrees share
+            # the same repo_id as the primary checkout.
+            repo_path = await self.canonical_repo_root(working_dir)
 
             # Get repo name from path
             repo_name = Path(repo_path).name
@@ -246,13 +269,16 @@ class GitManager:
         """
         Get repository ID for a given path.
 
+        v0.6: uses canonical_repo_root so linked worktrees collapse to a
+        single repo_id (FR-024).
+
         Args:
             cwd: Working directory
 
         Returns:
-            Stable repository ID (SHA-256 hash of path)
+            Stable repository ID (SHA-256 hash of canonical path)
         """
-        repo_path = await self.find_repo_root(cwd)
+        repo_path = await self.canonical_repo_root(cwd)
         return hash_path(repo_path)
 
     # ----- v0.4.0 commit-aware extensions (FR-006) --------------------------

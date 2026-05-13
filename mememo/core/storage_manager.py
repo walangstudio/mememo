@@ -1086,6 +1086,42 @@ class StorageManager:
             for row in rows
         ]
 
+    # ----- v0.6 worktree migration (T030 / FR-025) ------------------------
+
+    def reassign_repo_id(self, from_repo_id: str, to_repo_id: str) -> dict[str, int]:
+        """Rewrite repo_id across every table that carries it.
+
+        Called by ``mememo migrate-worktrees`` when an old (per-worktree)
+        repo_id needs to be folded into the canonical one. Idempotent: a
+        no-op when ``from_repo_id`` has no rows.
+
+        Returns row counts updated per table for audit logging.
+        """
+        if from_repo_id == to_repo_id:
+            return {}
+        cursor = self.conn.cursor()
+        counts: dict[str, int] = {}
+
+        tables = [
+            ("memories", "repo_id"),
+            ("relations", "repo_id"),
+            ("branch_state", "repo_id"),
+            ("repo_index_metadata", "repo_id"),
+            ("index_state", "repo_id"),
+        ]
+        for table, col in tables:
+            try:
+                cursor.execute(
+                    f"UPDATE {table} SET {col} = ? WHERE {col} = ?",
+                    (to_repo_id, from_repo_id),
+                )
+                counts[table] = cursor.rowcount
+            except sqlite3.OperationalError:
+                # Table may not exist on older schemas; skip silently.
+                continue
+        self.conn.commit()
+        return counts
+
     # ----- v0.4.0 down-migration (rollback) -------------------------------
 
     def downgrade_v04_to_v03(self, *, i_understand_this_is_destructive: bool = False) -> dict[str, int]:
