@@ -17,6 +17,8 @@ CLIENT=""
 SKIP_TEST=false
 GLOBAL_CONFIG=false
 DEV_MODE=false
+WITH_WEB=false
+WITH_GRAPH=false
 CLIENT_EXPLICIT=false
 STATUS=false
 
@@ -49,6 +51,8 @@ Options:
                       codex, opencode, all)
       --skip-test     Skip warmup validation step
       --dev           Install dev/test dependencies
+      --with-web      Install optional FastAPI web UI extras (mememo serve)
+      --with-graph    Install optional clustering + dedup extras (networkx, rapidfuzz)
   -h, --help          Show this help
 
 Backward-compatible aliases (still supported):
@@ -78,6 +82,9 @@ Examples:
   bash install.sh --upgrade -c all         Upgrade + reconfigure all clients
   bash install.sh -u -c all               Uninstall from all client configs
   bash install.sh --dev                    Install with dev/test dependencies
+  bash install.sh --with-web               Base install + FastAPI web UI extras
+  bash install.sh --with-graph             Base install + clustering / dedup extras
+  bash install.sh --with-web --with-graph  Base + everything optional
 EOF
     exit 0
 }
@@ -101,6 +108,10 @@ while [[ $# -gt 0 ]]; do
             SKIP_TEST=true; shift ;;
         --dev)
             DEV_MODE=true; shift ;;
+        --with-web)
+            WITH_WEB=true; shift ;;
+        --with-graph)
+            WITH_GRAPH=true; shift ;;
         --configure=claude)
             CLIENT="claudedesktop"; CLIENT_EXPLICIT=true; shift ;;
         --configure=claudecli)
@@ -177,18 +188,29 @@ get_venv_python() {
     fi
 }
 
+_build_extras() {
+    local extras=""
+    if [[ "$DEV_MODE" == true ]]; then extras="${extras}${extras:+,}dev"; fi
+    if [[ "$WITH_WEB" == true ]]; then extras="${extras}${extras:+,}web"; fi
+    if [[ "$WITH_GRAPH" == true ]]; then extras="${extras}${extras:+,}graph"; fi
+    echo "$extras"
+}
+
 install_production() {
+    local extras="$(_build_extras)"
     python -m pip install --upgrade pip
-    python -m pip install -e .
-    log_success "mememo $(python -c 'import mememo; print(mememo.__version__)') installed"
+    if [[ -n "$extras" ]]; then
+        python -m pip install -e ".[${extras}]"
+        log_success "mememo $(python -c 'import mememo; print(mememo.__version__)') installed with extras: ${extras}"
+    else
+        python -m pip install -e .
+        log_success "mememo $(python -c 'import mememo; print(mememo.__version__)') installed"
+    fi
     python -c 'import mememo; print(mememo.__version__)' > "$MARKER"
 }
 
 install_dev() {
-    python -m pip install --upgrade pip
-    python -m pip install -e ".[dev]"
-    log_success "mememo $(python -c 'import mememo; print(mememo.__version__)') installed with dev/test tools"
-    python -c 'import mememo; print(mememo.__version__)' > "$MARKER"
+    install_production  # _build_extras already includes 'dev' when DEV_MODE=true
 }
 
 run_warmup() {

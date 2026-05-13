@@ -14,10 +14,13 @@
 - **🎯 Code-Aware**: Understands code structure (functions, classes, methods)
 - **🌳 Multi-Language**: 15+ file extensions supported
 - **🔍 Semantic Search**: Vector embeddings with FAISS similarity search
-- **🔐 Security-First**: Secrets detection with auto-sanitization
-- **📂 Git-Aware**: Automatic branch isolation
+- **🔐 Security-First**: Secrets detection with auto-sanitization (covers cross-branch memory copies too, v0.4+)
+- **📂 Git-Aware**: Automatic branch isolation + linked-worktree-canonical `repo_id` (v0.6)
+- **⏱ Commit-Aware** *(v0.4)*: Every memory carries the SHA it was minted at; append-only event log enables time-travel recall and branch-merge unions
+- **🕸 Memory Graph** *(v0.5)*: Typed edges (`IMPORTS` / `CALLS` / `EXTENDS` / `IMPLEMENTS` / `USES` / `DECORATED_BY`) across Python / TypeScript / JavaScript / Go; Louvain communities; symbol resolver with bounded fuzzy match
+- **🌐 Web UI** *(v0.6, optional)*: Localhost-only D3-force graph + paginated table + time-travel slider via `mememo serve`
 - **⚡ Incremental**: Only re-index changed files (Merkle DAG)
-- **🤖 Passive Hooks**: Auto-capture memories and inject context without any user action
+- **🤖 Passive Hooks**: Auto-capture memories, inject context, and (v0.6) augment Grep/Glob/Bash results — no manual invocation
 - **🧠 Smart Context**: Intent-aware injection with dynamic token budgets (22-43% savings)
 - **🧹 Manual Cleanup**: Controlled memory cleanup with dry-run preview (no silent auto-expiry)
 - **🔗 Orchestrator Support**: Works as a subprocess for external tools (borch, mageNT) via `repo_path` override and non-git directory fallback
@@ -139,8 +142,26 @@ python3 -m venv .venv
 source .venv/bin/activate      # Linux/macOS
 # or: .venv\Scripts\activate   # Windows
 
-pip install -e .               # Production
-pip install -e ".[dev]"        # Development
+pip install -e .                       # Production (MCP server, hooks, CLI)
+pip install -e ".[dev]"                # Development (testing + linting)
+pip install -e ".[web]"                # + FastAPI web UI (`mememo serve`)
+pip install -e ".[graph]"              # + Louvain clustering + entity dedup
+pip install -e ".[web,graph,dev]"      # Everything
+```
+
+The base install ships the MCP server, every CLI subcommand except `serve`,
+the passive hooks, and the graph traversal tools (`graph_neighbors`,
+`graph_path`, `graph_impact`, `cypher_query`). The `[web]` extra is only
+needed for `mememo serve`. The `[graph]` extra is only needed if you call
+`cluster_relations` or `dedup_entities` — the graph traversal tools work
+without it.
+
+Installer flags:
+
+```bash
+bash install.sh --with-web              # base + [web]
+bash install.sh --with-graph            # base + [graph]
+bash install.sh --dev --with-web --with-graph   # everything
 ```
 
 ### Configuration
@@ -637,15 +658,66 @@ extensions:
 
 | Tool | Purpose |
 |------|---------|
-| `index_repository` | Batch-index a codebase (incremental by default) |
-| `sync_commits` | Sync recent git commits to update stale code memories |
+| `index_repository` | Batch-index a codebase (incremental by default); v0.5+ also extracts typed edges into the memory graph |
+| `sync_commits` | Sync recent git commits — marks affected code memories stale with risk grade and emits STALED events |
 | `end_session` | Close the session and persist indexes |
+
+#### Commit-Aware Time-Travel *(v0.4)*
+
+| Tool | Purpose |
+|------|---------|
+| `detect_changes` | Map `git diff base..head` to affected memories with `WILL_BREAK` / `LIKELY_AFFECTED` / `MAY_NEED_TESTING` risk grades. Read-only — does not mutate `stale` flags |
+| `recall_at_commit` | Time-travel semantic search: resolves a target SHA to its commit timestamp, replays the event log, and filters FAISS results to memories alive at that SHA |
+| `merge_branch` | Union a source branch's alive memories into the target. Dedup by content checksum, emits RESTORED events at the merge SHA, runs secrets detection on every cross-branch copy |
+
+#### Memory Graph *(v0.5)*
+
+| Tool | Purpose |
+|------|---------|
+| `graph_neighbors` | Depth-limited BFS over typed edges with direction (`out` / `in` / `both`) and edge-type filter |
+| `graph_path` | Shortest directed edge path between two memories within `max_depth`, or `null` if unreachable |
+| `graph_impact` | Blast-radius BFS with `min_confidence` floor; each reached memory decorated with current `risk_grade` + file metadata. `direction='upstream'` finds callers / dependents |
+| `cypher_query` | Documented Cypher subset (`MATCH (a)-[r:TYPE]->(b)`, `WHERE` with `=`/`<>`/`=~`/`AND`/`OR`, `RETURN`, `LIMIT`). Unsupported constructs raise a structured `error_kind="unsupported"` response |
+| `search_similar` (extended) | New `cluster_id` parameter restricts results to memories whose relations live in the named community |
 
 #### Smart Context
 
 | Tool | Purpose |
 |------|---------|
 | `manage_skill` | Create, list, get, or delete skill prompt templates |
+
+### MCP Resources *(v0.6)*
+
+Four read-only resources that summarise the memory store without burning a tool call. Each payload is bounded to ≤4 KB; over-budget lists truncate and set a `truncated` marker.
+
+| Resource | Content |
+|----------|---------|
+| `mememo://repo/{id}/stats` | Total + stale memory counts, stale fraction, relation count, community count, per-branch `last_indexed_sha` |
+| `mememo://repo/{id}/stale` | Up to 50 most-recently-stale memories with `risk_grade` + `stale_reason` |
+| `mememo://repo/{id}/branch/{name}/summary` | Per-branch memory + relation + event counts; current `last_indexed_sha` + `parent_sha` |
+| `mememo://repo/{id}/community/{cid}` | Member memory ids + top-degree nodes for a clustering community |
+
+### Web UI *(v0.6, optional)*
+
+`pip install 'mememo[web]'` + `python -m mememo serve [--port 5757]` launches a localhost-only FastAPI app with:
+
+- **D3-force graph view** colored by community, with drag + zoom
+- **Paginated memories table** with risk-grade highlighting
+- **Time-travel slider** — paste a SHA prefix and both views filter server-side to memories alive at that commit
+
+Refuses to bind to anything other than `127.0.0.1` / `localhost`. The MCP server runs independently without these extras.
+
+### CLI Subcommands
+
+| Command | Purpose |
+|---------|---------|
+| `python -m mememo` | Start the MCP server (stdio) |
+| `python -m mememo serve [--port 5757]` | Launch the localhost web UI (requires `[web]` extra) |
+| `python -m mememo install-git-hooks --repo-path <p> [--with-pretool] [--force]` | Install opt-in post-merge / post-commit / (optional) PreToolUse hooks |
+| `python -m mememo migrate-worktrees --repo-path <p> [--dry-run]` | Re-key legacy per-worktree `repo_id`s onto the canonical one |
+| `python -m mememo merge-branch --repo-path <p> --source <b> --target <b>` | CLI shim over the `merge_branch` MCP tool — invoked by the post-merge hook |
+| `python -m mememo sync-commits --repo-path <p>` | CLI shim over the `sync_commits` MCP tool — invoked by the post-commit hook |
+| `python -m mememo capture --hook` / `inject --hook` / `pre-tool --hook` | Hook entry points consumed by Claude Code |
 
 #### Orchestrator Integration
 
