@@ -53,8 +53,32 @@ def build_symbol_table(entries: Iterable[SymbolEntry]) -> dict[str, list[SymbolE
     return table
 
 
+def _build_tail_index(
+    table: dict[str, list[SymbolEntry]],
+) -> dict[str, list[SymbolEntry]]:
+    """``{ tail_name: [entries] }`` for every uniquely-owned qualname.
+
+    Built once per ``resolve_edges`` call to give suffix lookup O(1) cost.
+    Includes the full qualname as its own tail so exact matches and pure
+    suffix matches share one lookup path.
+    """
+    out: dict[str, list[SymbolEntry]] = {}
+    for qual, entries in table.items():
+        if len(entries) != 1:
+            continue
+        out.setdefault(qual, []).append(entries[0])
+        tail = qual.rsplit(".", 1)[-1] if "." in qual else qual
+        if tail != qual:
+            out.setdefault(tail, []).append(entries[0])
+    return out
+
+
 def _resolve_one(
-    label: str, table: dict[str, list[SymbolEntry]], fuzzy_threshold: float = 0.95
+    label: str,
+    table: dict[str, list[SymbolEntry]],
+    tail_index: dict[str, list[SymbolEntry]],
+    fuzzy_qualnames: list[str] | None = None,
+    fuzzy_threshold: float = 0.95,
 ) -> tuple[SymbolEntry | None, EdgeConfidence]:
     # 1. Exact match.
     exact = table.get(label)
@@ -63,30 +87,26 @@ def _resolve_one(
     if exact and len(exact) > 1:
         return None, "AMBIGUOUS"
 
-    # 2. Suffix match — `bar` -> `foo.bar` when there's exactly one candidate.
-    suffix_candidates = [
-        entries[0]
-        for qual, entries in table.items()
-        if len(entries) == 1
-        and (qual == label or qual.endswith(f".{label}"))
-    ]
-    if len(suffix_candidates) == 1:
-        return suffix_candidates[0], "EXTRACTED"
-    if len(suffix_candidates) > 1:
+    # 2. Suffix match via the precomputed tail index. O(1) lookup.
+    suffix_candidates = tail_index.get(label)
+    if suffix_candidates:
+        if len(suffix_candidates) == 1:
+            return suffix_candidates[0], "EXTRACTED"
         return None, "AMBIGUOUS"
 
-    # 3. Fuzzy match — Jaro-Winkler >= threshold, single candidate above it.
-    if _HAS_RAPIDFUZZ:
-        scored = [
-            (entries[0], JaroWinkler.normalized_similarity(label, qual))
-            for qual, entries in table.items()
-            if len(entries) == 1
-        ]
-        above = [(e, s) for e, s in scored if s >= fuzzy_threshold]
+    # 3. Fuzzy match — only consult rapidfuzz when an index of unique-owner
+    # qualnames is supplied. Callers can disable by passing fuzzy_qualnames=None
+    # (the default) when the corpus is too large for an O(N) scan per edge.
+    if _HAS_RAPIDFUZZ and fuzzy_qualnames:
+        above: list[tuple[SymbolEntry, float]] = []
+        for qual in fuzzy_qualnames:
+            score = JaroWinkler.normalized_similarity(label, qual)
+            if score >= fuzzy_threshold:
+                above.append((table[qual][0], score))
+                if len(above) > 1:
+                    return None, "AMBIGUOUS"
         if len(above) == 1:
             return above[0][0], "INFERRED"
-        if len(above) > 1:
-            return None, "AMBIGUOUS"
 
     return None, "AMBIGUOUS"
 
@@ -99,6 +119,7 @@ def resolve_edges(
     commit_sha: str,
     symbols: Iterable[SymbolEntry],
     fuzzy_threshold: float = 0.95,
+    fuzzy_max_symbols: int = 2_000,
 ) -> list[Relation]:
     """Resolve a batch of raw edges into persistable Relation rows.
 
@@ -106,20 +127,28 @@ def resolve_edges(
     skipped silently — they correspond to module-level emit at the import
     site where no chunk-memory exists. The CALLER decides whether to widen
     by creating module-level chunks.
+
+    Performance (FR-016): suffix lookups use a precomputed tail index;
+    fuzzy matching is skipped automatically when the symbol set exceeds
+    ``fuzzy_max_symbols`` so the resolver stays O(E) on large corpora.
     """
     table = build_symbol_table(symbols)
+    tail_index = _build_tail_index(table)
+    # Only enable fuzzy when the corpus is small enough that the O(E * S)
+    # cost stays inside the budget.
+    fuzzy_qualnames: list[str] | None = None
+    if _HAS_RAPIDFUZZ:
+        unique_quals = [q for q, e in table.items() if len(e) == 1]
+        if len(unique_quals) <= fuzzy_max_symbols:
+            fuzzy_qualnames = unique_quals
+
     out: list[Relation] = []
     for raw in raw_edges:
         # Find the source chunk-memory by qualname (single owner per (repo,branch)).
         source_owners = table.get(raw.source_qualname, [])
         if not source_owners:
-            # Try suffix match for module-level edges
-            suffix = [
-                e[0]
-                for q, e in table.items()
-                if len(e) == 1 and (q == raw.source_qualname or q.endswith(f".{raw.source_qualname}"))
-            ]
-            if len(suffix) != 1:
+            suffix = tail_index.get(raw.source_qualname)
+            if not suffix or len(suffix) != 1:
                 logger.debug(
                     "resolve_edges: skipping edge with no source owner: %s -> %s",
                     raw.source_qualname, raw.target_label,
@@ -135,8 +164,9 @@ def resolve_edges(
             )
             continue
 
-        target, confidence = _resolve_one(raw.target_label, table, fuzzy_threshold)
-        # Demote to AMBIGUOUS-style when we can't pin the target but keep the symbol.
+        target, confidence = _resolve_one(
+            raw.target_label, table, tail_index, fuzzy_qualnames, fuzzy_threshold
+        )
         out.append(
             Relation(
                 id=str(uuid4()),
