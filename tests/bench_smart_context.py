@@ -94,7 +94,7 @@ SAMPLE_RESULTS = [
     ),
     _make_mock_memory(
         "summary",
-        "mememo v0.3.0 added passive hooks, capture tool, store_decision, recall_context, recent_context, multi-provider LLM adapter, and type-differentiated TTL.",
+        "mememo v0.6.0 ships worktree-canonical repo_id, typed-edge memory graph (IMPORTS/CALLS/EXTENDS), cypher_query MCP tool, PreToolUse hook, FastAPI web UI, and read-only MCP resources.",
         0.35,
         30,
     ),

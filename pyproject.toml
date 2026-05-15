@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mememo"
-version = "0.3.0"
+version = "0.6.0"
 description = "Code-aware memory MCP server with multi-language support and semantic search"
 readme = "README.md"
 requires-python = ">=3.10"
