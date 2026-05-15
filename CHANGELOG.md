@@ -1,5 +1,87 @@
 # Changelog
 
+## [0.6.0] - 2026-05-13
+
+### Added
+- **Worktree-canonical repo_id** (FR-024): `GitManager.canonical_repo_root` uses `git rev-parse --git-common-dir` so linked worktrees (`git worktree add ...`) collapse to the same SHA-256 `repo_id` as the primary checkout instead of fragmenting per worktree
+- **`mememo migrate-worktrees`** (FR-025): one-shot CLI that re-keys legacy per-worktree `repo_id`s onto the canonical one across `memories`, `relations`, `branch_state`, and the existing index_state tables. Idempotent, supports `--dry-run`
+- **Four read-only MCP resources** (FR-026/FR-027): `mememo://repo/{id}/stats`, `mememo://repo/{id}/stale`, `mememo://repo/{id}/branch/{name}/summary`, `mememo://repo/{id}/community/{cid}` — each payload bounded to ≤4 KB with a `truncated` marker
+- **PreToolUse hook** (FR-028/FR-029): `python -m mememo pre-tool --hook` reads the Claude Code hook payload for Grep/Glob/Bash calls and emits up to 3 related memories totalling at most 300 tokens. Never blocks the tool call; failures log to stderr and return an empty continue response
+- **FastAPI web UI** (FR-030/FR-031): `mememo serve` (optional extras) launches a localhost-only app on 127.0.0.1:5757 with read-only routes (`/repos`, `/memories?as_of_sha=<sha>`, `/relations`, `/communities`, `/snapshots/{sha}`) plus a single-page D3-force graph + paginated memories table + time-travel slider. Binding refused for any host other than localhost
+- **`cypher_query` MCP tool** (FR-032): hand-rolled parser for a documented Cypher subset (`MATCH (a)-[r:TYPE]->(b)`, `WHERE` with `=` / `<>` / `=~` / `AND` / `OR`, `RETURN ident.prop [AS alias]`, `LIMIT`). Any other construct raises `UnsupportedCypherError` which the tool layer turns into `error_kind="unsupported"`
+- **`mememo install-git-hooks --with-pretool`**: installer extension that registers the PreToolUse hook into `<repo>/.claude/settings.json`. Idempotent; refuses to clobber a user-customised block unless `--force` is passed
+- **`mememo merge-branch` / `mememo sync-commits` CLI shims**: dispatch arms that the opt-in post-merge / post-commit hooks shell out to. Previously the hook scripts called these subcommands but the dispatch was missing — fixed in the simplify pass
+- **Optional install extras**: `pip install 'mememo[web]'` for the FastAPI UI, `pip install 'mememo[graph]'` for `cluster_relations` (networkx) + `dedup_entities` (rapidfuzz). The MCP server, hooks, and every other CLI subcommand work without either. Installer flags `--with-web` and `--with-graph` available
+
+### Changed
+- Console script entry-point repointed from `mememo.server:main` (non-existent) to `mememo.__main__:main`
+- `__main__.py` rewritten as a `{cmd: handler}` dispatch table
+- `translate_to_sql` returns `(sql, params, projection_keys)` so callers no longer reach into private parser internals
+- Snapshot filter pushed server-side: `/memories?as_of_sha=<sha>` filters before paginating, replacing a buggy client-side filter that corrupted `total` and pagination math
+
+### Performance
+- `graph_neighbors` and `graph_impact` BFS rewritten as batched per-level `IN (...)` queries — one SQL per level instead of one per visited node (N+1 elimination)
+- `merge_branch` switched to `executemany` + a single transaction commit; per-row `append_event` + per-row commit replaced. `content_ref` secrets-scan results cached within one merge call
+- `detect_changes` chunks its `WHERE file_path IN (...)` to 500 ids per batch — defends against `SQLITE_MAX_VARIABLE_NUMBER` failures on large diffs
+- `index_repository._run_edge_pass` consumes `(rel_path, content, lang)` triples + a pre-built `SymbolEntry` list threaded from the main indexing loop instead of re-walking the tree with 6 separate `rglob` patterns + re-reading every file + re-querying SQLite for the symbol table. Also no longer descends into `.venv` / `node_modules`
+
+### Reuse
+- New `coerce_sha(value) -> str` helper in `mememo.types` replaces 9 hand-rolled `commit_hash or NULL_SHA` / length-check sites across `memory_manager`, `storage_manager`, `index_repository`, `merge_branch`
+- `SHA_PATTERN` and `SHA_PREFIX_PATTERN` exported from `mememo.types`; duplicate regexes dropped from `recall_at_commit.py` and `web/app.py`
+
+### Security
+- `mememo.web.app.run()` refuses to bind to anything other than 127.0.0.1 / localhost — defence in depth on top of the FastAPI route guards
+- `/snapshots/{sha}` and `/memories?as_of_sha=` reject anything that isn't 4-40 hex chars, matching the v0.4 option-injection guards on `recall_at_commit`
+
+## [0.5.0] - 2026-05-13
+
+### Added
+- **Typed-edge memory graph** (FR-013, FR-014, FR-017): every indexed Python / TypeScript / JavaScript / Go file emits `IMPORTS`, `CALLS`, `EXTENDS`, `IMPLEMENTS`, `USES`, `DECORATED_BY` edges into a new `relations` table. Edge confidence (`EXTRACTED` / `INFERRED` / `AMBIGUOUS`) recorded per row. CHECK constraints reject unknown types + non-40-char SHAs
+- **`mememo/chunking/python_ast_chunker.py`** gains `chunk_with_edges()` — a single scope-aware walk that emits chunks with proper `parent_class` AND raw edges in one pass. Legacy `chunk()` unchanged
+- **`mememo/chunking/ts_edges.py`** (FR-014): tree-sitter walkers for TypeScript / JavaScript / Go that share the same scope-stack pattern as the Python walker. Handles JS-vs-TS class_heritage grammar differences and Go method receivers
+- **`mememo/core/symbol_resolver.py`** (FR-015, FR-016): turns `(rel_path, raw_edges)` into resolved `Relation` rows. Exact qualname match → `EXTRACTED`; suffix match via a precomputed tail index → `EXTRACTED`; single Jaro-Winkler match ≥ 0.95 → `INFERRED`; otherwise `AMBIGUOUS` with the raw `target_symbol` preserved. Fuzzy match auto-disables when the symbol set exceeds `fuzzy_max_symbols=2000` so the resolver stays O(E) on large corpora
+- **`mememo/core/graph_analysis.py`** (FR-018, FR-019): `cluster_relations()` runs deterministic-with-seed Louvain (networkx) over the relations graph and stamps `community` per edge. `dedup_entities()` chains Jaro-Winkler (rapidfuzz) and a path-compressed union-find; writes `(canonical_memory_id, alias_label, similarity)` to a new `entity_aliases` table. Both raise a clear `ImportError` when their optional dep is missing
+- **`graph_neighbors`** MCP tool (FR-020): depth-limited BFS over typed edges with direction (`out` / `in` / `both`) and edge-type filter
+- **`graph_path`** MCP tool (FR-021): shortest directed edge path between two memories or `null` if unreachable within `max_depth`
+- **`graph_impact`** MCP tool (FR-022): blast-radius BFS with `min_confidence` floor; each reached memory decorated with its current `risk_grade` (from v0.4 sync_commits) + file/class/function metadata. `direction='upstream'` inverts the walk to find callers / dependents
+- **`search_similar` `cluster_id` filter** (FR-023): restrict semantic-search results to memories whose relations live in the named community
+- **Resolver perf gate** (FR-016): `benchmarks/resolver_perf.py` + a pytest budget gate that asserts ≤1.0s per 10k chunks
+- **Index-time perf gate** (FR-035): `benchmarks/index_corpus_perf.py` asserts that edge extraction adds at most 30% over chunk-only baseline
+
+### Changed
+- `index_repository` now runs a best-effort edge post-pass after chunking that emits + resolves + persists relations. Fails open: chunk-only indexing still produces a usable store when tree-sitter or other optional deps are missing
+- `Chunk.parent_class` is now populated correctly for Python methods via the unified scope-aware walk (legacy walk left `parent_class=None` per a pre-v0.5 TODO)
+
+### Performance
+- Resolver tail-index precomputation: suffix lookup is O(1) per edge instead of O(N). Resolved 5k symbols in <0.5s where the original implementation took >6s
+
+## [0.4.0] - 2026-05-13
+
+### Added
+- **Commit-aware memory layer**: every memory now carries the git SHA it was created at (`created_at_sha`) and last updated at (`updated_at_sha`); risk-graded staleness (`WILL_BREAK` / `LIKELY_AFFECTED` / `MAY_NEED_TESTING`) lives on `memories.risk_grade`
+- **`memory_events` table**: append-only event log (CREATED / UPDATED / STALED / DELETED / RESTORED) with a `CHECK(length(commit_sha)=40)` guard and a UNIQUE index against duplicate CREATED events under concurrent startup
+- **`branch_state` table**: per-(repo, branch) last_indexed_sha + parent_sha (merge-base with default branch); upserted by `index_repository` on every run
+- **`detect_changes` MCP tool**: read-only diff → affected memories with risk grades; backs the post-commit hook
+- **`recall_at_commit` MCP tool**: time-travel semantic search; resolves a target SHA to its commit timestamp, replays events, filters FAISS search to the alive set
+- **`merge_branch` MCP tool**: unions alive source-branch memories into target, dedup by `content_sha`, emits RESTORED events tagged at the merge SHA
+- **GitManager extensions**: `merge_base`, `is_merge_commit`, `diff_between`; whitelist extended with `merge-base` and `cat-file`
+- **Risk grader** (`mememo/core/risk_grader.py`): pure function turning a `--name-status` diff + memory line range into a risk grade; FR-009 SHOULD-clause hunk-overlap downgrade implemented behind an optional `hunk_ranges` arg
+- **Opt-in git hooks**: `mememo install-git-hooks --repo-path <repo>` copies `post-merge` (triggers `mememo merge-branch`) and `post-commit` (triggers `mememo sync-commits`) into `.git/hooks/`; refuses to clobber existing hooks unless `--force` is passed (FR-033)
+- **`NULL_SHA` / `BACKFILL_SHA` sentinels**: 40-char hex sentinels for "no git context" and "legacy pre-v0.4 row"; replace the empty-string SHA flaw flagged by the v0.4 security audit
+
+### Changed
+- `mark_memories_stale_for_file(file, repo, branch, reason, commit_sha=None)` now emits a STALED event per affected memory; the new `commit_sha` parameter is the SHA that caused the staling (defaults to `NULL_SHA`)
+- `index_repository` upserts `BranchState` alongside the legacy `repo_index_metadata.last_indexed_commit` so commit-aware tools can read the canonical per-branch SHA
+- `server.py` tolerates a missing pip-install (`PackageNotFoundError`) and falls back to `"0.0.0+local"` so the module loads from a source checkout during dev/CI
+
+### Migration
+- v0.3 → v0.4 backfill runs idempotently on every startup: rows with a valid 40-char `commit_hash` get their `created_at_sha` / `updated_at_sha` backfilled and receive one synthetic CREATED event; legacy rows without a valid SHA get `BACKFILL_SHA` so the replay path can distinguish them from live non-repo writes
+- A down-migration helper `StorageManager.downgrade_v04_to_v03()` is available for emergency rollback — it drops the v0.4 tables and columns; SQLite `ALTER TABLE DROP COLUMN` requires SQLite 3.35+
+
+### Security
+- `memory_events.commit_sha` has a DB-level CHECK constraint requiring length 40; combined with the Pydantic field validator on `MemoryEvent.commit_sha`, empty-string SHA writes are rejected at both layers
+- Backfill uses `INSERT OR IGNORE` + a UNIQUE index on `(memory_id, commit_sha) WHERE op='CREATED'` so concurrent startups cannot duplicate synthetic events
+
 ## [0.3.0] - 2026-03-21
 
 ### Added

@@ -348,6 +348,115 @@ async def cmd_inject() -> None:
         print(json.dumps({"continue": True}))
 
 
+# --- v0.6 PreToolUse hook (T032 / FR-028, FR-029) ---------------------------
+
+_PRE_TOOL_MAX_MEMORIES = 3
+_PRE_TOOL_MAX_TOKENS = 300
+
+
+def _extract_pre_tool_query(tool_name: str, tool_input: dict) -> str | None:
+    """Pull a semantic-search query out of the hook payload per tool.
+
+    Returns None when the tool is not one we augment.
+    """
+    if tool_name == "Grep":
+        pattern = tool_input.get("pattern") or ""
+        path = tool_input.get("path") or ""
+        return (pattern + " " + path).strip() or None
+    if tool_name == "Glob":
+        return (tool_input.get("pattern") or "").strip() or None
+    if tool_name == "Bash":
+        cmd = tool_input.get("command") or ""
+        # Truncate to keep the embedding generation cheap on noisy inputs.
+        return cmd[:200].strip() or None
+    return None
+
+
+def _build_pre_tool_block(results, max_memories: int, max_tokens: int) -> str | None:
+    """Format up to N search results into a compact block that fits in
+    ``max_tokens``. Returns None when no result is rich enough to be useful.
+    """
+    from .utils.token_counter import count_tokens
+
+    if not results:
+        return None
+    lines: list[str] = []
+    used = 0
+    for r in results[:max_memories * 3]:  # browse a larger window before truncation
+        mem = r.memory
+        loc = mem.content.file_path or "(no file)"
+        if mem.content.line_range:
+            loc = f"{loc}:{mem.content.line_range[0]}"
+        head = f"- [{mem.content.type}] {mem.summary.one_line.strip()} ({loc})"
+        cost = count_tokens(head) + 1  # newline
+        if used + cost > max_tokens:
+            break
+        lines.append(head)
+        used += cost
+        if len(lines) >= max_memories:
+            break
+    return "\n".join(lines) if lines else None
+
+
+async def cmd_pre_tool() -> None:
+    """PreToolUse hook: emit related memories alongside Grep/Glob/Bash results.
+
+    The hook NEVER blocks the tool call and NEVER raises — any internal
+    failure logs to stderr and emits an empty continue response so Claude
+    Code's UX stays untouched (FR-029).
+    """
+    import sys as _sys
+
+    raw = _sys.stdin.read()
+    try:
+        hook_data = json.loads(raw)
+    except json.JSONDecodeError:
+        print(json.dumps({"continue": True}))
+        return
+
+    tool_name = hook_data.get("tool_name") or ""
+    tool_input = hook_data.get("tool_input") or {}
+    query = _extract_pre_tool_query(tool_name, tool_input)
+    if not query:
+        print(json.dumps({"continue": True}))
+        return
+
+    try:
+        from .server import initialize_mememo
+        from .types.memory import SearchParams
+
+        await initialize_mememo()
+        import mememo.server as srv
+
+        results = await srv.memory_manager.search_similar(
+            SearchParams(query=query, top_k=10, min_similarity=0.4, include_stale=False)
+        )
+        block = _build_pre_tool_block(
+            results, _PRE_TOOL_MAX_MEMORIES, _PRE_TOOL_MAX_TOKENS
+        )
+    except Exception as e:  # never block the tool call
+        print(f"mememo pre-tool: error {e}", file=_sys.stderr)
+        print(json.dumps({"continue": True}))
+        return
+
+    if not block:
+        print(json.dumps({"continue": True}))
+        return
+
+    payload = {
+        "continue": True,
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": f"Related memories ({tool_name}):\n{block}",
+        },
+    }
+    print(json.dumps(payload))
+
+
+def run_pre_tool():
+    asyncio.run(cmd_pre_tool())
+
+
 def run_capture():
     asyncio.run(cmd_capture())
 

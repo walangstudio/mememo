@@ -16,7 +16,8 @@ from ..utils.hashing import hash_path
 
 logger = logging.getLogger(__name__)
 
-# Whitelist of allowed git commands for security
+# Whitelist of allowed git commands for security.
+# v0.4 adds merge-base (FR-006) and cat-file (used by is_merge_commit).
 ALLOWED_GIT_COMMANDS = [
     "rev-parse",
     "branch",
@@ -24,9 +25,13 @@ ALLOWED_GIT_COMMANDS = [
     "status",
     "diff",
     "log",
+    "merge-base",
+    "cat-file",
 ]
 
-AllowedGitCommand = Literal["rev-parse", "branch", "config", "status", "diff", "log"]
+AllowedGitCommand = Literal[
+    "rev-parse", "branch", "config", "status", "diff", "log", "merge-base", "cat-file"
+]
 
 
 class GitManager:
@@ -75,6 +80,28 @@ class GitManager:
             raise RuntimeError(f"Git command failed: {e.stderr}")
         except subprocess.TimeoutExpired:
             raise RuntimeError("Git command timed out after 30s")
+
+    async def canonical_repo_root(self, cwd: str | None = None) -> str:
+        """Return the canonical repo root, collapsing linked worktrees (FR-024).
+
+        Uses ``git rev-parse --git-common-dir`` so that worktrees created via
+        ``git worktree add`` resolve to the same path as the primary checkout.
+        Falls back to ``find_repo_root`` when the git-common-dir output is
+        ``.git`` (the legacy single-checkout case).
+        """
+        try:
+            common_dir = await self._exec_git("rev-parse", ["--git-common-dir"], cwd)
+        except RuntimeError:
+            return await self.find_repo_root(cwd)
+        # git prints either a path ending in `.git` (canonical case) or just
+        # `.git` (relative to repo root). Strip and normalize.
+        common_path = Path(common_dir)
+        if not common_path.is_absolute():
+            # Resolve relative to cwd.
+            common_path = (Path(cwd or os.getcwd()) / common_dir).resolve()
+        if common_path.name == ".git":
+            common_path = common_path.parent
+        return str(common_path)
 
     async def find_repo_root(self, cwd: str | None = None) -> str:
         """
@@ -179,8 +206,9 @@ class GitManager:
         working_dir = cwd or os.getcwd()
 
         try:
-            # Find repo root
-            repo_path = await self.find_repo_root(working_dir)
+            # v0.6 (FR-024): use canonical_repo_root so linked worktrees share
+            # the same repo_id as the primary checkout.
+            repo_path = await self.canonical_repo_root(working_dir)
 
             # Get repo name from path
             repo_name = Path(repo_path).name
@@ -241,14 +269,73 @@ class GitManager:
         """
         Get repository ID for a given path.
 
+        v0.6: uses canonical_repo_root so linked worktrees collapse to a
+        single repo_id (FR-024).
+
         Args:
             cwd: Working directory
 
         Returns:
-            Stable repository ID (SHA-256 hash of path)
+            Stable repository ID (SHA-256 hash of canonical path)
         """
-        repo_path = await self.find_repo_root(cwd)
+        repo_path = await self.canonical_repo_root(cwd)
         return hash_path(repo_path)
+
+    # ----- v0.4.0 commit-aware extensions (FR-006) --------------------------
+
+    async def merge_base(
+        self, branch_a: str, branch_b: str, cwd: str | None = None
+    ) -> str | None:
+        """Return the SHA of the merge-base between two refs, or None if disjoint."""
+        try:
+            sha = await self._exec_git("merge-base", [branch_a, branch_b], cwd)
+            return sha or None
+        except RuntimeError:
+            # `git merge-base` exits 1 when there is no common ancestor; that's
+            # not an error condition for callers, just "no merge-base."
+            return None
+
+    async def is_merge_commit(self, sha: str, cwd: str | None = None) -> bool:
+        """A commit is a merge if it has more than one parent."""
+        try:
+            parents = await self._exec_git(
+                "rev-parse", [f"{sha}^@"], cwd
+            )
+        except RuntimeError:
+            return False
+        # `<sha>^@` lists all parents one-per-line; merges have >=2.
+        return len([line for line in parents.split("\n") if line.strip()]) >= 2
+
+    async def diff_between(
+        self, base: str, head: str, cwd: str | None = None
+    ) -> dict[str, str]:
+        """Return {file_path: change_kind} between base..head.
+
+        change_kind is one of 'A' (added), 'M' (modified), 'D' (deleted),
+        'R' (renamed), 'T' (type-change), 'C' (copied). Wraps
+        `git diff --name-status` so callers don't have to parse stdout.
+        """
+        try:
+            # Append '--' so git interprets the next token as a revision range,
+            # never an option (security audit 2026-05-13).
+            output = await self._exec_git(
+                "diff", ["--name-status", f"{base}..{head}", "--"], cwd
+            )
+        except RuntimeError as e:
+            raise RuntimeError(f"diff_between({base!r}, {head!r}) failed: {e}")
+        out: dict[str, str] = {}
+        for line in output.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            # Rename / copy lines look like "R100\told\tnew" — record the new path.
+            kind = parts[0][:1]
+            path = parts[-1]
+            out[path] = kind
+        return out
+
+    # ------------------------------------------------------------------------
 
     async def get_changed_files(
         self, from_commit: str, to_commit: str, cwd: str | None = None

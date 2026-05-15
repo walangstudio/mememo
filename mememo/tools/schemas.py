@@ -119,6 +119,11 @@ class SearchSimilarParams(BaseModel):
     repo_path: str | None = Field(
         default=None, description="Repository path (overrides cwd-based git detection)"
     )
+    cluster_id: int | None = Field(
+        default=None,
+        description="v0.5 (FR-023): restrict results to memories whose relations "
+        "live in the named community. Requires a prior clustering pass.",
+    )
 
 
 class SearchResult(BaseModel):

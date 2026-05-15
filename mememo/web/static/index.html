@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>mememo — memory graph</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://d3js.org/d3.v7.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>mememo</h1>
+    <div class="controls">
+      <label>repo
+        <select id="repo-select"></select>
+      </label>
+      <label>branch
+        <input id="branch-input" placeholder="(all branches)" />
+      </label>
+      <label>community
+        <select id="community-select"><option value="">(all)</option></select>
+      </label>
+      <button id="refresh">refresh</button>
+    </div>
+    <div class="time-travel">
+      <label>time-travel
+        <input id="sha-input" placeholder="SHA prefix (e.g. abc1234)" size="14" />
+        <button id="snapshot">apply</button>
+        <button id="snapshot-clear">live</button>
+      </label>
+      <span id="snapshot-state" class="state-live">live</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="graph-section">
+      <h2>graph</h2>
+      <svg id="graph" width="100%" height="600"></svg>
+      <div id="graph-legend"></div>
+    </section>
+
+    <section id="table-section">
+      <h2>memories</h2>
+      <table id="memories">
+        <thead>
+          <tr>
+            <th>id</th><th>file</th><th>class.fn</th><th>type</th>
+            <th>risk</th><th>created_at_sha</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="pager">
+        <button id="prev">prev</button>
+        <span id="page-info"></span>
+        <button id="next">next</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
