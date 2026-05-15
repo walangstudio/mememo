@@ -447,7 +447,7 @@ rem ========================================================
         echo [INFO] Installing mememo with extras: !_extras!
         pip install -e ".[!_extras!]"
     ) else (
-        echo [INFO] Installing mememo (production)...
+        echo [INFO] Installing mememo production deps...
         pip install -e .
     )
     if errorlevel 1 (echo [ERROR] Installation failed & exit /b 1)
