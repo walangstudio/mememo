@@ -20,8 +20,8 @@ import types as _types
 from datetime import datetime
 from pathlib import Path
 
-
 # ---------- heavyweight-dep stubs (must run before any mememo import) -------
+
 
 def _stub_module(name: str, **attrs: object) -> None:
     if name in sys.modules:
@@ -56,11 +56,13 @@ class _StubFastMCP:  # pragma: no cover
     def tool(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
     def resource(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
     def run(self, *a, **k) -> None: ...
@@ -73,6 +75,7 @@ import pytest  # noqa: E402
 from mememo.core.storage_manager import StorageManager  # noqa: E402
 from mememo.types import (  # noqa: E402
     BACKFILL_SHA,
+    NULL_SHA,
     BranchContext,
     BranchState,
     GitContext,
@@ -82,10 +85,8 @@ from mememo.types import (  # noqa: E402
     MemoryMetadata,
     MemoryRelationships,
     MemorySummary,
-    NULL_SHA,
     RepoContext,
 )
-
 
 # ---------- helpers ----------------------------------------------------------
 
@@ -96,7 +97,7 @@ SHA_C = "c" * 40
 SHA_F = "f" * 40
 
 
-def _make_storage(tmp_path: Path) -> "StorageManager":
+def _make_storage(tmp_path: Path) -> StorageManager:
     return StorageManager(base_dir=tmp_path / "store")
 
 
@@ -127,7 +128,7 @@ def _make_memory(
     )
 
 
-def _save_and_emit_created(storage: "StorageManager", memory: Memory) -> None:
+def _save_and_emit_created(storage: StorageManager, memory: Memory) -> None:
     """Mirrors MemoryManager.create_memory at the storage boundary."""
     asyncio.run(storage.save_memory(memory))
     storage.append_event(
@@ -283,15 +284,13 @@ def test_t011_backfill_seeds_synthetic_created_events_idempotent(tmp_path: Path)
 def test_t011_backfill_uses_sentinel_for_legacy_rows_without_sha(tmp_path: Path) -> None:
     """Legacy rows with NULL / empty commit_hash get BACKFILL_SHA, not empty string."""
     storage = _make_storage(tmp_path)
-    storage.conn.execute(
-        """
+    storage.conn.execute("""
         INSERT INTO memories (
             id, repo_id, branch_name, commit_hash, content_type,
             checksum, content_ref, token_count, created_at, updated_at
         ) VALUES ('mem-no-sha', 'r', 'main', NULL, 'context',
                   'sum', 'unused', 5, 1000, 1000)
-        """
-    )
+        """)
     storage.conn.commit()
     storage._backfill_v04_commit_metadata()
     events = storage.list_events(memory_id="mem-no-sha")
@@ -452,9 +451,7 @@ def test_t003_emit_update_event_helper_round_trip(tmp_path: Path) -> None:
     storage = _make_storage(tmp_path)
     memory = _make_memory(sha=SHA_A, memory_id="mem-upd")
     _save_and_emit_created(storage, memory)
-    storage.emit_update_event(
-        memory.id, commit_sha=SHA_B, content_sha="new-chk", branch="main"
-    )
+    storage.emit_update_event(memory.id, commit_sha=SHA_B, content_sha="new-chk", branch="main")
     ops = [(e.op, e.commit_sha) for e in storage.list_events(memory_id=memory.id)]
     assert ops == [("CREATED", SHA_A), ("UPDATED", SHA_B)]
 
@@ -467,7 +464,7 @@ def _ts(value: int) -> int:
 
 
 def _hand_insert_event(
-    storage: "StorageManager",
+    storage: StorageManager,
     *,
     memory_id: str,
     op: str,
@@ -492,9 +489,15 @@ def test_t004_state_at_ts_returns_none_before_creation(tmp_path: Path) -> None:
 
 def test_t004_state_at_ts_returns_latest_alive_event(tmp_path: Path) -> None:
     storage = _make_storage(tmp_path)
-    _hand_insert_event(storage, memory_id="m", op="CREATED", sha=SHA_A, ts=_ts(100), content_sha="v1")
-    _hand_insert_event(storage, memory_id="m", op="UPDATED", sha=SHA_B, ts=_ts(200), content_sha="v2")
-    _hand_insert_event(storage, memory_id="m", op="UPDATED", sha=SHA_C, ts=_ts(300), content_sha="v3")
+    _hand_insert_event(
+        storage, memory_id="m", op="CREATED", sha=SHA_A, ts=_ts(100), content_sha="v1"
+    )
+    _hand_insert_event(
+        storage, memory_id="m", op="UPDATED", sha=SHA_B, ts=_ts(200), content_sha="v2"
+    )
+    _hand_insert_event(
+        storage, memory_id="m", op="UPDATED", sha=SHA_C, ts=_ts(300), content_sha="v3"
+    )
     # Query at the moment of the second event — must see v2, not v3.
     assert storage.state_at_ts("m", _ts(250)) == ("v2", "UPDATED")
     # Query past the third — sees v3.
@@ -504,9 +507,11 @@ def test_t004_state_at_ts_returns_latest_alive_event(tmp_path: Path) -> None:
 def test_t004_state_at_ts_returns_none_after_delete(tmp_path: Path) -> None:
     storage = _make_storage(tmp_path)
     _hand_insert_event(storage, memory_id="m", op="CREATED", sha=SHA_A, ts=_ts(100))
-    _hand_insert_event(storage, memory_id="m", op="DELETED", sha=SHA_B, ts=_ts(200), content_sha=None)
+    _hand_insert_event(
+        storage, memory_id="m", op="DELETED", sha=SHA_B, ts=_ts(200), content_sha=None
+    )
     assert storage.state_at_ts("m", _ts(150)) is not None  # still alive
-    assert storage.state_at_ts("m", _ts(250)) is None      # deleted
+    assert storage.state_at_ts("m", _ts(250)) is None  # deleted
 
 
 def test_t004_alive_memory_ids_at_ts_filters_branch_and_deletes(tmp_path: Path) -> None:
@@ -515,7 +520,9 @@ def test_t004_alive_memory_ids_at_ts_filters_branch_and_deletes(tmp_path: Path) 
     # feat: m3 created at 150
     _hand_insert_event(storage, memory_id="m1", op="CREATED", sha=SHA_A, ts=100, branch="main")
     _hand_insert_event(storage, memory_id="m2", op="CREATED", sha=SHA_A, ts=100, branch="main")
-    _hand_insert_event(storage, memory_id="m2", op="DELETED", sha=SHA_B, ts=200, branch="main", content_sha=None)
+    _hand_insert_event(
+        storage, memory_id="m2", op="DELETED", sha=SHA_B, ts=200, branch="main", content_sha=None
+    )
     _hand_insert_event(storage, memory_id="m3", op="CREATED", sha=SHA_C, ts=150, branch="feat")
 
     assert storage.alive_memory_ids_at_ts(150, branch="main") == {"m1", "m2"}
@@ -617,9 +624,7 @@ def test_t007_detect_changes_schemas_construct() -> None:
 
     p = DetectChangesParams(repo_path="/tmp", base_ref="HEAD~1")
     assert p.head_ref == "HEAD"
-    am = AffectedMemory(
-        memory_id="m", file_path="foo.py", change_kind="D", risk_grade="WILL_BREAK"
-    )
+    am = AffectedMemory(memory_id="m", file_path="foo.py", change_kind="D", risk_grade="WILL_BREAK")
     r = DetectChangesResponse(success=True, message="ok", affected=[am])
     assert r.affected[0].risk_grade == "WILL_BREAK"
 
@@ -688,12 +693,8 @@ def test_t013_install_errors_on_non_git_dir(tmp_path: Path) -> None:
 def test_downgrade_v04_to_v03_drops_tables_and_columns(tmp_path: Path) -> None:
     """Emergency rollback: down-migration removes the v0.4 surface cleanly."""
     storage = _make_storage(tmp_path)
-    storage.append_event(
-        MemoryEvent(commit_sha=SHA_A, memory_id="m", op="CREATED", branch="main")
-    )
-    storage.upsert_branch_state(
-        BranchState(repo_id="r", branch="main", last_indexed_sha=SHA_A)
-    )
+    storage.append_event(MemoryEvent(commit_sha=SHA_A, memory_id="m", op="CREATED", branch="main"))
+    storage.upsert_branch_state(BranchState(repo_id="r", branch="main", last_indexed_sha=SHA_A))
 
     # Confirmation flag is required — refuses to run without it.
     with pytest.raises(RuntimeError):
@@ -705,10 +706,7 @@ def test_downgrade_v04_to_v03_drops_tables_and_columns(tmp_path: Path) -> None:
 
     # Tables gone.
     tables = {
-        r["name"]
-        for r in storage.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
+        r["name"] for r in storage.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     assert "memory_events" not in tables
     assert "branch_state" not in tables
@@ -776,9 +774,7 @@ def test_mark_stale_records_provided_sha_not_null_sha(tmp_path: Path) -> None:
         (SHA_A,),
     )
     storage.conn.commit()
-    storage.mark_memories_stale_for_file(
-        "foo.py", "r", "main", "file changed", commit_sha=SHA_B
-    )
+    storage.mark_memories_stale_for_file("foo.py", "r", "main", "file changed", commit_sha=SHA_B)
     events = storage.list_events(memory_id="c1", op="STALED")
     assert len(events) == 1
     assert events[0].commit_sha == SHA_B, "FR-008: STALED event must carry the real commit SHA"

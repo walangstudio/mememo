@@ -52,7 +52,7 @@ class RecallAtCommitResponse(BaseModel):
     results: list[SearchResult] = Field(default_factory=list)
 
 
-async def _commit_ts(memory_manager: "MemoryManager", sha: str, cwd: str) -> int | None:
+async def _commit_ts(memory_manager: MemoryManager, sha: str, cwd: str) -> int | None:
     """Resolve a SHA to its committer-timestamp (epoch seconds)."""
     # Defence-in-depth: even with the Pydantic validator above, append '--' to
     # force git to treat sha as a revision not an option.
@@ -68,7 +68,7 @@ async def _commit_ts(memory_manager: "MemoryManager", sha: str, cwd: str) -> int
 
 
 async def recall_at_commit(
-    params: RecallAtCommitParams, memory_manager: "MemoryManager"
+    params: RecallAtCommitParams, memory_manager: MemoryManager
 ) -> RecallAtCommitResponse:
     repo_path = Path(params.repo_path)
     if not repo_path.exists() or not repo_path.is_dir():
@@ -104,8 +104,11 @@ async def recall_at_commit(
 
     # Run normal semantic search, then filter to alive set.
     raw = await memory_manager.search_similar(
-        SearchParams(query=params.query, top_k=max(params.top_k * 3, 20),
-                     min_similarity=params.min_similarity),
+        SearchParams(
+            query=params.query,
+            top_k=max(params.top_k * 3, 20),
+            min_similarity=params.min_similarity,
+        ),
         cwd=str(repo_path),
     )
     filtered = [r for r in raw if r.memory.id in alive][: params.top_k]

@@ -382,7 +382,7 @@ def _build_pre_tool_block(results, max_memories: int, max_tokens: int) -> str | 
         return None
     lines: list[str] = []
     used = 0
-    for r in results[:max_memories * 3]:  # browse a larger window before truncation
+    for r in results[: max_memories * 3]:  # browse a larger window before truncation
         mem = r.memory
         loc = mem.content.file_path or "(no file)"
         if mem.content.line_range:
@@ -431,9 +431,7 @@ async def cmd_pre_tool() -> None:
         results = await srv.memory_manager.search_similar(
             SearchParams(query=query, top_k=10, min_similarity=0.4, include_stale=False)
         )
-        block = _build_pre_tool_block(
-            results, _PRE_TOOL_MAX_MEMORIES, _PRE_TOOL_MAX_TOKENS
-        )
+        block = _build_pre_tool_block(results, _PRE_TOOL_MAX_MEMORIES, _PRE_TOOL_MAX_TOKENS)
     except Exception as e:  # never block the tool call
         print(f"mememo pre-tool: error {e}", file=_sys.stderr)
         print(json.dumps({"continue": True}))

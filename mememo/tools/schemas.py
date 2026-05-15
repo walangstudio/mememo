@@ -486,7 +486,9 @@ class ExtractedMemory(BaseModel):
 class CaptureParams(BaseModel):
     """Parameters for passive memory capture via LLM extraction."""
 
-    text: str = Field(default="", description="Raw text to extract memories from (conversation, notes, etc.)")
+    text: str = Field(
+        default="", description="Raw text to extract memories from (conversation, notes, etc.)"
+    )
     hint: str | None = Field(
         default=None,
         description="Optional hint to guide extraction (e.g. 'focus on decisions')",

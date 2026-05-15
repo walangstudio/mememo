@@ -66,7 +66,7 @@ def _load_blob_text(storage_base: Path, content_ref: str) -> str:
 
 
 async def merge_branch(
-    params: MergeBranchParams, memory_manager: "MemoryManager"
+    params: MergeBranchParams, memory_manager: MemoryManager
 ) -> MergeBranchResponse:
     repo_path = Path(params.repo_path)
     if not repo_path.exists() or not repo_path.is_dir():
@@ -147,27 +147,49 @@ async def merge_branch(
             skipped_dup += 1
             continue
         if detector is not None and _blob_has_secrets(row["content_ref"]):
-            logger.warning(
-                "merge_branch: skipping memory %s — secrets detected", row["id"]
-            )
+            logger.warning("merge_branch: skipping memory %s — secrets detected", row["id"])
             skipped_secrets += 1
             continue
         new_id = str(uuid4())
-        memory_rows.append((
-            new_id, row["repo_id"], row["repo_name"], row["repo_path"],
-            params.target_branch, merge_sha,
-            row["content_type"], row["file_path"], row["line_start"], row["line_end"],
-            row["function_name"], row["class_name"], row["language"], row["chunk_type"],
-            row["checksum"], row["content_ref"], row["token_count"],
-            row["created_at"], now,
-            None, None,  # embeddings stay per-branch
-            0, None,
-            merge_sha, merge_sha, None,
-        ))
-        new_events.append(MemoryEvent(
-            commit_sha=merge_sha, memory_id=new_id, op="RESTORED",
-            content_sha=row["checksum"], branch=params.target_branch,
-        ))
+        memory_rows.append(
+            (
+                new_id,
+                row["repo_id"],
+                row["repo_name"],
+                row["repo_path"],
+                params.target_branch,
+                merge_sha,
+                row["content_type"],
+                row["file_path"],
+                row["line_start"],
+                row["line_end"],
+                row["function_name"],
+                row["class_name"],
+                row["language"],
+                row["chunk_type"],
+                row["checksum"],
+                row["content_ref"],
+                row["token_count"],
+                row["created_at"],
+                now,
+                None,
+                None,  # embeddings stay per-branch
+                0,
+                None,
+                merge_sha,
+                merge_sha,
+                None,
+            )
+        )
+        new_events.append(
+            MemoryEvent(
+                commit_sha=merge_sha,
+                memory_id=new_id,
+                op="RESTORED",
+                content_sha=row["checksum"],
+                branch=params.target_branch,
+            )
+        )
         target_shas.add(row["checksum"])  # avoid duplicating within this run
         merged += 1
 
@@ -189,8 +211,10 @@ async def merge_branch(
         cursor.executemany(
             "INSERT INTO memory_events (commit_sha, memory_id, op, content_sha, branch, ts) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            [(e.commit_sha, e.memory_id, e.op, e.content_sha, e.branch,
-              int(e.ts.timestamp())) for e in new_events],
+            [
+                (e.commit_sha, e.memory_id, e.op, e.content_sha, e.branch, int(e.ts.timestamp()))
+                for e in new_events
+            ],
         )
         conn.commit()
 

@@ -277,8 +277,7 @@ class StorageManager:
         # Use the row's commit_hash when it's a real SHA, else BACKFILL_SHA.
         # INSERT OR IGNORE makes the operation a no-op on the second startup
         # thanks to idx_events_unique_create.
-        cursor.execute(
-            f"""
+        cursor.execute(f"""
             INSERT OR IGNORE INTO memory_events (commit_sha, memory_id, op, content_sha, branch, ts)
             SELECT
                 CASE
@@ -294,8 +293,7 @@ class StorageManager:
             WHERE NOT EXISTS (
                 SELECT 1 FROM memory_events e WHERE e.memory_id = m.id
             )
-            """
-        )
+            """)
         self.conn.commit()
 
     def _get_content_path(self, checksum: str) -> Path:
@@ -825,10 +823,7 @@ class StorageManager:
         Per clarifications.json: replay is purely timestamp-based; the caller
         is responsible for converting a target SHA into target_ts via git.
         """
-        sql = (
-            "SELECT op, content_sha FROM memory_events "
-            "WHERE memory_id = ? AND ts <= ?"
-        )
+        sql = "SELECT op, content_sha FROM memory_events " "WHERE memory_id = ? AND ts <= ?"
         params: list[object] = [memory_id, target_ts]
         if branch is not None:
             sql += " AND branch = ?"
@@ -998,7 +993,11 @@ class StorageManager:
         self.conn.commit()
 
     def update_memory_shas(
-        self, memory_id: str, *, created_at_sha: str | None = None, updated_at_sha: str | None = None
+        self,
+        memory_id: str,
+        *,
+        created_at_sha: str | None = None,
+        updated_at_sha: str | None = None,
     ) -> None:
         """Surgical update of the v0.4 SHA columns; leaves nulls intact when not provided."""
         sets: list[str] = []
@@ -1012,9 +1011,7 @@ class StorageManager:
         if not sets:
             return
         params.append(memory_id)
-        self.conn.execute(
-            f"UPDATE memories SET {', '.join(sets)} WHERE id = ?", params
-        )
+        self.conn.execute(f"UPDATE memories SET {', '.join(sets)} WHERE id = ?", params)
         self.conn.commit()
 
     # ----- v0.5.0 typed-edge layer (FR-017, FR-020, FR-021, FR-022) -------
@@ -1033,9 +1030,17 @@ class StorageManager:
             """,
             [
                 (
-                    r.id, r.repo_id, r.branch, r.source_memory_id, r.target_memory_id,
-                    r.target_symbol, r.type, r.confidence, r.created_at_sha,
-                    1 if r.stale else 0, r.community,
+                    r.id,
+                    r.repo_id,
+                    r.branch,
+                    r.source_memory_id,
+                    r.target_memory_id,
+                    r.target_symbol,
+                    r.type,
+                    r.confidence,
+                    r.created_at_sha,
+                    1 if r.stale else 0,
+                    r.community,
                 )
                 for r in relations
             ],
@@ -1123,7 +1128,9 @@ class StorageManager:
 
     # ----- v0.4.0 down-migration (rollback) -------------------------------
 
-    def downgrade_v04_to_v03(self, *, i_understand_this_is_destructive: bool = False) -> dict[str, int]:
+    def downgrade_v04_to_v03(
+        self, *, i_understand_this_is_destructive: bool = False
+    ) -> dict[str, int]:
         """Reverse the v0.4 schema additions for emergency rollback.
 
         Drops memory_events, branch_state, and the three new memories columns
@@ -1160,8 +1167,7 @@ class StorageManager:
         for table in ("memory_events", "branch_state"):
             row = cursor.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
             counts[table] = row["n"] if row else 0
-        cursor.executescript(
-            """
+        cursor.executescript("""
             DROP INDEX IF EXISTS idx_events_unique_create;
             DROP INDEX IF EXISTS idx_events_branch;
             DROP INDEX IF EXISTS idx_events_memory;
@@ -1171,8 +1177,7 @@ class StorageManager:
             ALTER TABLE memories DROP COLUMN risk_grade;
             ALTER TABLE memories DROP COLUMN updated_at_sha;
             ALTER TABLE memories DROP COLUMN created_at_sha;
-            """
-        )
+            """)
         self.conn.commit()
         return counts
 

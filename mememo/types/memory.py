@@ -4,10 +4,10 @@ Memory type definitions using Pydantic models.
 Defines all data structures for memories, git context, and query parameters.
 """
 
+import re
 from datetime import datetime
 from typing import Literal
 
-import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 

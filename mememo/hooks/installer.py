@@ -65,8 +65,11 @@ def register_claude_pretool_hook(repo_path: str, force: bool = False) -> dict:
         try:
             settings = json.loads(settings_path.read_text(encoding="utf-8") or "{}")
         except json.JSONDecodeError:
-            return {"status": "error", "settings_path": str(settings_path),
-                    "reason": "settings.json is not valid JSON"}
+            return {
+                "status": "error",
+                "settings_path": str(settings_path),
+                "reason": "settings.json is not valid JSON",
+            }
     else:
         settings = {}
 
@@ -91,13 +94,14 @@ def register_claude_pretool_hook(repo_path: str, force: bool = False) -> dict:
 
     if pre_tool_matchers and not force:
         # User already has PreToolUse entries; don't silently shove ours in.
-        return {"status": "skipped", "settings_path": str(settings_path),
-                "reason": "PreToolUse already configured; rerun with --force to append"}
+        return {
+            "status": "skipped",
+            "settings_path": str(settings_path),
+            "reason": "PreToolUse already configured; rerun with --force to append",
+        }
 
     pre_tool_matchers.append(mememo_entry)
-    settings_path.write_text(
-        json.dumps(settings, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    settings_path.write_text(json.dumps(settings, indent=2, sort_keys=True), encoding="utf-8")
     return {"status": "added", "settings_path": str(settings_path)}
 
 

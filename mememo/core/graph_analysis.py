@@ -20,8 +20,8 @@ ImportError on the API call so the rest of v0.5 keeps working.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 class ClusteringResult:
     """Outcome of one clustering pass."""
 
-    communities: dict[str, int]   # memory_id -> community_id
-    modularity: float | None      # None if the graph was empty
+    communities: dict[str, int]  # memory_id -> community_id
+    modularity: float | None  # None if the graph was empty
     relations_updated: int
 
 
@@ -62,8 +62,7 @@ def cluster_relations(
         )
     except ImportError as e:  # pragma: no cover — clear error path
         raise ImportError(
-            "cluster_relations requires networkx; install with "
-            "`pip install networkx>=3.0`"
+            "cluster_relations requires networkx; install with " "`pip install networkx>=3.0`"
         ) from e
 
     rels = storage.list_relations(repo_id=repo_id, branch=branch)
@@ -101,9 +100,7 @@ def cluster_relations(
         updated += cursor.rowcount
     storage.conn.commit()
 
-    return ClusteringResult(
-        communities=membership, modularity=mod, relations_updated=updated
-    )
+    return ClusteringResult(communities=membership, modularity=mod, relations_updated=updated)
 
 
 # ---------------------- T022: entity dedup pipeline -------------------------
@@ -121,8 +118,8 @@ class DedupCandidate:
 class DedupResult:
     """Outcome of one dedup pass."""
 
-    canonical_count: int   # number of canonical groups discovered
-    alias_count: int       # number of (canonical, alias) pairs persisted
+    canonical_count: int  # number of canonical groups discovered
+    alias_count: int  # number of (canonical, alias) pairs persisted
 
 
 class _UnionFind:
@@ -175,8 +172,7 @@ def dedup_entities(
         from rapidfuzz.distance import JaroWinkler
     except ImportError as e:  # pragma: no cover — clear error path
         raise ImportError(
-            "dedup_entities requires rapidfuzz; install with "
-            "`pip install rapidfuzz>=3.0`"
+            "dedup_entities requires rapidfuzz; install with " "`pip install rapidfuzz>=3.0`"
         ) from e
 
     items = list(candidates)

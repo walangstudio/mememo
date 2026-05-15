@@ -11,14 +11,11 @@ from .config import (
 )
 from .memory import (
     BACKFILL_SHA,
-    BranchContext,
-    BranchState,
+    NULL_SHA,
     SHA_PATTERN,
     SHA_PREFIX_PATTERN,
-    coerce_sha,
-    Relation,
-    RelationConfidence,
-    RelationType,
+    BranchContext,
+    BranchState,
     CreateMemoryParams,
     GitContext,
     Memory,
@@ -30,12 +27,15 @@ from .memory import (
     MemoryMetadata,
     MemoryRelationships,
     MemorySummary,
-    NULL_SHA,
+    Relation,
+    RelationConfidence,
+    RelationType,
     RepoContext,
     RiskGrade,
     SearchParams,
     SearchResult,
     SummarizeParams,
+    coerce_sha,
 )
 
 __all__ = [
