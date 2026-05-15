@@ -53,7 +53,7 @@ def _bound(payload: dict, max_items_key: str | None = None) -> dict:
     return payload
 
 
-def repo_stats(memory_manager: "MemoryManager", repo_id: str) -> str:
+def repo_stats(memory_manager: MemoryManager, repo_id: str) -> str:
     """``mememo://repo/{id}/stats`` — counts + last-indexed SHA + stale fraction."""
     conn = memory_manager.storage_manager.conn
     total = conn.execute(
@@ -76,8 +76,7 @@ def repo_stats(memory_manager: "MemoryManager", repo_id: str) -> str:
         (repo_id,),
     ).fetchall()
     branches = [
-        {"branch": r["branch"], "last_indexed_sha": r["last_indexed_sha"]}
-        for r in branches_rows
+        {"branch": r["branch"], "last_indexed_sha": r["last_indexed_sha"]} for r in branches_rows
     ]
     payload = {
         "repo_id": repo_id,
@@ -91,7 +90,7 @@ def repo_stats(memory_manager: "MemoryManager", repo_id: str) -> str:
     return json.dumps(_bound(payload, max_items_key="branches"))
 
 
-def repo_stale(memory_manager: "MemoryManager", repo_id: str) -> str:
+def repo_stale(memory_manager: MemoryManager, repo_id: str) -> str:
     """``mememo://repo/{id}/stale`` — list of stale memories with risk_grade."""
     conn = memory_manager.storage_manager.conn
     rows = conn.execute(
@@ -105,9 +104,7 @@ def repo_stale(memory_manager: "MemoryManager", repo_id: str) -> str:
     return json.dumps(_bound(payload, max_items_key="items"))
 
 
-def branch_summary(
-    memory_manager: "MemoryManager", repo_id: str, branch: str
-) -> str:
+def branch_summary(memory_manager: MemoryManager, repo_id: str, branch: str) -> str:
     """``mememo://repo/{id}/branch/{name}/summary`` — per-branch counts + SHAs."""
     conn = memory_manager.storage_manager.conn
     counts = conn.execute(
@@ -119,8 +116,7 @@ def branch_summary(
         (repo_id, branch),
     ).fetchone()["n"]
     state = conn.execute(
-        "SELECT last_indexed_sha, parent_sha FROM branch_state "
-        "WHERE repo_id = ? AND branch = ?",
+        "SELECT last_indexed_sha, parent_sha FROM branch_state " "WHERE repo_id = ? AND branch = ?",
         (repo_id, branch),
     ).fetchone()
     event_count = conn.execute(
@@ -138,9 +134,7 @@ def branch_summary(
     return json.dumps(_bound(payload))
 
 
-def community_summary(
-    memory_manager: "MemoryManager", repo_id: str, community_id: int
-) -> str:
+def community_summary(memory_manager: MemoryManager, repo_id: str, community_id: int) -> str:
     """``mememo://repo/{id}/community/{cid}`` — member memories + top-degree nodes."""
     conn = memory_manager.storage_manager.conn
     member_ids_rows = conn.execute(

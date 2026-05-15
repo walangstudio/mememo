@@ -23,27 +23,24 @@ class _Stub:  # pragma: no cover
     def tool(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
     def resource(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
 
 _stub_module("sentence_transformers", SentenceTransformer=_Stub)
-_stub_module(
-    "faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub
-)
+_stub_module("faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub)
 _stub_module("fastmcp", FastMCP=_Stub)
 
-
-import pytest  # noqa: E402
 
 from mememo import resources  # noqa: E402
 from mememo.core.storage_manager import StorageManager  # noqa: E402
 from mememo.types import BranchState, Relation  # noqa: E402
-
 
 SHA = "a" * 40
 
@@ -107,16 +104,21 @@ def test_t030_reassign_repo_id_rewrites_every_table(tmp_path: Path) -> None:
         "  checksum, content_ref, token_count, created_at, updated_at) "
         "VALUES ('m1', 'old', 'main', 'context', 'k', 'u', 1, 1, 1)"
     )
-    storage.upsert_branch_state(
-        BranchState(repo_id="old", branch="main", last_indexed_sha=SHA)
+    storage.upsert_branch_state(BranchState(repo_id="old", branch="main", last_indexed_sha=SHA))
+    storage.insert_relations(
+        [
+            Relation(
+                id="r1",
+                repo_id="old",
+                branch="main",
+                source_memory_id="m1",
+                target_memory_id="m1",
+                type="CALLS",
+                confidence="EXTRACTED",
+                created_at_sha=SHA,
+            )
+        ]
     )
-    storage.insert_relations([
-        Relation(
-            id="r1", repo_id="old", branch="main",
-            source_memory_id="m1", target_memory_id="m1",
-            type="CALLS", confidence="EXTRACTED", created_at_sha=SHA,
-        )
-    ])
     storage.conn.commit()
 
     counts = storage.reassign_repo_id("old", "new")
@@ -125,12 +127,18 @@ def test_t030_reassign_repo_id_rewrites_every_table(tmp_path: Path) -> None:
     assert counts.get("relations", 0) == 1
 
     # Old rows are gone; new rows present.
-    assert storage.conn.execute(
-        "SELECT COUNT(*) AS n FROM memories WHERE repo_id = 'old'"
-    ).fetchone()["n"] == 0
-    assert storage.conn.execute(
-        "SELECT COUNT(*) AS n FROM memories WHERE repo_id = 'new'"
-    ).fetchone()["n"] == 1
+    assert (
+        storage.conn.execute("SELECT COUNT(*) AS n FROM memories WHERE repo_id = 'old'").fetchone()[
+            "n"
+        ]
+        == 0
+    )
+    assert (
+        storage.conn.execute("SELECT COUNT(*) AS n FROM memories WHERE repo_id = 'new'").fetchone()[
+            "n"
+        ]
+        == 1
+    )
 
 
 def test_t030_reassign_repo_id_noop_on_self_target(tmp_path: Path) -> None:
@@ -161,18 +169,32 @@ def _seed(storage: StorageManager) -> None:
     storage.upsert_branch_state(
         BranchState(repo_id="repo", branch="main", last_indexed_sha=SHA, parent_sha=None)
     )
-    storage.insert_relations([
-        Relation(
-            id="r1", repo_id="repo", branch="main",
-            source_memory_id="m1", target_memory_id="m2", type="CALLS",
-            confidence="EXTRACTED", created_at_sha=SHA, community=0,
-        ),
-        Relation(
-            id="r2", repo_id="repo", branch="main",
-            source_memory_id="m2", target_memory_id="m1", type="USES",
-            confidence="EXTRACTED", created_at_sha=SHA, community=0,
-        ),
-    ])
+    storage.insert_relations(
+        [
+            Relation(
+                id="r1",
+                repo_id="repo",
+                branch="main",
+                source_memory_id="m1",
+                target_memory_id="m2",
+                type="CALLS",
+                confidence="EXTRACTED",
+                created_at_sha=SHA,
+                community=0,
+            ),
+            Relation(
+                id="r2",
+                repo_id="repo",
+                branch="main",
+                source_memory_id="m2",
+                target_memory_id="m1",
+                type="USES",
+                confidence="EXTRACTED",
+                created_at_sha=SHA,
+                community=0,
+            ),
+        ]
+    )
     storage.conn.commit()
 
 

@@ -11,13 +11,13 @@ shared state across files. Pure functions otherwise.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from .base_chunker import Chunk, RawEdge
 
 
 def _text(node, code_bytes: bytes) -> str:
-    return code_bytes[node.start_byte: node.end_byte].decode("utf-8", errors="replace")
+    return code_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
 def _line_range(node) -> tuple[int, int]:
@@ -110,11 +110,18 @@ def walk_typescript_or_javascript(
             name = _text(name_node, code_bytes) if name_node else "(anonymous)"
             qual = f"{cur()}.{name}"
             start, end = _line_range(node)
-            chunks.append(Chunk(
-                text=_text(node, code_bytes), start_line=start, end_line=end,
-                chunk_type="class", class_name=name, parent_class=enclosing_class(),
-                language=language, file_path=file_path,
-            ))
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="class",
+                    class_name=name,
+                    parent_class=enclosing_class(),
+                    language=language,
+                    file_path=file_path,
+                )
+            )
             # decorators: appear as sibling nodes BEFORE class_declaration in
             # some grammars; safe to scan the parent's children. Skip for v0.5.
             heritage = node.child_by_field_name("heritage") or node.child_by_field_name("body")
@@ -136,16 +143,16 @@ def walk_typescript_or_javascript(
                     if hc.type in ("extends_clause", "implements_clause"):
                         kind = "EXTENDS" if hc.type == "extends_clause" else "IMPLEMENTS"
                         for sub in hc.children:
-                            if sub.type in (
-                                "identifier", "type_identifier", "member_expression"
-                            ):
+                            if sub.type in ("identifier", "type_identifier", "member_expression"):
                                 tgt = _flatten_member_expression(sub, code_bytes)
                                 if tgt:
                                     edges.append(RawEdge(qual, tgt, kind))
                         continue
                     # JS flat form: identifier(s) follow the keyword.
                     if current_kind and hc.type in (
-                        "identifier", "type_identifier", "member_expression"
+                        "identifier",
+                        "type_identifier",
+                        "member_expression",
                     ):
                         tgt = _flatten_member_expression(hc, code_bytes)
                         if tgt:
@@ -164,12 +171,18 @@ def walk_typescript_or_javascript(
             parent = enclosing_class()
             qual = f"{cur()}.{name}"
             start, end = _line_range(node)
-            chunks.append(Chunk(
-                text=_text(node, code_bytes), start_line=start, end_line=end,
-                chunk_type="method" if parent else "function",
-                function_name=name, parent_class=parent,
-                language=language, file_path=file_path,
-            ))
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="method" if parent else "function",
+                    function_name=name,
+                    parent_class=parent,
+                    language=language,
+                    file_path=file_path,
+                )
+            )
             scope_stack.append(("function", name))
             body = node.child_by_field_name("body")
             if body is not None:
@@ -245,11 +258,17 @@ def walk_go(
             name = _text(name_node, code_bytes) if name_node else "(anonymous)"
             qual = f"{cur()}.{name}"
             start, end = _line_range(node)
-            chunks.append(Chunk(
-                text=_text(node, code_bytes), start_line=start, end_line=end,
-                chunk_type="function", function_name=name,
-                language="go", file_path=file_path,
-            ))
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="function",
+                    function_name=name,
+                    language="go",
+                    file_path=file_path,
+                )
+            )
             scope_stack.append(("function", name))
             body = node.child_by_field_name("body")
             if body is not None:
@@ -274,16 +293,20 @@ def walk_go(
                             if receiver_struct.startswith("*"):
                                 receiver_struct = receiver_struct.lstrip("*").strip()
             parent_class = receiver_struct
-            qual = (
-                f"{cur()}.{receiver_struct}.{name}" if receiver_struct
-                else f"{cur()}.{name}"
-            )
+            qual = f"{cur()}.{receiver_struct}.{name}" if receiver_struct else f"{cur()}.{name}"
             start, end = _line_range(node)
-            chunks.append(Chunk(
-                text=_text(node, code_bytes), start_line=start, end_line=end,
-                chunk_type="method", function_name=name, parent_class=parent_class,
-                language="go", file_path=file_path,
-            ))
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="method",
+                    function_name=name,
+                    parent_class=parent_class,
+                    language="go",
+                    file_path=file_path,
+                )
+            )
             if receiver_struct:
                 edges.append(RawEdge(qual, receiver_struct, "USES"))
             scope_stack.append(("function", name))

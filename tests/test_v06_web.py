@@ -23,18 +23,18 @@ class _Stub:  # pragma: no cover
     def tool(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
     def resource(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
 
 _stub_module("sentence_transformers", SentenceTransformer=_Stub)
-_stub_module(
-    "faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub
-)
+_stub_module("faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub)
 _stub_module("fastmcp", FastMCP=_Stub)
 
 
@@ -49,7 +49,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 from mememo.core.storage_manager import StorageManager  # noqa: E402
 from mememo.types import BranchState, MemoryEvent, Relation  # noqa: E402
 from mememo.web.app import create_app  # noqa: E402
-
 
 SHA = "a" * 40
 SHA_B = "b" * 40
@@ -67,33 +66,52 @@ def _seed(storage: StorageManager) -> None:
         f"('m2','r','demo','/tmp/demo','main','code_snippet','b.py','g',NULL,'python','k2','u2',1,2,2,1,'WILL_BREAK','{SHA}'),"
         f"('m3','r','demo','/tmp/demo','main','code_snippet','c.py','h',NULL,'python','k3','u3',1,3,3,0,NULL,'{SHA}')"
     )
-    storage.upsert_branch_state(
-        BranchState(repo_id="r", branch="main", last_indexed_sha=SHA)
+    storage.upsert_branch_state(BranchState(repo_id="r", branch="main", last_indexed_sha=SHA))
+    storage.insert_relations(
+        [
+            Relation(
+                id="rel1",
+                repo_id="r",
+                branch="main",
+                source_memory_id="m1",
+                target_memory_id="m2",
+                type="CALLS",
+                confidence="EXTRACTED",
+                created_at_sha=SHA,
+                community=0,
+            ),
+            Relation(
+                id="rel2",
+                repo_id="r",
+                branch="main",
+                source_memory_id="m2",
+                target_memory_id="m3",
+                type="USES",
+                confidence="EXTRACTED",
+                created_at_sha=SHA,
+                community=0,
+            ),
+        ]
     )
-    storage.insert_relations([
-        Relation(
-            id="rel1", repo_id="r", branch="main",
-            source_memory_id="m1", target_memory_id="m2", type="CALLS",
-            confidence="EXTRACTED", created_at_sha=SHA, community=0,
-        ),
-        Relation(
-            id="rel2", repo_id="r", branch="main",
-            source_memory_id="m2", target_memory_id="m3", type="USES",
-            confidence="EXTRACTED", created_at_sha=SHA, community=0,
-        ),
-    ])
     # Events: m1 at ts=BASE+100, m2 at BASE+200, m3 at BASE+300 (under SHA_B).
     # Use a safe modern epoch base — Windows localtime barfs on
     # datetime.fromtimestamp(<small int>) for pre-1970 local times.
     base = 1_700_000_000  # 2023-11-14 UTC
     for mid, offset, sha in [
-        ("m1", 100, SHA), ("m2", 200, SHA), ("m3", 300, SHA_B),
+        ("m1", 100, SHA),
+        ("m2", 200, SHA),
+        ("m3", 300, SHA_B),
     ]:
-        storage.append_event(MemoryEvent(
-            commit_sha=sha, memory_id=mid, op="CREATED",
-            content_sha=f"k_{mid}", branch="main",
-            ts=datetime.fromtimestamp(base + offset),
-        ))
+        storage.append_event(
+            MemoryEvent(
+                commit_sha=sha,
+                memory_id=mid,
+                op="CREATED",
+                content_sha=f"k_{mid}",
+                branch="main",
+                ts=datetime.fromtimestamp(base + offset),
+            )
+        )
 
 
 @pytest.fixture()
@@ -172,9 +190,7 @@ def test_communities_aggregates_by_community(client: TestClient) -> None:
 def test_snapshot_filters_to_alive_memory_ids(client: TestClient) -> None:
     # At a SHA-A-prefix snapshot, m1 + m2 are alive (created under SHA_A);
     # m3 was created at a later ts under SHA_B and is excluded.
-    r = client.get(
-        f"/snapshots/{SHA[:8]}", params={"repo_id": "r", "branch": "main"}
-    )
+    r = client.get(f"/snapshots/{SHA[:8]}", params={"repo_id": "r", "branch": "main"})
     assert r.status_code == 200
     payload = r.json()
     assert payload["target_ts"] is not None

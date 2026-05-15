@@ -31,21 +31,22 @@ class _Stub:  # pragma: no cover
     def tool(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
     def resource(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
 
 _stub_module("sentence_transformers", SentenceTransformer=_Stub)
-_stub_module(
-    "faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub
-)
+_stub_module("faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub)
 _stub_module("fastmcp", FastMCP=_Stub)
 
 import asyncio  # noqa: E402
+
 import pytest  # noqa: E402
 
 from mememo.chunking.python_ast_chunker import (  # noqa: E402
@@ -58,7 +59,6 @@ from mememo.core.symbol_resolver import (  # noqa: E402
     resolve_edges,
 )
 from mememo.types import Relation  # noqa: E402
-
 
 SHA = "a" * 40
 
@@ -120,9 +120,7 @@ def test_t019_exact_match_resolves_extracted() -> None:
     raw = [
         RawEdge("pkg.mod.MyClass.method", "pkg.mod.foo.baz", "CALLS"),
     ]
-    relations = resolve_edges(
-        raw, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols
-    )
+    relations = resolve_edges(raw, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols)
     assert len(relations) == 1
     assert relations[0].confidence == "EXTRACTED"
     assert relations[0].target_memory_id == "m-baz"
@@ -137,9 +135,7 @@ def test_t019_suffix_match_resolves_extracted() -> None:
         SymbolEntry(memory_id="m-baz", qualname="pkg.foo.baz"),
     ]
     raw = [RawEdge("pkg.mod.MyClass.method", "baz", "CALLS")]
-    relations = resolve_edges(
-        raw, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols
-    )
+    relations = resolve_edges(raw, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols)
     assert relations[0].confidence == "EXTRACTED"
     assert relations[0].target_memory_id == "m-baz"
 
@@ -149,9 +145,7 @@ def test_t019_unresolved_is_ambiguous() -> None:
 
     symbols = [SymbolEntry(memory_id="m1", qualname="pkg.mod.MyClass.method")]
     raw = [RawEdge("pkg.mod.MyClass.method", "unknown_function", "CALLS")]
-    relations = resolve_edges(
-        raw, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols
-    )
+    relations = resolve_edges(raw, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols)
     assert relations[0].confidence == "AMBIGUOUS"
     assert relations[0].target_memory_id is None
     assert relations[0].target_symbol == "unknown_function"
@@ -161,9 +155,7 @@ def test_t019_skips_when_source_qualname_unknown() -> None:
     from mememo.chunking.base_chunker import RawEdge
 
     raw = [RawEdge("nowhere.unknown", "anywhere", "CALLS")]
-    relations = resolve_edges(
-        raw, repo_id="r", branch="main", commit_sha=SHA, symbols=[]
-    )
+    relations = resolve_edges(raw, repo_id="r", branch="main", commit_sha=SHA, symbols=[])
     assert relations == []
 
 
@@ -204,12 +196,16 @@ def test_t020_type_check_constraint(tmp_path: Path) -> None:
 
 
 def test_t020_sha_length_check(tmp_path: Path) -> None:
-    storage = StorageManager(base_dir=tmp_path / "store")
     with pytest.raises(Exception):
         # Pydantic catches it first
         Relation(
-            id="r2", repo_id="r", branch="main", source_memory_id="m",
-            type="CALLS", confidence="EXTRACTED", created_at_sha="short",
+            id="r2",
+            repo_id="r",
+            branch="main",
+            source_memory_id="m",
+            type="CALLS",
+            confidence="EXTRACTED",
+            created_at_sha="short",
         )
 
 
@@ -254,9 +250,7 @@ def test_t023_graph_neighbors_outbound_depth_1(tmp_path: Path) -> None:
     _seed_chain(storage)
     mm = _StubMM(storage)
     resp = asyncio.run(
-        graph_neighbors(
-            GraphNeighborsParams(memory_id="a", direction="out", depth=1), mm
-        )
+        graph_neighbors(GraphNeighborsParams(memory_id="a", direction="out", depth=1), mm)
     )
     assert set(resp.visited) == {"a", "b", "e"}
     assert len(resp.edges) == 2
@@ -270,9 +264,7 @@ def test_t023_graph_neighbors_filters_edge_types(tmp_path: Path) -> None:
     mm = _StubMM(storage)
     resp = asyncio.run(
         graph_neighbors(
-            GraphNeighborsParams(
-                memory_id="a", direction="out", depth=1, edge_types=["USES"]
-            ),
+            GraphNeighborsParams(memory_id="a", direction="out", depth=1, edge_types=["USES"]),
             mm,
         )
     )
@@ -287,9 +279,7 @@ def test_t023_graph_neighbors_depth_3(tmp_path: Path) -> None:
     _seed_chain(storage)
     mm = _StubMM(storage)
     resp = asyncio.run(
-        graph_neighbors(
-            GraphNeighborsParams(memory_id="a", direction="out", depth=3), mm
-        )
+        graph_neighbors(GraphNeighborsParams(memory_id="a", direction="out", depth=3), mm)
     )
     # a, b, c, d (chain), plus e (USES).
     assert {"a", "b", "c", "d", "e"} <= set(resp.visited)
@@ -323,9 +313,7 @@ def test_t024_graph_path_max_depth_bound(tmp_path: Path) -> None:
     storage = StorageManager(base_dir=tmp_path / "store")
     _seed_chain(storage)
     mm = _StubMM(storage)
-    resp = asyncio.run(
-        graph_path(GraphPathParams(source_id="a", target_id="d", max_depth=2), mm)
-    )
+    resp = asyncio.run(graph_path(GraphPathParams(source_id="a", target_id="d", max_depth=2), mm))
     assert resp.path is None  # 'd' is 3 hops from 'a'
 
 
@@ -355,13 +343,13 @@ def test_method_chunk_has_parent_class_via_unified_walk() -> None:
 
 
 def test_t022_dedup_collapses_near_duplicates(tmp_path: Path) -> None:
-    rapidfuzz = pytest.importorskip("rapidfuzz")
+    pytest.importorskip("rapidfuzz")
     from mememo.core.graph_analysis import DedupCandidate, dedup_entities
 
     storage = StorageManager(base_dir=tmp_path / "store")
     cands = [
         DedupCandidate(memory_id="m1", label="UserController"),
-        DedupCandidate(memory_id="m2", label="UserControler"),     # one typo
+        DedupCandidate(memory_id="m2", label="UserControler"),  # one typo
         DedupCandidate(memory_id="m3", label="DatabaseService"),
         DedupCandidate(memory_id="m4", label="DatabaseServices"),  # plural variant
         DedupCandidate(memory_id="m5", label="Unrelated"),
@@ -387,18 +375,30 @@ def test_t021_clustering_deterministic_with_seed(tmp_path: Path) -> None:
     # Add a parallel disconnected component to give Louvain a real choice.
     from uuid import uuid4
 
-    storage.insert_relations([
-        Relation(
-            id=str(uuid4()), repo_id="r", branch="main",
-            source_memory_id="x", target_memory_id="y", type="CALLS",
-            confidence="EXTRACTED", created_at_sha=SHA,
-        ),
-        Relation(
-            id=str(uuid4()), repo_id="r", branch="main",
-            source_memory_id="y", target_memory_id="z", type="CALLS",
-            confidence="EXTRACTED", created_at_sha=SHA,
-        ),
-    ])
+    storage.insert_relations(
+        [
+            Relation(
+                id=str(uuid4()),
+                repo_id="r",
+                branch="main",
+                source_memory_id="x",
+                target_memory_id="y",
+                type="CALLS",
+                confidence="EXTRACTED",
+                created_at_sha=SHA,
+            ),
+            Relation(
+                id=str(uuid4()),
+                repo_id="r",
+                branch="main",
+                source_memory_id="y",
+                target_memory_id="z",
+                type="CALLS",
+                confidence="EXTRACTED",
+                created_at_sha=SHA,
+            ),
+        ]
+    )
 
     r1 = cluster_relations(storage, repo_id="r", branch="main", seed=42)
     r2 = cluster_relations(storage, repo_id="r", branch="main", seed=42)
@@ -419,9 +419,7 @@ def test_t025_graph_impact_downstream_cone(tmp_path: Path) -> None:
     _seed_chain(storage)
     mm = _StubMM(storage)
     resp = asyncio.run(
-        graph_impact(
-            GraphImpactParams(memory_id="a", direction="downstream", max_depth=4), mm
-        )
+        graph_impact(GraphImpactParams(memory_id="a", direction="downstream", max_depth=4), mm)
     )
     visited_ids = {m.memory_id for m in resp.impacted}
     # a's downstream cone: b, c, d, e.
@@ -434,24 +432,34 @@ def test_t025_graph_impact_min_confidence_filter(tmp_path: Path) -> None:
     from mememo.tools.graph_impact import GraphImpactParams, graph_impact
 
     storage = StorageManager(base_dir=tmp_path / "store")
-    storage.insert_relations([
-        Relation(
-            id=str(uuid4()), repo_id="r", branch="main",
-            source_memory_id="a", target_memory_id="b", type="CALLS",
-            confidence="AMBIGUOUS", created_at_sha=SHA,
-        ),
-        Relation(
-            id=str(uuid4()), repo_id="r", branch="main",
-            source_memory_id="a", target_memory_id="c", type="CALLS",
-            confidence="EXTRACTED", created_at_sha=SHA,
-        ),
-    ])
+    storage.insert_relations(
+        [
+            Relation(
+                id=str(uuid4()),
+                repo_id="r",
+                branch="main",
+                source_memory_id="a",
+                target_memory_id="b",
+                type="CALLS",
+                confidence="AMBIGUOUS",
+                created_at_sha=SHA,
+            ),
+            Relation(
+                id=str(uuid4()),
+                repo_id="r",
+                branch="main",
+                source_memory_id="a",
+                target_memory_id="c",
+                type="CALLS",
+                confidence="EXTRACTED",
+                created_at_sha=SHA,
+            ),
+        ]
+    )
     mm = _StubMM(storage)
     # min_confidence='INFERRED' excludes the AMBIGUOUS edge to b.
     resp = asyncio.run(
-        graph_impact(
-            GraphImpactParams(memory_id="a", min_confidence="INFERRED"), mm
-        )
+        graph_impact(GraphImpactParams(memory_id="a", min_confidence="INFERRED"), mm)
     )
     assert {m.memory_id for m in resp.impacted} == {"c"}
 
@@ -469,13 +477,20 @@ def test_t025_graph_impact_decorates_with_risk_grade(tmp_path: Path) -> None:
         "VALUES ('b', 'r', 'main', 'code_snippet', 'foo.py', 'k', 'u', 1, 1, 1, 'WILL_BREAK')"
     )
     storage.conn.commit()
-    storage.insert_relations([
-        Relation(
-            id=str(uuid4()), repo_id="r", branch="main",
-            source_memory_id="a", target_memory_id="b", type="CALLS",
-            confidence="EXTRACTED", created_at_sha=SHA,
-        )
-    ])
+    storage.insert_relations(
+        [
+            Relation(
+                id=str(uuid4()),
+                repo_id="r",
+                branch="main",
+                source_memory_id="a",
+                target_memory_id="b",
+                type="CALLS",
+                confidence="EXTRACTED",
+                created_at_sha=SHA,
+            )
+        ]
+    )
     mm = _StubMM(storage)
     resp = asyncio.run(graph_impact(GraphImpactParams(memory_id="a"), mm))
     assert resp.impacted[0].risk_grade == "WILL_BREAK"

@@ -17,8 +17,8 @@ Pure: no SQLite mutation, no FAISS. Caller persists the returned Relations.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 from uuid import uuid4
 
 from ..chunking.base_chunker import EdgeConfidence, RawEdge
@@ -151,7 +151,8 @@ def resolve_edges(
             if not suffix or len(suffix) != 1:
                 logger.debug(
                     "resolve_edges: skipping edge with no source owner: %s -> %s",
-                    raw.source_qualname, raw.target_label,
+                    raw.source_qualname,
+                    raw.target_label,
                 )
                 continue
             source = suffix[0]
@@ -160,7 +161,8 @@ def resolve_edges(
         else:
             logger.debug(
                 "resolve_edges: ambiguous source %s (%d owners)",
-                raw.source_qualname, len(source_owners),
+                raw.source_qualname,
+                len(source_owners),
             )
             continue
 

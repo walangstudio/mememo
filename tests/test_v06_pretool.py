@@ -25,28 +25,26 @@ class _Stub:  # pragma: no cover
     def tool(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
     def resource(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
 
 _stub_module("sentence_transformers", SentenceTransformer=_Stub)
-_stub_module(
-    "faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub
-)
+_stub_module("faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub)
 _stub_module("fastmcp", FastMCP=_Stub)
 
 
-import pytest  # noqa: E402
-
 from mememo.cli import (  # noqa: E402
-    _build_pre_tool_block,
-    _extract_pre_tool_query,
     _PRE_TOOL_MAX_MEMORIES,
     _PRE_TOOL_MAX_TOKENS,
+    _build_pre_tool_block,
+    _extract_pre_tool_query,
 )
 from mememo.types.memory import (  # noqa: E402
     BranchContext,
@@ -60,7 +58,6 @@ from mememo.types.memory import (  # noqa: E402
 )
 from mememo.utils.token_counter import count_tokens  # noqa: E402
 
-
 # ---------- helpers ---------------------------------------------------------
 
 
@@ -71,10 +68,16 @@ def _fake_result(one_line: str, file_path: str = "src/foo.py", ctype: str = "cod
         repo=RepoContext(id="r", name="t", path="/tmp/t"),
         branch=BranchContext(name="main", commit_hash="a" * 40),
         content=MemoryContent(
-            type=ctype, text=one_line, file_path=file_path, line_range=(10, 20),
+            type=ctype,
+            text=one_line,
+            file_path=file_path,
+            line_range=(10, 20),
         ),
         metadata=MemoryMetadata(
-            checksum="c", token_count=10, created_at=now, updated_at=now,
+            checksum="c",
+            token_count=10,
+            created_at=now,
+            updated_at=now,
         ),
         relationships=MemoryRelationships(),
         summary=MemorySummary(one_line=one_line),
@@ -155,8 +158,7 @@ def test_t036_register_pretool_creates_new_settings(tmp_path: Path) -> None:
     assert settings_path.exists()
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     pre_tool = settings["hooks"]["PreToolUse"]
-    assert any("mememo pre-tool" in h["command"]
-               for entry in pre_tool for h in entry["hooks"])
+    assert any("mememo pre-tool" in h["command"] for entry in pre_tool for h in entry["hooks"])
 
 
 def test_t036_register_pretool_idempotent(tmp_path: Path) -> None:
@@ -175,7 +177,13 @@ def test_t036_register_refuses_to_clobber_existing(tmp_path: Path) -> None:
 
     repo = tmp_path / "repo"
     (repo / ".claude").mkdir(parents=True)
-    existing = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo user-hook"}]}]}}
+    existing = {
+        "hooks": {
+            "PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "echo user-hook"}]}
+            ]
+        }
+    }
     (repo / ".claude" / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
 
     result = register_claude_pretool_hook(str(repo))
@@ -189,7 +197,13 @@ def test_t036_register_force_appends(tmp_path: Path) -> None:
 
     repo = tmp_path / "repo"
     (repo / ".claude").mkdir(parents=True)
-    existing = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo user-hook"}]}]}}
+    existing = {
+        "hooks": {
+            "PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "echo user-hook"}]}
+            ]
+        }
+    }
     (repo / ".claude" / "settings.json").write_text(json.dumps(existing), encoding="utf-8")
 
     result = register_claude_pretool_hook(str(repo), force=True)
