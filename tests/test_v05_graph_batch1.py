@@ -46,6 +46,7 @@ _stub_module("faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVF
 _stub_module("fastmcp", FastMCP=_Stub)
 
 import asyncio  # noqa: E402
+import sqlite3  # noqa: E402
 
 import pytest  # noqa: E402
 
@@ -209,6 +210,21 @@ def test_t020_sha_length_check(tmp_path: Path) -> None:
         )
 
 
+def test_t020_sha_length_check_at_db_layer(tmp_path: Path) -> None:
+    """Raw-SQL INSERT bypassing Pydantic must trip the DDL CHECK constraint.
+
+    Catches a regression where the schema's CHECK(length(created_at_sha) = 40)
+    is dropped or weakened — Pydantic-only validation would no longer save us.
+    """
+    storage = StorageManager(base_dir=tmp_path / "store")
+    with pytest.raises(sqlite3.IntegrityError):
+        storage.conn.execute(
+            "INSERT INTO relations (id, repo_id, branch, source_memory_id, type, "
+            "confidence, created_at_sha) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("rbad", "r", "main", "m", "CALLS", "EXTRACTED", "short"),
+        )
+
+
 # ---------- T023 / T024: graph traversal tools -----------------------------
 
 
@@ -270,6 +286,21 @@ def test_t023_graph_neighbors_filters_edge_types(tmp_path: Path) -> None:
     )
     assert {e.type for e in resp.edges} == {"USES"}
     assert "e" in resp.visited
+
+
+def test_t023_graph_neighbors_zero_edge_seed(tmp_path: Path) -> None:
+    """Seed with no inbound/outbound edges: returns only the seed, no edges, success."""
+    from mememo.tools.graph_neighbors import GraphNeighborsParams, graph_neighbors
+
+    storage = StorageManager(base_dir=tmp_path / "store")
+    # No relations seeded — every node is isolated.
+    mm = _StubMM(storage)
+    resp = asyncio.run(
+        graph_neighbors(GraphNeighborsParams(memory_id="lonely", direction="both", depth=3), mm)
+    )
+    assert resp.success
+    assert resp.visited == ["lonely"]
+    assert resp.edges == []
 
 
 def test_t023_graph_neighbors_depth_3(tmp_path: Path) -> None:

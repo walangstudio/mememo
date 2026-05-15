@@ -23,17 +23,21 @@ async def recall_context(
     params: RecallContextParams, memory_manager: "MemoryManager"
 ) -> RecallContextResponse:
     try:
+        # Fanout reduced from 3x to ~1.5x now that type filtering is pushed
+        # into load_memories via content_types — no wasted JSON reads for rows
+        # whose content_type is outside RECALL_TYPES.
         search_params = SearchParams(
             query=params.query,
-            top_k=params.top_k * 3,
+            top_k=max(params.top_k + 2, int(params.top_k * 1.5)),
             min_similarity=params.min_similarity,
             include_stale=False,
             tags=params.tags,
         )
-        results = await memory_manager.search_similar(search_params, cwd=params.repo_path)
-        filtered = [r for r in results if r.memory.content.type in RECALL_TYPES]
-        filtered = filtered[: params.top_k]
-        search_results = [SearchResult(memory=r.memory, similarity=r.similarity) for r in filtered]
+        results = await memory_manager.search_similar(
+            search_params, cwd=params.repo_path, content_types=RECALL_TYPES
+        )
+        results = results[: params.top_k]
+        search_results = [SearchResult(memory=r.memory, similarity=r.similarity) for r in results]
         return RecallContextResponse(
             success=True,
             results=search_results,
