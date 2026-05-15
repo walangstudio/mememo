@@ -216,6 +216,9 @@ install_production() {
     local extras="$(_build_extras)"
     if command -v uv >/dev/null 2>&1; then
         log_info "uv detected -- using it for fast installs"
+        # Cache (home) and venv target are often on different filesystems;
+        # hardlinking can't cross them. copy mode is correct + silences the warning.
+        export UV_LINK_MODE=copy
     else
         log_info "uv not found -- using pip (slower; install uv to speed this up)"
         python -m pip install --upgrade pip
@@ -1021,6 +1024,7 @@ if [[ "$UPGRADE" == true ]]; then
     activate_venv
     if command -v uv >/dev/null 2>&1; then
         log_info "uv detected -- using it for fast upgrade"
+        export UV_LINK_MODE=copy
     else
         python -m pip install --upgrade pip
     fi

@@ -445,6 +445,9 @@ rem ========================================================
     if !errorlevel!==0 (
         set "_PIP=uv pip"
         echo [INFO] uv detected -- using it for fast installs
+        rem Cache on C: and venv on another drive cannot hardlink; copy is
+        rem correct here and silences uv's cross-filesystem warning.
+        set "UV_LINK_MODE=copy"
     ) else (
         set "_PIP=python -m pip"
         echo [INFO] uv not found -- using pip; install uv to speed this up
@@ -586,6 +589,7 @@ rem ========================================================
     if !errorlevel!==0 (
         set "_PIP=uv pip"
         echo [INFO] uv detected -- using it for fast upgrade
+        set "UV_LINK_MODE=copy"
     ) else (
         set "_PIP=python -m pip"
         python -m pip install --upgrade pip
