@@ -1,1 +1,1 @@
-"""Tests for mememo v0.3.0."""
+"""Tests for mememo v0.6.0."""
