@@ -85,10 +85,21 @@ def create_app(storage_getter=None) -> FastAPI:
 
             if not SHA_PREFIX_PATTERN.match(as_of_sha):
                 raise HTTPException(400, f"as_of_sha must be 4-40 hex chars; got {as_of_sha!r}")
-            ts_row = storage.conn.execute(
-                "SELECT ts FROM memory_events WHERE commit_sha LIKE ? " "ORDER BY ts DESC LIMIT 1",
-                (as_of_sha + "%",),
-            ).fetchone()
+            # Use range query so SQLite's BINARY index on commit_sha is hit;
+            # parameterised LIKE 'prefix%' can't be statically rewritten to a range.
+            if len(as_of_sha) == 40:
+                ts_row = storage.conn.execute(
+                    "SELECT ts FROM memory_events WHERE commit_sha = ? ORDER BY ts DESC LIMIT 1",
+                    (as_of_sha,),
+                ).fetchone()
+            else:
+                upper = as_of_sha + "g"  # 'g' > any hex digit in BINARY collation
+                ts_row = storage.conn.execute(
+                    "SELECT ts FROM memory_events "
+                    "WHERE commit_sha >= ? AND commit_sha < ? "
+                    "ORDER BY ts DESC LIMIT 1",
+                    (as_of_sha, upper),
+                ).fetchone()
             if ts_row is None:
                 return {
                     "total": 0,
@@ -189,12 +200,21 @@ def create_app(storage_getter=None) -> FastAPI:
         if not SHA_PREFIX_PATTERN.match(sha):
             raise HTTPException(400, f"sha must be 4-40 hex chars; got {sha!r}")
         storage = _storage()
-        # Resolve SHA -> commit ts by looking at the events log; we accept
-        # the latest event whose commit_sha starts with the prefix.
-        row = storage.conn.execute(
-            "SELECT ts FROM memory_events WHERE commit_sha LIKE ? " "ORDER BY ts DESC LIMIT 1",
-            (sha + "%",),
-        ).fetchone()
+        # Resolve SHA -> commit ts via the events log. Range query so the
+        # idx_events_commit B-tree is used; parameterised LIKE 'prefix%'
+        # cannot be statically rewritten to a range by SQLite.
+        if len(sha) == 40:
+            row = storage.conn.execute(
+                "SELECT ts FROM memory_events WHERE commit_sha = ? ORDER BY ts DESC LIMIT 1",
+                (sha,),
+            ).fetchone()
+        else:
+            row = storage.conn.execute(
+                "SELECT ts FROM memory_events "
+                "WHERE commit_sha >= ? AND commit_sha < ? "
+                "ORDER BY ts DESC LIMIT 1",
+                (sha, sha + "g"),
+            ).fetchone()
         if row is None:
             return {"sha": sha, "target_ts": None, "alive_memory_ids": []}
         target_ts = int(row["ts"])

@@ -352,6 +352,7 @@ async def cmd_inject() -> None:
 
 _PRE_TOOL_MAX_MEMORIES = 3
 _PRE_TOOL_MAX_TOKENS = 300
+_PRE_TOOL_BUDGET_S = 1.5  # FR-029: hook must never block; skip if cold embedder takes longer
 
 
 def _extract_pre_tool_query(tool_name: str, tool_input: dict) -> str | None:
@@ -421,7 +422,7 @@ async def cmd_pre_tool() -> None:
         print(json.dumps({"continue": True}))
         return
 
-    try:
+    async def _do_search() -> str:
         from .server import initialize_mememo
         from .types.memory import SearchParams
 
@@ -431,7 +432,18 @@ async def cmd_pre_tool() -> None:
         results = await srv.memory_manager.search_similar(
             SearchParams(query=query, top_k=10, min_similarity=0.4, include_stale=False)
         )
-        block = _build_pre_tool_block(results, _PRE_TOOL_MAX_MEMORIES, _PRE_TOOL_MAX_TOKENS)
+        return _build_pre_tool_block(results, _PRE_TOOL_MAX_MEMORIES, _PRE_TOOL_MAX_TOKENS)
+
+    try:
+        block = await asyncio.wait_for(_do_search(), timeout=_PRE_TOOL_BUDGET_S)
+    except asyncio.TimeoutError:
+        print(
+            f"mememo pre-tool: budget {_PRE_TOOL_BUDGET_S}s exceeded "
+            "(likely cold embedder); skipping",
+            file=_sys.stderr,
+        )
+        print(json.dumps({"continue": True}))
+        return
     except Exception as e:  # never block the tool call
         print(f"mememo pre-tool: error {e}", file=_sys.stderr)
         print(json.dumps({"continue": True}))
