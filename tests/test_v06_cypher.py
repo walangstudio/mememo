@@ -73,6 +73,51 @@ def test_parses_where_with_regex_and_and() -> None:
     assert q.limit == 10
 
 
+def test_parses_where_with_or_connector() -> None:
+    q = parse_cypher(
+        "MATCH (a)-[r:CALLS]->(b) "
+        'WHERE r.confidence = "EXTRACTED" OR r.confidence = "INFERRED" '
+        "RETURN a.id LIMIT 10"
+    )
+    assert len(q.predicates) == 2
+    assert q.connectors == ["OR"]
+
+
+def test_sql_translation_or_emits_or_keyword() -> None:
+    q = parse_cypher(
+        "MATCH (a)-[r:CALLS]->(b) "
+        'WHERE r.confidence = "EXTRACTED" OR r.confidence = "INFERRED" '
+        "RETURN a.id"
+    )
+    sql, params, _ = translate_to_sql(q)
+    assert " OR " in sql, "OR connector must reach SQL"
+    assert "EXTRACTED" in params and "INFERRED" in params
+
+
+def test_tool_or_predicate_returns_both_rows(tmp_path: Path) -> None:
+    from mememo.tools.cypher_query import CypherQueryParams, cypher_query
+
+    storage = StorageManager(base_dir=tmp_path / "store")
+    _seed(storage)
+    mm = _StubMM(storage)
+    resp = asyncio.run(
+        cypher_query(
+            CypherQueryParams(
+                query=(
+                    "MATCH (a)-[r:CALLS]->(b) "
+                    'WHERE r.confidence = "EXTRACTED" OR r.confidence = "INFERRED" '
+                    "RETURN a.id, r.confidence LIMIT 10"
+                )
+            ),
+            mm,
+        )
+    )
+    assert resp.success
+    assert resp.row_count == 2
+    confidences = {row["r.confidence"] for row in resp.rows}
+    assert confidences == {"EXTRACTED", "INFERRED"}
+
+
 def test_parses_undirected_pattern() -> None:
     q = parse_cypher("MATCH (a)-[r:USES]-(b) RETURN a.id")
     assert q.pattern.direction == "undirected"

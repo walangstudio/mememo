@@ -92,7 +92,7 @@ def _cmd_migrate_worktrees(args: list[str]) -> int:
     from .utils.hashing import hash_path
 
     cfg = MemoConfig.from_env()
-    storage = StorageManager(base_dir=cfg.storage.path)
+    storage = StorageManager(base_dir=cfg.storage.base_dir)
     git = GitManager()
 
     async def _run() -> int:
@@ -239,14 +239,50 @@ def main() -> None:
 
     from .server import run
 
+    epilog = (
+        "subcommands:\n"
+        + "\n".join(
+            f"  {name:<22} {_subcommand_help(name)}"
+            for name in (
+                "serve",
+                "install-git-hooks",
+                "migrate-worktrees",
+                "merge-branch",
+                "sync-commits",
+                "capture --hook",
+                "inject --hook",
+                "pre-tool --hook",
+            )
+        )
+        + "\n\nRun `python -m mememo <subcommand> --help` for subcommand options."
+    )
+
     parser = argparse.ArgumentParser(
-        description=f"mememo v{__version__} - Code-aware memory server",
+        prog="python -m mememo",
+        description=(
+            f"mememo v{__version__} - Code-aware memory server.\n"
+            "With no arguments, starts the MCP server on stdio."
+        ),
+        epilog=epilog,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"mememo v{__version__}")
     parser.parse_args(args)
     print(f"Starting mememo v{__version__}...")
     run()
+
+
+def _subcommand_help(name: str) -> str:
+    return {
+        "serve": "Launch localhost web UI (requires [web] extra)",
+        "install-git-hooks": "Install opt-in post-merge / post-commit / pre-tool hooks",
+        "migrate-worktrees": "Re-key legacy per-worktree repo_ids onto the canonical one",
+        "merge-branch": "Shim over merge_branch MCP tool (called by post-merge hook)",
+        "sync-commits": "Shim over sync_commits MCP tool (called by post-commit hook)",
+        "capture --hook": "Stop-hook fast path: auto-capture session transcript",
+        "inject --hook": "UserPromptSubmit fast path: inject recall context",
+        "pre-tool --hook": "PreToolUse fast path: emit related-memory block",
+    }.get(name, "")
 
 
 if __name__ == "__main__":

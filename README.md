@@ -8,6 +8,18 @@
 
 **Git-aware code memory for AI assistants** - MCP server that understands your codebase's structure, not just its text. Private, local, and built for developers.
 
+## ⚡ TL;DR — 60-second install
+
+```bash
+pip install -e .                                       # or: pip install -e '.[web,graph]'
+claude mcp add mememo -- python -m mememo              # Claude Code
+```
+
+That's it. Open Claude Code in any git repo and it can call `store_memory`,
+`search_similar`, `recall_context`, the v0.6 graph tools, etc. Optional:
+`export ANTHROPIC_API_KEY=...` to enable LLM-driven `capture`. For other MCP
+clients (Cursor, Windsurf, Cline, etc.) see [Installation](#-installation).
+
 ## 🚀 Features
 
 ### Core Capabilities
@@ -784,7 +796,7 @@ list_memories({
 
 ```
 mememo/
-├── server.py              # FastMCP server (18 MCP tools)
+├── server.py              # FastMCP server (25 MCP tools)
 ├── cli.py                 # Hook CLI (capture --hook, inject --hook)
 ├── core/                  # Core managers
 │   ├── memory_manager.py  # Orchestrates all memory ops

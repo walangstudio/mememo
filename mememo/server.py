@@ -290,6 +290,18 @@ async def initialize_mememo():
     logger.info(f"Embedding model: {config.embedding.model_name}")
     logger.info(f"Device: {config.embedding.device}")
 
+    # Loud-fail surfaces for silent-fallback footguns flagged in the v0.6 review.
+    if getattr(config.security, "enable_encryption", False):
+        try:
+            import pysqlcipher3  # noqa: F401
+        except ImportError:
+            logger.warning(
+                "MEMEMO_ENABLE_ENCRYPTION=true but pysqlcipher3 is not installed. "
+                "Database WILL NOT be encrypted. Install with "
+                "`pip install 'mememo[encryption]'` and rebuild stock Python's "
+                "sqlite3 against sqlcipher, or unset the flag to silence this warning."
+            )
+
     # Initialize storage manager
     storage_manager = StorageManager(base_dir=base_dir)
     logger.info("Storage manager initialized")
@@ -313,10 +325,17 @@ async def initialize_mememo():
         branch = git_context.branch.name
         logger.info(f"Git context detected - Repository: {repo_id}, Branch: {branch}")
     except RuntimeError:
-        # Not in a git repository - use defaults
+        # Not in a git repository - use defaults. The shared 'default' repo_id
+        # means every non-git mememo session will see each other's memories,
+        # which is rarely what the user wants.
         repo_id = "default"
         branch = "main"
-        logger.info("Not in a git repository - using default repo/branch")
+        logger.warning(
+            "Not in a git repository: using shared repo_id='default'. "
+            "Memories will commingle with every other non-git mememo session "
+            "on this machine. Run `cd <your-repo>` before invoking mememo, "
+            "or set MEMEMO_REPO_ID explicitly."
+        )
 
     # Initialize vector index
     vector_index = VectorIndex(
@@ -340,7 +359,16 @@ async def initialize_mememo():
 
     # Initialize LLM adapter (lazy — no API calls until capture is invoked)
     llm_adapter = LLMAdapter()
-    mode = "passthrough" if llm_adapter.is_passthrough() else llm_adapter._provider()
+    if llm_adapter.is_passthrough():
+        logger.warning(
+            "No LLM API key detected (ANTHROPIC_API_KEY / OPENAI_API_KEY / "
+            "GOOGLE_API_KEY / OLLAMA_HOST). `capture` will return passthrough=True "
+            "with a self-extract prompt instead of extracting memories. Set one of "
+            "the keys above to enable LLM-driven capture."
+        )
+        mode = "passthrough"
+    else:
+        mode = llm_adapter._provider()
     logger.info("LLM adapter initialized (provider: %s)", mode)
 
     # Initialize skill store for smart context selection
