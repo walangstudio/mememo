@@ -23,18 +23,18 @@ class _Stub:  # pragma: no cover
     def tool(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
     def resource(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
 
 _stub_module("sentence_transformers", SentenceTransformer=_Stub)
-_stub_module(
-    "faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub
-)
+_stub_module("faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub)
 _stub_module("fastmcp", FastMCP=_Stub)
 
 
@@ -47,7 +47,6 @@ from mememo.core.cypher_parser import (  # noqa: E402
 )
 from mememo.core.storage_manager import StorageManager  # noqa: E402
 from mememo.types import Relation  # noqa: E402
-
 
 SHA = "a" * 40
 
@@ -64,9 +63,9 @@ def test_parses_basic_match_return() -> None:
 
 def test_parses_where_with_regex_and_and() -> None:
     q = parse_cypher(
-        'MATCH (a)-[r:CALLS]->(b) '
+        "MATCH (a)-[r:CALLS]->(b) "
         'WHERE a.file_path =~ "mememo/core/.*" AND r.confidence = "EXTRACTED" '
-        'RETURN b.id LIMIT 10'
+        "RETURN b.id LIMIT 10"
     )
     assert len(q.predicates) == 2
     assert q.predicates[0].op == "=~"
@@ -87,14 +86,17 @@ def test_parses_return_with_alias() -> None:
 # ---------- T035 parser rejects unsupported --------------------------------
 
 
-@pytest.mark.parametrize("query", [
-    "MERGE (a) RETURN a.id",
-    "MATCH (a) WITH a RETURN a.id",
-    "MATCH (a)-[r:CALLS*1..3]->(b) RETURN b.id",
-    "CREATE (a)",
-    "MATCH (a)-[r:CALLS]->(b) RETURN a.id ORDER BY a.id",
-    "MATCH (a)-[r:CALLS]->(b) OPTIONAL MATCH (b)-[r2:USES]->(c) RETURN c.id",
-])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "MERGE (a) RETURN a.id",
+        "MATCH (a) WITH a RETURN a.id",
+        "MATCH (a)-[r:CALLS*1..3]->(b) RETURN b.id",
+        "CREATE (a)",
+        "MATCH (a)-[r:CALLS]->(b) RETURN a.id ORDER BY a.id",
+        "MATCH (a)-[r:CALLS]->(b) OPTIONAL MATCH (b)-[r2:USES]->(c) RETURN c.id",
+    ],
+)
 def test_rejects_unsupported_constructs(query: str) -> None:
     with pytest.raises(UnsupportedCypherError):
         parse_cypher(query)
@@ -116,9 +118,7 @@ def test_rejects_invalid_where_connector() -> None:
 
 
 def test_rejects_unknown_property() -> None:
-    q = parse_cypher(
-        'MATCH (a)-[r:CALLS]->(b) WHERE a.nonexistent = "x" RETURN a.id'
-    )
+    q = parse_cypher('MATCH (a)-[r:CALLS]->(b) WHERE a.nonexistent = "x" RETURN a.id')
     with pytest.raises(UnsupportedCypherError):
         translate_to_sql(q)
 
@@ -138,9 +138,7 @@ def test_sql_translation_basic() -> None:
 
 
 def test_sql_translation_with_regex() -> None:
-    q = parse_cypher(
-        'MATCH (a)-[r:IMPORTS]->(b) WHERE a.file_path =~ "mememo/.*" RETURN b.id'
-    )
+    q = parse_cypher('MATCH (a)-[r:IMPORTS]->(b) WHERE a.file_path =~ "mememo/.*" RETURN b.id')
     sql, params, _ = translate_to_sql(q)
     assert "REGEXP ?" in sql
     assert params == ["IMPORTS", "mememo/.*"]
@@ -169,18 +167,30 @@ def _seed(storage: StorageManager) -> None:
         )
     storage.conn.commit()
     # Edges: m1 -> m2 (CALLS, EXTRACTED); m2 -> m3 (CALLS, INFERRED)
-    storage.insert_relations([
-        Relation(
-            id="r1", repo_id="r", branch="main",
-            source_memory_id="m1", target_memory_id="m2",
-            type="CALLS", confidence="EXTRACTED", created_at_sha=SHA,
-        ),
-        Relation(
-            id="r2", repo_id="r", branch="main",
-            source_memory_id="m2", target_memory_id="m3",
-            type="CALLS", confidence="INFERRED", created_at_sha=SHA,
-        ),
-    ])
+    storage.insert_relations(
+        [
+            Relation(
+                id="r1",
+                repo_id="r",
+                branch="main",
+                source_memory_id="m1",
+                target_memory_id="m2",
+                type="CALLS",
+                confidence="EXTRACTED",
+                created_at_sha=SHA,
+            ),
+            Relation(
+                id="r2",
+                repo_id="r",
+                branch="main",
+                source_memory_id="m2",
+                target_memory_id="m3",
+                type="CALLS",
+                confidence="INFERRED",
+                created_at_sha=SHA,
+            ),
+        ]
+    )
 
 
 def test_tool_returns_filtered_rows(tmp_path: Path) -> None:
@@ -193,9 +203,9 @@ def test_tool_returns_filtered_rows(tmp_path: Path) -> None:
         cypher_query(
             CypherQueryParams(
                 query=(
-                    'MATCH (a)-[r:CALLS]->(b) '
+                    "MATCH (a)-[r:CALLS]->(b) "
                     'WHERE a.file_path =~ "mememo/core/.*" '
-                    'RETURN b.id, r.confidence LIMIT 10'
+                    "RETURN b.id, r.confidence LIMIT 10"
                 )
             ),
             mm,

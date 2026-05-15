@@ -86,19 +86,30 @@ def create_app(storage_getter=None) -> FastAPI:
             if not SHA_PREFIX_PATTERN.match(as_of_sha):
                 raise HTTPException(400, f"as_of_sha must be 4-40 hex chars; got {as_of_sha!r}")
             ts_row = storage.conn.execute(
-                "SELECT ts FROM memory_events WHERE commit_sha LIKE ? "
-                "ORDER BY ts DESC LIMIT 1",
+                "SELECT ts FROM memory_events WHERE commit_sha LIKE ? " "ORDER BY ts DESC LIMIT 1",
                 (as_of_sha + "%",),
             ).fetchone()
             if ts_row is None:
-                return {"total": 0, "offset": offset, "limit": limit, "items": [],
-                        "as_of_sha": as_of_sha, "target_ts": None}
+                return {
+                    "total": 0,
+                    "offset": offset,
+                    "limit": limit,
+                    "items": [],
+                    "as_of_sha": as_of_sha,
+                    "target_ts": None,
+                }
             alive = storage.alive_memory_ids_at_ts(
                 target_ts=int(ts_row["ts"]), repo_id=repo_id, branch=branch
             )
             if not alive:
-                return {"total": 0, "offset": offset, "limit": limit, "items": [],
-                        "as_of_sha": as_of_sha, "target_ts": int(ts_row["ts"])}
+                return {
+                    "total": 0,
+                    "offset": offset,
+                    "limit": limit,
+                    "items": [],
+                    "as_of_sha": as_of_sha,
+                    "target_ts": int(ts_row["ts"]),
+                }
             alive_list = sorted(alive)
             placeholders = ",".join("?" * len(alive_list))
             conditions.append(f"id IN ({placeholders})")
@@ -114,8 +125,7 @@ def create_app(storage_getter=None) -> FastAPI:
             f"FROM memories{where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
             params + [limit, offset],
         ).fetchall()
-        return {"total": total, "offset": offset, "limit": limit,
-                "items": [dict(r) for r in rows]}
+        return {"total": total, "offset": offset, "limit": limit, "items": [dict(r) for r in rows]}
 
     @app.get("/relations")
     def list_relations(
@@ -182,18 +192,16 @@ def create_app(storage_getter=None) -> FastAPI:
         # Resolve SHA -> commit ts by looking at the events log; we accept
         # the latest event whose commit_sha starts with the prefix.
         row = storage.conn.execute(
-            "SELECT ts FROM memory_events WHERE commit_sha LIKE ? "
-            "ORDER BY ts DESC LIMIT 1",
+            "SELECT ts FROM memory_events WHERE commit_sha LIKE ? " "ORDER BY ts DESC LIMIT 1",
             (sha + "%",),
         ).fetchone()
         if row is None:
             return {"sha": sha, "target_ts": None, "alive_memory_ids": []}
         target_ts = int(row["ts"])
-        alive = storage.alive_memory_ids_at_ts(
-            target_ts=target_ts, repo_id=repo_id, branch=branch
-        )
+        alive = storage.alive_memory_ids_at_ts(target_ts=target_ts, repo_id=repo_id, branch=branch)
         return {
-            "sha": sha, "target_ts": target_ts,
+            "sha": sha,
+            "target_ts": target_ts,
             "alive_memory_ids": sorted(alive),
         }
 
@@ -220,9 +228,9 @@ def run(host: str = "127.0.0.1", port: int = 5757) -> None:
 
     def _factory():
         # Lazy import so the cost only hits when the server actually boots.
-        from ..server import initialize_mememo
-
         import asyncio as _asyncio
+
+        from ..server import initialize_mememo
 
         loop = _asyncio.new_event_loop()
         try:

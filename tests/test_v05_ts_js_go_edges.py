@@ -30,18 +30,18 @@ class _Stub:  # pragma: no cover
     def tool(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
     def resource(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
 
 _stub_module("sentence_transformers", SentenceTransformer=_Stub)
-_stub_module(
-    "faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub
-)
+_stub_module("faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub)
 _stub_module("fastmcp", FastMCP=_Stub)
 
 
@@ -199,7 +199,7 @@ def test_t018_go_method_chunk_carries_receiver_as_parent_class(
 def test_other_language_returns_chunks_no_edges(chunker: TreeSitterChunker) -> None:
     """Java is supported by the chunker but not by the v0.5 edge extractor —
     chunk_with_edges should return chunks and an empty edge list."""
-    JAVA_SAMPLE = "class Foo {\n  void bar() {}\n}\n"
-    chunks, edges = chunker.chunk_with_edges(JAVA_SAMPLE, "Foo.java", "java")
+    java_sample = "class Foo {\n  void bar() {}\n}\n"
+    chunks, edges = chunker.chunk_with_edges(java_sample, "Foo.java", "java")
     assert chunks
     assert edges == []

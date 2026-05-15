@@ -10,10 +10,9 @@ graded."
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-import re
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -62,7 +61,7 @@ class DetectChangesResponse(BaseModel):
 
 
 async def detect_changes(
-    params: DetectChangesParams, memory_manager: "MemoryManager"
+    params: DetectChangesParams, memory_manager: MemoryManager
 ) -> DetectChangesResponse:
     repo_path = Path(params.repo_path)
     if not repo_path.exists() or not repo_path.is_dir():
@@ -102,17 +101,19 @@ async def detect_changes(
     affected: list[AffectedMemory] = []
     conn = memory_manager.storage_manager.conn
     paths = list(diff.keys())
-    CHUNK = 500
+    chunk_size = 500
     rows: list = []
-    for i in range(0, len(paths), CHUNK):
-        batch = paths[i : i + CHUNK]
+    for i in range(0, len(paths), chunk_size):
+        batch = paths[i : i + chunk_size]
         placeholders = ",".join("?" * len(batch))
-        rows.extend(conn.execute(
-            f"SELECT id, file_path, line_start, line_end, function_name, class_name "
-            f"FROM memories WHERE repo_id = ? AND branch_name = ? "
-            f"AND file_path IN ({placeholders})",
-            (context.repo.id, context.branch.name, *batch),
-        ).fetchall())
+        rows.extend(
+            conn.execute(
+                f"SELECT id, file_path, line_start, line_end, function_name, class_name "
+                f"FROM memories WHERE repo_id = ? AND branch_name = ? "
+                f"AND file_path IN ({placeholders})",
+                (context.repo.id, context.branch.name, *batch),
+            ).fetchall()
+        )
 
     for row in rows:
         line_range = (

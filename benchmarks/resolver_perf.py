@@ -23,7 +23,6 @@ if str(_ROOT) not in sys.path:
 from mememo.chunking.base_chunker import RawEdge  # noqa: E402
 from mememo.core.symbol_resolver import SymbolEntry, resolve_edges  # noqa: E402
 
-
 SHA = "a" * 40
 BUDGET_S_PER_10K = 1.0
 
@@ -67,9 +66,7 @@ def build_corpus(n: int) -> tuple[list[SymbolEntry], list[RawEdge]]:
 def run(n: int) -> dict:
     symbols, edges = build_corpus(n)
     start = time.perf_counter()
-    relations = resolve_edges(
-        edges, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols
-    )
+    relations = resolve_edges(edges, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols)
     elapsed = time.perf_counter() - start
     budget = BUDGET_S_PER_10K * (n / 10_000)
     return {

@@ -179,9 +179,8 @@ class TreeSitterChunker(BaseChunker):
         a fallback so the relations table still gets some coverage; the
         per-language extractor for those is deferred to v0.7+.
         """
-        from .ts_edges import EDGE_WALKERS
-        from .python_ast_chunker import file_path_to_module
         from .base_chunker import RawEdge
+        from .python_ast_chunker import file_path_to_module
 
         if language is None:
             from .language_detector import detect_language
@@ -200,9 +199,7 @@ class TreeSitterChunker(BaseChunker):
         if language in ("typescript", "tsx", "javascript"):
             from .ts_edges import walk_typescript_or_javascript
 
-            return walk_typescript_or_javascript(
-                tree, code_bytes, module, file_path, language
-            )
+            return walk_typescript_or_javascript(tree, code_bytes, module, file_path, language)
         if language == "go":
             from .ts_edges import walk_go
 

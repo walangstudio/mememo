@@ -10,7 +10,6 @@ Re-uses the v0.4 risk_grade column written by sync_commits / detect_changes.
 
 from __future__ import annotations
 
-from collections import deque
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
@@ -58,7 +57,7 @@ def _passes_confidence(edge_conf: str, floor: RelationConfidence) -> bool:
 
 
 async def graph_impact(
-    params: GraphImpactParams, memory_manager: "MemoryManager"
+    params: GraphImpactParams, memory_manager: MemoryManager
 ) -> GraphImpactResponse:
     """Batched BFS over outbound (downstream) or inbound (upstream) edges.
 
@@ -96,8 +95,10 @@ async def graph_impact(
                 next_frontier.add(other)
                 impacted.append(
                     ImpactedMemory(
-                        memory_id=other, depth=depth,
-                        via_edge_type=r["type"], via_confidence=r["confidence"],
+                        memory_id=other,
+                        depth=depth,
+                        via_edge_type=r["type"],
+                        via_confidence=r["confidence"],
                     )
                 )
         frontier = next_frontier

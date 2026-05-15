@@ -17,7 +17,7 @@ likely a doc-level chunk that won't crash the caller).
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 from ..types.memory import RiskGrade
 

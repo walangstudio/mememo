@@ -12,11 +12,14 @@ All-Python code-aware memory server with:
 import json
 import logging
 import time
-from importlib.metadata import PackageNotFoundError, version as pkg_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as pkg_version
 from pathlib import Path
 
 from fastmcp import FastMCP
 
+# v0.6 MCP resources (T031)
+from . import resources as _resources
 from .core.git_manager import GitManager
 from .core.llm_adapter import LLMAdapter
 from .core.memory_manager import MemoryManager
@@ -77,45 +80,60 @@ from .tools import (
 from .tools import (
     sync_commits as sync_commits_impl,
 )
+
+# v0.6 Cypher subset query tool (T035)
+from .tools.cypher_query import (
+    CypherQueryParams,
+    CypherQueryResponse,
+)
+from .tools.cypher_query import (
+    cypher_query as cypher_query_impl,
+)
+
 # v0.4 commit-aware MCP tools (T007, T008, T010)
 from .tools.detect_changes import (
     DetectChangesParams,
     DetectChangesResponse,
+)
+from .tools.detect_changes import (
     detect_changes as detect_changes_impl,
 )
-from .tools.merge_branch import (
-    MergeBranchParams,
-    MergeBranchResponse,
-    merge_branch as merge_branch_impl,
+from .tools.graph_impact import (
+    GraphImpactParams,
+    GraphImpactResponse,
 )
-from .tools.recall_at_commit import (
-    RecallAtCommitParams,
-    RecallAtCommitResponse,
-    recall_at_commit as recall_at_commit_impl,
+from .tools.graph_impact import (
+    graph_impact as graph_impact_impl,
 )
+
 # v0.5 graph traversal tools (T023, T024)
 from .tools.graph_neighbors import (
     GraphNeighborsParams,
     GraphNeighborsResponse,
+)
+from .tools.graph_neighbors import (
     graph_neighbors as graph_neighbors_impl,
 )
 from .tools.graph_path import (
     GraphPathParams,
     GraphPathResponse,
+)
+from .tools.graph_path import (
     graph_path as graph_path_impl,
 )
-from .tools.graph_impact import (
-    GraphImpactParams,
-    GraphImpactResponse,
-    graph_impact as graph_impact_impl,
+from .tools.merge_branch import (
+    MergeBranchParams,
+    MergeBranchResponse,
 )
-# v0.6 MCP resources (T031)
-from . import resources as _resources
-# v0.6 Cypher subset query tool (T035)
-from .tools.cypher_query import (
-    CypherQueryParams,
-    CypherQueryResponse,
-    cypher_query as cypher_query_impl,
+from .tools.merge_branch import (
+    merge_branch as merge_branch_impl,
+)
+from .tools.recall_at_commit import (
+    RecallAtCommitParams,
+    RecallAtCommitResponse,
+)
+from .tools.recall_at_commit import (
+    recall_at_commit as recall_at_commit_impl,
 )
 from .tools.schemas import (
     BatchStoreParams,

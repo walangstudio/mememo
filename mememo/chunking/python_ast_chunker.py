@@ -84,9 +84,7 @@ class PythonASTChunker(BaseChunker):
 
     # ----- v0.5 edge emission (FR-013) ------------------------------------
 
-    def chunk_with_edges(
-        self, code: str, file_path: str
-    ) -> tuple[list[Chunk], list[RawEdge]]:
+    def chunk_with_edges(self, code: str, file_path: str) -> tuple[list[Chunk], list[RawEdge]]:
         """Return ``(chunks, raw_edges)``.
 
         Single scope-aware traversal: every FunctionDef / ClassDef produces a
@@ -134,24 +132,27 @@ class PythonASTChunker(BaseChunker):
                 # Chunk for the class itself.
                 start = node.lineno
                 end = node.end_lineno or start
-                chunks.append(Chunk(
-                    text="\n".join(lines[start - 1: end]),
-                    start_line=start, end_line=end,
-                    chunk_type="class",
-                    class_name=node.name,
-                    docstring=ast.get_docstring(node),
-                    decorators=[self._get_decorator_name(d) for d in node.decorator_list] or None,
-                    parent_class=enclosing_class(),
-                    language="python", file_path=file_path,
-                ))
+                chunks.append(
+                    Chunk(
+                        text="\n".join(lines[start - 1 : end]),
+                        start_line=start,
+                        end_line=end,
+                        chunk_type="class",
+                        class_name=node.name,
+                        docstring=ast.get_docstring(node),
+                        decorators=[self._get_decorator_name(d) for d in node.decorator_list]
+                        or None,
+                        parent_class=enclosing_class(),
+                        language="python",
+                        file_path=file_path,
+                    )
+                )
                 for base in node.bases:
                     tgt = _name_from_attr_chain(base)
                     if tgt:
                         edges.append(RawEdge(qual, tgt, "EXTENDS"))
                 for dec in node.decorator_list:
-                    tgt = _name_from_attr_chain(
-                        dec.func if isinstance(dec, ast.Call) else dec
-                    )
+                    tgt = _name_from_attr_chain(dec.func if isinstance(dec, ast.Call) else dec)
                     if tgt:
                         edges.append(RawEdge(qual, tgt, "DECORATED_BY"))
                 scope_stack.append(("class", node.name))
@@ -165,20 +166,23 @@ class PythonASTChunker(BaseChunker):
                 qual = f"{cur_qualname()}.{node.name}"
                 start = node.lineno
                 end = node.end_lineno or start
-                chunks.append(Chunk(
-                    text="\n".join(lines[start - 1: end]),
-                    start_line=start, end_line=end,
-                    chunk_type="method" if parent else "function",
-                    function_name=node.name,
-                    docstring=ast.get_docstring(node),
-                    decorators=[self._get_decorator_name(d) for d in node.decorator_list] or None,
-                    parent_class=parent,
-                    language="python", file_path=file_path,
-                ))
-                for dec in node.decorator_list:
-                    tgt = _name_from_attr_chain(
-                        dec.func if isinstance(dec, ast.Call) else dec
+                chunks.append(
+                    Chunk(
+                        text="\n".join(lines[start - 1 : end]),
+                        start_line=start,
+                        end_line=end,
+                        chunk_type="method" if parent else "function",
+                        function_name=node.name,
+                        docstring=ast.get_docstring(node),
+                        decorators=[self._get_decorator_name(d) for d in node.decorator_list]
+                        or None,
+                        parent_class=parent,
+                        language="python",
+                        file_path=file_path,
                     )
+                )
+                for dec in node.decorator_list:
+                    tgt = _name_from_attr_chain(dec.func if isinstance(dec, ast.Call) else dec)
                     if tgt:
                         edges.append(RawEdge(qual, tgt, "DECORATED_BY"))
                 scope_stack.append(("function", node.name))
@@ -388,9 +392,7 @@ def _emit_edges(tree: ast.AST, module: str) -> list[RawEdge]:
                     edges.append(RawEdge(qual, tgt, "EXTENDS"))
             # DECORATED_BY on the class itself.
             for dec in node.decorator_list:
-                tgt = _name_from_attr_chain(
-                    dec.func if isinstance(dec, ast.Call) else dec
-                )
+                tgt = _name_from_attr_chain(dec.func if isinstance(dec, ast.Call) else dec)
                 if tgt:
                     edges.append(RawEdge(qual, tgt, "DECORATED_BY"))
             scope_stack.append(node.name)
@@ -402,9 +404,7 @@ def _emit_edges(tree: ast.AST, module: str) -> list[RawEdge]:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             qual = f"{cur()}.{node.name}"
             for dec in node.decorator_list:
-                tgt = _name_from_attr_chain(
-                    dec.func if isinstance(dec, ast.Call) else dec
-                )
+                tgt = _name_from_attr_chain(dec.func if isinstance(dec, ast.Call) else dec)
                 if tgt:
                     edges.append(RawEdge(qual, tgt, "DECORATED_BY"))
             scope_stack.append(node.name)

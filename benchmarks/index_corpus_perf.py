@@ -22,7 +22,6 @@ if str(_ROOT) not in sys.path:
 
 from mememo.chunking.python_ast_chunker import PythonASTChunker  # noqa: E402
 
-
 BUDGET_OVERHEAD_RATIO = 1.30
 
 

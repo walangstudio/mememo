@@ -42,7 +42,7 @@ class GraphNeighborsResponse(BaseModel):
 
 
 async def graph_neighbors(
-    params: GraphNeighborsParams, memory_manager: "MemoryManager"
+    params: GraphNeighborsParams, memory_manager: MemoryManager
 ) -> GraphNeighborsResponse:
     """Batched BFS: one SQL per level (not per-node) using IN-clause filters."""
     conn = memory_manager.storage_manager.conn

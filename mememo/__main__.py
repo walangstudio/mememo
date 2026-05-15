@@ -35,7 +35,8 @@ def _cmd_install_git_hooks(args: list[str]) -> int:
     ap.add_argument("--repo-path", required=True)
     ap.add_argument("--force", action="store_true")
     ap.add_argument(
-        "--with-pretool", action="store_true",
+        "--with-pretool",
+        action="store_true",
         help="also register PreToolUse hook in .claude/settings.json",
     )
     ns = ap.parse_args(args)
@@ -173,7 +174,8 @@ def _cmd_sync_commits(args: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="mememo sync-commits")
     ap.add_argument("--repo-path", required=True)
     ap.add_argument(
-        "--file-patterns", nargs="*",
+        "--file-patterns",
+        nargs="*",
         default=["**/*.py", "**/*.ts", "**/*.js", "**/*.go"],
     )
     ns = ap.parse_args(args)
@@ -216,14 +218,17 @@ def main() -> None:
     if len(args) >= 2 and args[1] == "--hook":
         if args[0] == "capture":
             from .cli import run_capture
+
             run_capture()
             return
         if args[0] == "inject":
             from .cli import run_inject
+
             run_inject()
             return
         if args[0] == "pre-tool":
             from .cli import run_pre_tool
+
             run_pre_tool()
             return
 
