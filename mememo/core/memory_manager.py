@@ -19,12 +19,14 @@ from ..types import (
     CreateMemoryParams,
     Memory,
     MemoryContent,
+    MemoryEvent,
     MemoryFilters,
     MemoryMetadata,
     MemoryRelationships,
     MemorySummary,
     SearchParams,
     SearchResult,
+    coerce_sha,
 )
 from ..utils import SecretsDetector, calculate_checksum, count_tokens, truncate_to_tokens
 from .git_manager import GitManager
@@ -167,6 +169,11 @@ class MemoryManager:
                 updated_at=now,
                 checksum=checksum,
                 token_count=token_count,
+                # v0.4.0 — stamp every memory with the commit SHA it was minted at (FR-001/FR-002).
+                # branch.commit_hash may be "" when not in a git repo; we still stamp so the
+                # field is non-null and downstream filters work consistently.
+                created_at_sha=coerce_sha(context.branch.commit_hash),
+                updated_at_sha=coerce_sha(context.branch.commit_hash),
             ),
             relationships=params.relationships or MemoryRelationships(),
             summary=MemorySummary(
@@ -178,6 +185,18 @@ class MemoryManager:
         # 9. Save to storage
         logger.debug(f"Saving memory {memory_id} to storage")
         await self.storage_manager.save_memory(memory)
+
+        # 9b. Append a CREATED event for time-travel + branch-merge reconstruction (FR-003).
+        self.storage_manager.append_event(
+            MemoryEvent(
+                commit_sha=coerce_sha(context.branch.commit_hash),
+                memory_id=memory_id,
+                op="CREATED",
+                content_sha=checksum,
+                branch=context.branch.name,
+                ts=now,
+            )
+        )
 
         # 10. Add to vector index (resolved per repo/branch)
         logger.debug(f"Adding memory {memory_id} to vector index")
@@ -242,6 +261,8 @@ class MemoryManager:
                     updated_at=now,
                     checksum=checksum,
                     token_count=token_count,
+                    created_at_sha=coerce_sha(context.branch.commit_hash),
+                    updated_at_sha=coerce_sha(context.branch.commit_hash),
                 ),
                 relationships=params.relationships or MemoryRelationships(),
                 summary=MemorySummary(
@@ -256,9 +277,19 @@ class MemoryManager:
         # Batch embed
         embeddings = self.embedder.embed(validated_contents)
 
-        # Batch save to storage
+        # Batch save to storage + emit CREATED events (FR-003)
         for memory in memories:
             await self.storage_manager.save_memory(memory)
+            self.storage_manager.append_event(
+                MemoryEvent(
+                    commit_sha=coerce_sha(context.branch.commit_hash),
+                    memory_id=memory.id,
+                    op="CREATED",
+                    content_sha=memory.metadata.checksum,
+                    branch=context.branch.name,
+                    ts=memory.metadata.created_at,
+                )
+            )
 
         # Batch add to vector index
         vi = self._get_vector_index(context.repo.id, context.branch.name)
@@ -383,6 +414,18 @@ class MemoryManager:
         """
         context = await self.git_manager.detect_context(cwd)
         await self.storage_manager.delete_memory(memory_id, context)
+
+        # Emit a DELETED event so event-replay sees the tombstone (FR-003 / FR-004).
+        self.storage_manager.append_event(
+            MemoryEvent(
+                commit_sha=coerce_sha(context.branch.commit_hash),
+                memory_id=memory_id,
+                op="DELETED",
+                content_sha=None,
+                branch=context.branch.name,
+                ts=datetime.now(),
+            )
+        )
 
         # Delete from vector index (resolved per repo/branch)
         vi = self._get_vector_index(context.repo.id, context.branch.name)

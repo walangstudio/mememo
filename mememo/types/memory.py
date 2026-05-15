@@ -7,7 +7,8 @@ Defines all data structures for memories, git context, and query parameters.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+import re
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # Git context types
@@ -71,6 +72,19 @@ class MemoryContent(BaseModel):
     parent_class: str | None = Field(None, description="Parent class for methods")
 
 
+# Risk grading literal — populated by sync_commits / detect_changes (FR-007/008/009)
+RiskGrade = Literal["WILL_BREAK", "LIKELY_AFFECTED", "MAY_NEED_TESTING"]
+
+# Memory event operations — append-only log for time-travel (FR-003)
+MemoryEventOp = Literal["CREATED", "UPDATED", "STALED", "DELETED", "RESTORED"]
+
+# Sentinel SHA used when no git commit is available (non-repo, or pre-v0.4 backfill
+# of rows that never had a commit_hash). Forty zeros — visually unmistakable in
+# logs and event-replay queries, and DB-enforceable via CHECK constraints.
+NULL_SHA: str = "0" * 40
+BACKFILL_SHA: str = "b" + "a" * 38 + "1"  # 'baaa…1' — distinct sentinel for legacy seed
+
+
 class MemoryMetadata(BaseModel):
     """Metadata about a memory."""
 
@@ -85,6 +99,117 @@ class MemoryMetadata(BaseModel):
         default=False, description="Source file changed since this memory was created"
     )
     stale_reason: str | None = Field(None, description="Why this memory was marked stale")
+
+    # NEW in v0.4.0 — commit-aware foundation (FR-001, FR-002, FR-007)
+    created_at_sha: str | None = Field(
+        None, description="Commit SHA at which this memory was first created"
+    )
+    updated_at_sha: str | None = Field(
+        None, description="Commit SHA at which this memory was last updated"
+    )
+    risk_grade: RiskGrade | None = Field(
+        None,
+        description="Set by detect_changes / sync_commits when the source has drifted "
+        "from the memory's reference point",
+    )
+
+
+# Full git SHA-1 (40 hex chars) and short-prefix forms. Exported so tools /
+# routes / hooks share one validation rule.
+SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
+SHA_PREFIX_PATTERN = re.compile(r"^[0-9a-fA-F]{4,40}$")
+_SHA_PATTERN = SHA_PATTERN  # legacy alias used by the MemoryEvent validator below
+
+
+def coerce_sha(value: str | None) -> str:
+    """Normalize an optional commit hash into a known-safe SHA value.
+
+    Returns the input when it matches a full 40-char hex SHA, otherwise
+    the ``NULL_SHA`` sentinel. Centralises the "empty / non-hex / short /
+    None" fallback dance every commit-aware write path was repeating.
+    """
+    if value and SHA_PATTERN.match(value):
+        return value
+    return NULL_SHA
+
+
+# NEW in v0.4.0 — append-only event log for time-travel + branch merge (FR-003, FR-004)
+
+
+class MemoryEvent(BaseModel):
+    """A single mutation on a memory, identified by commit SHA + branch.
+
+    State at a target SHA is reconstructed by replaying these events; full-copy
+    snapshots are explicitly NOT stored (FR-005).
+    """
+
+    id: int | None = Field(None, description="SQLite rowid, populated on insert")
+    commit_sha: str = Field(
+        description="Git SHA-1 (40 lowercase hex) at which the event was emitted. "
+        "Use NULL_SHA when no git context is available; never the empty string.",
+    )
+    memory_id: str = Field(description="Owning memory UUID")
+    op: MemoryEventOp = Field(description="What happened to the memory at this commit")
+    content_sha: str | None = Field(
+        None, description="Checksum of the content blob this op references; null for STALED/DELETED"
+    )
+    branch: str = Field(description="Branch on which the event was emitted")
+    ts: datetime = Field(default_factory=datetime.now, description="Event timestamp")
+
+    @field_validator("commit_sha")
+    @classmethod
+    def _validate_commit_sha(cls, v: str) -> str:
+        if not _SHA_PATTERN.match(v):
+            raise ValueError(
+                f"commit_sha must be a 40-char hex SHA (use NULL_SHA / BACKFILL_SHA "
+                f"sentinels when no real commit is available); got {v!r}"
+            )
+        return v
+
+
+# NEW in v0.4.0 — per-branch indexing state (FR-011)
+class BranchState(BaseModel):
+    """Tracks the last-indexed SHA and merge-base parent per (repo_id, branch)."""
+
+    repo_id: str
+    branch: str
+    last_indexed_sha: str | None = None
+    parent_sha: str | None = Field(
+        None, description="Merge-base with default branch; used by merge_branch tool"
+    )
+
+
+# v0.5 (FR-017): typed edges in the memory graph
+RelationType = Literal["IMPORTS", "CALLS", "EXTENDS", "IMPLEMENTS", "USES", "DECORATED_BY"]
+RelationConfidence = Literal["EXTRACTED", "INFERRED", "AMBIGUOUS"]
+
+
+class Relation(BaseModel):
+    """A persisted edge between memories.
+
+    Either ``target_memory_id`` (when the resolver found a match) or
+    ``target_symbol`` (when unresolved) is populated. ``confidence`` records
+    how the edge was resolved.
+    """
+
+    id: str
+    repo_id: str
+    branch: str
+    source_memory_id: str
+    target_memory_id: str | None = None
+    target_symbol: str | None = None
+    type: RelationType
+    confidence: RelationConfidence = "EXTRACTED"
+    created_at_sha: str
+    stale: bool = False
+    community: int | None = None
+
+    @field_validator("created_at_sha")
+    @classmethod
+    def _validate_sha(cls, v: str) -> str:
+        if len(v) != 40:
+            raise ValueError(f"created_at_sha must be 40 chars; got len={len(v)}")
+        return v
 
 
 class MemoryRelationships(BaseModel):

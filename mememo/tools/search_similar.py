@@ -51,6 +51,21 @@ async def search_similar(
         if params.language:
             results = [r for r in results if r.memory.content.language == params.language]
 
+        # v0.5 (FR-023): cluster filter — restrict to memories whose relations
+        # land in the given community. Requires a prior clustering pass.
+        if params.cluster_id is not None:
+            conn = memory_manager.storage_manager.conn
+            rows = conn.execute(
+                "SELECT DISTINCT source_memory_id AS mid FROM relations "
+                "WHERE community = ? "
+                "UNION "
+                "SELECT DISTINCT target_memory_id AS mid FROM relations "
+                "WHERE community = ? AND target_memory_id IS NOT NULL",
+                (params.cluster_id, params.cluster_id),
+            ).fetchall()
+            allowed = {row["mid"] for row in rows}
+            results = [r for r in results if r.memory.id in allowed]
+
         # Convert to search result schema
         search_results = [SearchResult(memory=r.memory, similarity=r.similarity) for r in results]
 

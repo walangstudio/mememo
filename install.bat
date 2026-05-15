@@ -15,6 +15,8 @@ set CLIENT=
 set SKIP_TEST=false
 set GLOBAL_CONFIG=false
 set DEV_MODE=false
+set WITH_WEB=false
+set WITH_GRAPH=false
 set CLIENT_EXPLICIT=false
 set STATUS=false
 
@@ -32,6 +34,8 @@ if /i "%~1"=="--status"              goto :pa_status
 if /i "%~1"=="--global"              goto :pa_global
 if /i "%~1"=="--skip-test"           goto :pa_skip_test
 if /i "%~1"=="--dev"                 goto :pa_dev
+if /i "%~1"=="--with-web"            goto :pa_with_web
+if /i "%~1"=="--with-graph"          goto :pa_with_graph
 if /i "%~1"=="--configure=claude"    goto :pa_cfg_claude
 if /i "%~1"=="--configure=claudecli" goto :pa_cfg_claudecli
 if /i "%~1"=="--configure"           goto :pa_cfg_claude
@@ -67,6 +71,12 @@ set "SKIP_TEST=true" & shift & goto :parse_args
 
 :pa_dev
 set "DEV_MODE=true" & shift & goto :parse_args
+
+:pa_with_web
+set "WITH_WEB=true" & shift & goto :parse_args
+
+:pa_with_graph
+set "WITH_GRAPH=true" & shift & goto :parse_args
 
 :pa_cfg_claude
 set "CLIENT=claudedesktop" & set "CLIENT_EXPLICIT=true" & shift & goto :parse_args
@@ -427,24 +437,26 @@ rem ========================================================
     echo [INFO] Upgrading pip...
     python -m pip install --upgrade pip
 
-    if "%DEV_MODE%"=="true" goto install_dev
-    goto install_prod
-
-:install_dev
-    echo [INFO] Installing mememo with dev dependencies...
-    pip install -e ".[dev]"
+    rem Build the extras list from --dev / --with-web / --with-graph flags.
+    set "_extras="
+    if "%DEV_MODE%"=="true" set "_extras=!_extras!dev,"
+    if "%WITH_WEB%"=="true" set "_extras=!_extras!web,"
+    if "%WITH_GRAPH%"=="true" set "_extras=!_extras!graph,"
+    if defined _extras (
+        set "_extras=!_extras:~0,-1!"
+        echo [INFO] Installing mememo with extras: !_extras!
+        pip install -e ".[!_extras!]"
+    ) else (
+        echo [INFO] Installing mememo (production)...
+        pip install -e .
+    )
     if errorlevel 1 (echo [ERROR] Installation failed & exit /b 1)
     for /f %%v in ('python -c "from importlib.metadata import version; print(version(\"mememo\"))"') do set "_inst_ver=%%v"
-    echo [OK] mememo !_inst_ver! installed with dev/test tools
-    echo !_inst_ver!>"%VENV_DIR%\.mememo_installed"
-    goto install_done
-
-:install_prod
-    echo [INFO] Installing mememo (production)...
-    pip install -e .
-    if errorlevel 1 (echo [ERROR] Installation failed & exit /b 1)
-    for /f %%v in ('python -c "from importlib.metadata import version; print(version(\"mememo\"))"') do set "_inst_ver=%%v"
-    echo [OK] mememo !_inst_ver! installed
+    if defined _extras (
+        echo [OK] mememo !_inst_ver! installed with extras: !_extras!
+    ) else (
+        echo [OK] mememo !_inst_ver! installed
+    )
     echo !_inst_ver!>"%VENV_DIR%\.mememo_installed"
     goto install_done
 
@@ -922,6 +934,8 @@ rem ========================================================
     echo                       opencode, all)
     echo       --skip-test     Skip warmup validation step
     echo       --dev           Install dev/test dependencies
+    echo       --with-web      Install optional FastAPI web UI extras (mememo serve)
+    echo       --with-graph    Install optional clustering + dedup extras
     echo   -h, --help          Show this help
     echo.
     echo Backward-compatible aliases:

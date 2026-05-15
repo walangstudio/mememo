@@ -167,6 +167,53 @@ class TreeSitterChunker(BaseChunker):
 
         return self._parsers[language]
 
+    # ----- v0.5 edge emission (FR-014) ------------------------------------
+
+    def chunk_with_edges(
+        self, code: str, file_path: str, language: str | None = None
+    ) -> tuple[list[Chunk], list]:
+        """Return ``(chunks, raw_edges)`` for one tree-sitter language.
+
+        Full edge taxonomy lands for TypeScript, JavaScript, and Go via
+        ``ts_edges``. Other supported languages emit only IMPORTS edges as
+        a fallback so the relations table still gets some coverage; the
+        per-language extractor for those is deferred to v0.7+.
+        """
+        from .ts_edges import EDGE_WALKERS
+        from .python_ast_chunker import file_path_to_module
+        from .base_chunker import RawEdge
+
+        if language is None:
+            from .language_detector import detect_language
+
+            language = detect_language(file_path)
+            if language is None:
+                raise ValueError(f"Cannot detect language for {file_path}")
+        if language not in LANGUAGE_QUERIES:
+            raise ValueError(f"Tree-sitter chunking not supported for {language}")
+
+        parser = self._get_parser(language)
+        tree = parser.parse(bytes(code, "utf-8"))
+        module = file_path_to_module(file_path.replace("\\", "/"))
+        code_bytes = bytes(code, "utf-8")
+
+        if language in ("typescript", "tsx", "javascript"):
+            from .ts_edges import walk_typescript_or_javascript
+
+            return walk_typescript_or_javascript(
+                tree, code_bytes, module, file_path, language
+            )
+        if language == "go":
+            from .ts_edges import walk_go
+
+            return walk_go(tree, code_bytes, module, file_path)
+
+        # Fallback: chunk via the legacy path; emit no edges. Future per-language
+        # extractors can be slotted into EDGE_WALKERS.
+        chunks = self.chunk(code, file_path, language)
+        edges: list[RawEdge] = []
+        return chunks, edges
+
     def chunk(self, code: str, file_path: str, language: str = None) -> list[Chunk]:
         """
         Chunk code using tree-sitter parsing.
