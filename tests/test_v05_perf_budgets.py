@@ -33,24 +33,23 @@ class _Stub:  # pragma: no cover
     def tool(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
     def resource(self, *a, **k):
         def deco(fn):
             return fn
+
         return deco
 
 
 _stub_module("sentence_transformers", SentenceTransformer=_Stub)
-_stub_module(
-    "faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub
-)
+_stub_module("faiss", Index=_Stub, IndexFlatL2=_Stub, IndexIDMap=_Stub, IndexIVFFlat=_Stub)
 _stub_module("fastmcp", FastMCP=_Stub)
 
 
 from benchmarks.index_corpus_perf import run as run_index  # noqa: E402
 from benchmarks.resolver_perf import run as run_resolver  # noqa: E402
-
 
 CI_SLACK = 1.5  # absorb noise on shared CI runners
 
@@ -91,6 +90,6 @@ def test_t028_chunk_counts_align() -> None:
     # because the legacy walk uses ast.walk while the new walk descends only
     # through class bodies. Accept within ±10%.
     base, edges = result["baseline_chunks"], result["edges_chunks"]
-    assert abs(base - edges) <= max(base, edges) * 0.1, (
-        f"chunk counts differ too much: baseline={base}, with-edges={edges}"
-    )
+    assert (
+        abs(base - edges) <= max(base, edges) * 0.1
+    ), f"chunk counts differ too much: baseline={base}, with-edges={edges}"

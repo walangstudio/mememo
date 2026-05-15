@@ -283,9 +283,7 @@ class GitManager:
 
     # ----- v0.4.0 commit-aware extensions (FR-006) --------------------------
 
-    async def merge_base(
-        self, branch_a: str, branch_b: str, cwd: str | None = None
-    ) -> str | None:
+    async def merge_base(self, branch_a: str, branch_b: str, cwd: str | None = None) -> str | None:
         """Return the SHA of the merge-base between two refs, or None if disjoint."""
         try:
             sha = await self._exec_git("merge-base", [branch_a, branch_b], cwd)
@@ -298,17 +296,13 @@ class GitManager:
     async def is_merge_commit(self, sha: str, cwd: str | None = None) -> bool:
         """A commit is a merge if it has more than one parent."""
         try:
-            parents = await self._exec_git(
-                "rev-parse", [f"{sha}^@"], cwd
-            )
+            parents = await self._exec_git("rev-parse", [f"{sha}^@"], cwd)
         except RuntimeError:
             return False
         # `<sha>^@` lists all parents one-per-line; merges have >=2.
         return len([line for line in parents.split("\n") if line.strip()]) >= 2
 
-    async def diff_between(
-        self, base: str, head: str, cwd: str | None = None
-    ) -> dict[str, str]:
+    async def diff_between(self, base: str, head: str, cwd: str | None = None) -> dict[str, str]:
         """Return {file_path: change_kind} between base..head.
 
         change_kind is one of 'A' (added), 'M' (modified), 'D' (deleted),
@@ -318,9 +312,7 @@ class GitManager:
         try:
             # Append '--' so git interprets the next token as a revision range,
             # never an option (security audit 2026-05-13).
-            output = await self._exec_git(
-                "diff", ["--name-status", f"{base}..{head}", "--"], cwd
-            )
+            output = await self._exec_git("diff", ["--name-status", f"{base}..{head}", "--"], cwd)
         except RuntimeError as e:
             raise RuntimeError(f"diff_between({base!r}, {head!r}) failed: {e}")
         out: dict[str, str] = {}

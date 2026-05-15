@@ -27,9 +27,20 @@ class UnsupportedCypherError(ValueError):
 
 
 _RESERVED_UNSUPPORTED = (
-    "WITH", "OPTIONAL", "CREATE", "MERGE", "DELETE", "SET",
-    "REMOVE", "DETACH", "CALL", "UNWIND", "ORDER",
-    "SKIP", "UNION", "FOREACH",
+    "WITH",
+    "OPTIONAL",
+    "CREATE",
+    "MERGE",
+    "DELETE",
+    "SET",
+    "REMOVE",
+    "DETACH",
+    "CALL",
+    "UNWIND",
+    "ORDER",
+    "SKIP",
+    "UNION",
+    "FOREACH",
 )
 
 
@@ -39,7 +50,7 @@ _RESERVED_UNSUPPORTED = (
 @dataclass
 class _Pattern:
     src_var: str
-    src_label: str | None        # not used in v0.6 — present for future widening
+    src_label: str | None  # not used in v0.6 — present for future widening
     rel_var: str
     rel_type: str
     direction: Literal["out", "undirected"]
@@ -98,17 +109,14 @@ def _ensure_no_unsupported(query_upper: str) -> None:
             raise UnsupportedCypherError(f"Unsupported Cypher construct: {kw}")
     # Variable-length paths look like `-[*]->` or `-[r:T*1..3]->`.
     if re.search(r"\[[^\]]*\*[^\]]*\]", query_upper):
-        raise UnsupportedCypherError(
-            "Variable-length paths (e.g. *1..3) are not supported"
-        )
+        raise UnsupportedCypherError("Variable-length paths (e.g. *1..3) are not supported")
 
 
 def _parse_match(query: str) -> _Pattern:
     m = _PAT_RE.search(query)
     if not m:
         raise UnsupportedCypherError(
-            "MATCH must be a single-hop pattern: (a)-[r:TYPE]->(b) or "
-            "(a)-[r:TYPE]-(b)"
+            "MATCH must be a single-hop pattern: (a)-[r:TYPE]->(b) or " "(a)-[r:TYPE]-(b)"
         )
     return _Pattern(
         src_var=m.group("src"),
@@ -133,21 +141,21 @@ def _parse_where(where_clause: str) -> tuple[list[_Predicate], list[str]]:
         lit = m.group("lit")
         if lit.startswith(("'", '"')):
             lit = lit[1:-1]
-        preds.append(_Predicate(
-            lhs_var=m.group("var"),
-            lhs_prop=m.group("prop"),
-            op=m.group("op"),  # type: ignore[arg-type]
-            literal=lit,
-        ))
+        preds.append(
+            _Predicate(
+                lhs_var=m.group("var"),
+                lhs_prop=m.group("prop"),
+                op=m.group("op"),  # type: ignore[arg-type]
+                literal=lit,
+            )
+        )
         cursor = m.end()
         tail = where_clause[cursor:].lstrip()
         if not tail:
             break
         connector = tail.split(None, 1)[0].upper()
         if connector not in ("AND", "OR"):
-            raise UnsupportedCypherError(
-                f"WHERE connector must be AND/OR; got {connector!r}"
-            )
+            raise UnsupportedCypherError(f"WHERE connector must be AND/OR; got {connector!r}")
         connectors.append(connector)
         cursor = where_clause.index(connector, cursor) + len(connector)
     return preds, connectors
@@ -199,7 +207,7 @@ def parse_cypher(query: str) -> CypherQuery:
     positions.sort(key=lambda p: p[1])
     for i, (kw, start) in enumerate(positions):
         end = positions[i + 1][1] if i + 1 < len(positions) else len(q)
-        body = q[start + len(kw): end].strip()
+        body = q[start + len(kw) : end].strip()
         clauses[kw] = body
 
     pattern = _parse_match(clauses["MATCH"])
@@ -338,6 +346,7 @@ def translate_to_sql(
 # importing this module doesn't depend on a live connection.
 def install_regexp(connection) -> None:
     """Register a REGEXP function on a sqlite3 connection so ``=~`` works."""
+
     def _regexp(pattern, value):
         if pattern is None or value is None:
             return 0

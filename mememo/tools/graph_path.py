@@ -29,9 +29,7 @@ class GraphPathResponse(BaseModel):
     length: int | None = None
 
 
-async def graph_path(
-    params: GraphPathParams, memory_manager: "MemoryManager"
-) -> GraphPathResponse:
+async def graph_path(params: GraphPathParams, memory_manager: MemoryManager) -> GraphPathResponse:
     if params.source_id == params.target_id:
         return GraphPathResponse(
             success=True, message="source == target", path=[params.source_id], length=0

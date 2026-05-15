@@ -39,7 +39,7 @@ class CypherQueryResponse(BaseModel):
 
 
 async def cypher_query(
-    params: CypherQueryParams, memory_manager: "MemoryManager"
+    params: CypherQueryParams, memory_manager: MemoryManager
 ) -> CypherQueryResponse:
     try:
         ast = parse_cypher(params.query)
