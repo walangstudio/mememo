@@ -21,6 +21,7 @@ WITH_WEB=false
 WITH_GRAPH=false
 CLIENT_EXPLICIT=false
 STATUS=false
+GPU_MODE=false
 
 # Colors
 RED='\033[0;31m'
@@ -53,6 +54,9 @@ Options:
       --dev           Install dev/test dependencies
       --with-web      Install optional FastAPI web UI extras (mememo serve)
       --with-graph    Install optional clustering + dedup extras (networkx, rapidfuzz)
+      --gpu           Install the CUDA torch build (default is CPU-only;
+                      mememo never needs GPU -- CPU is faster to install,
+                      same runtime for MiniLM embedding)
   -h, --help          Show this help
 
 Backward-compatible aliases (still supported):
@@ -112,6 +116,8 @@ while [[ $# -gt 0 ]]; do
             WITH_WEB=true; shift ;;
         --with-graph)
             WITH_GRAPH=true; shift ;;
+        --gpu|--cuda)
+            GPU_MODE=true; shift ;;
         --configure=claude)
             CLIENT="claudedesktop"; CLIENT_EXPLICIT=true; shift ;;
         --configure=claudecli)
@@ -196,14 +202,36 @@ _build_extras() {
     echo "$extras"
 }
 
+# Install backend: uv if on PATH (fast, parallel resolver), else pip.
+# uv is never auto-installed -- it is an optional accelerator, not a prereq.
+_pip() {
+    if command -v uv >/dev/null 2>&1; then
+        uv pip "$@"
+    else
+        python -m pip "$@"
+    fi
+}
+
 install_production() {
     local extras="$(_build_extras)"
-    python -m pip install --upgrade pip
+    if command -v uv >/dev/null 2>&1; then
+        log_info "uv detected -- using it for fast installs"
+    else
+        log_info "uv not found -- using pip (slower; install uv to speed this up)"
+        python -m pip install --upgrade pip
+    fi
+    if [[ "$GPU_MODE" != true ]]; then
+        # mememo only embeds short text with MiniLM on CPU; the default PyPI
+        # torch wheel is the multi-GB CUDA build on Linux for no benefit.
+        # Pre-install the CPU wheel so the editable install finds it satisfied.
+        log_info "Installing CPU-only torch (~180MB; pass --gpu for the CUDA build)..."
+        _pip install "torch>=2.0.0" --index-url https://download.pytorch.org/whl/cpu
+    fi
     if [[ -n "$extras" ]]; then
-        python -m pip install -e ".[${extras}]"
+        _pip install -e ".[${extras}]"
         log_success "mememo $(python -c 'import mememo; print(mememo.__version__)') installed with extras: ${extras}"
     else
-        python -m pip install -e .
+        _pip install -e .
         log_success "mememo $(python -c 'import mememo; print(mememo.__version__)') installed"
     fi
     python -c 'import mememo; print(mememo.__version__)' > "$MARKER"
@@ -991,8 +1019,15 @@ if [[ "$UPGRADE" == true ]]; then
 
 
     activate_venv
-    python -m pip install --upgrade pip
-    python -m pip install --upgrade -e ".[dev]"
+    if command -v uv >/dev/null 2>&1; then
+        log_info "uv detected -- using it for fast upgrade"
+    else
+        python -m pip install --upgrade pip
+    fi
+    if [[ "$GPU_MODE" != true ]]; then
+        _pip install --upgrade "torch>=2.0.0" --index-url https://download.pytorch.org/whl/cpu
+    fi
+    _pip install --upgrade -e ".[dev]"
     log_success "mememo upgraded"
     echo ""
     run_warmup

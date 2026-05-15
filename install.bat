@@ -19,6 +19,7 @@ set WITH_WEB=false
 set WITH_GRAPH=false
 set CLIENT_EXPLICIT=false
 set STATUS=false
+set GPU_MODE=false
 
 :parse_args
 if "%~1"=="" goto :end_parse
@@ -36,6 +37,8 @@ if /i "%~1"=="--skip-test"           goto :pa_skip_test
 if /i "%~1"=="--dev"                 goto :pa_dev
 if /i "%~1"=="--with-web"            goto :pa_with_web
 if /i "%~1"=="--with-graph"          goto :pa_with_graph
+if /i "%~1"=="--gpu"                 goto :pa_gpu
+if /i "%~1"=="--cuda"                goto :pa_gpu
 if /i "%~1"=="--configure=claude"    goto :pa_cfg_claude
 if /i "%~1"=="--configure=claudecli" goto :pa_cfg_claudecli
 if /i "%~1"=="--configure"           goto :pa_cfg_claude
@@ -77,6 +80,9 @@ set "WITH_WEB=true" & shift & goto :parse_args
 
 :pa_with_graph
 set "WITH_GRAPH=true" & shift & goto :parse_args
+
+:pa_gpu
+set "GPU_MODE=true" & shift & goto :parse_args
 
 :pa_cfg_claude
 set "CLIENT=claudedesktop" & set "CLIENT_EXPLICIT=true" & shift & goto :parse_args
@@ -434,8 +440,26 @@ rem ========================================================
     echo [INFO] Activating virtual environment...
     call %VENV_DIR%\Scripts\activate.bat
 
-    echo [INFO] Upgrading pip...
-    python -m pip install --upgrade pip
+    rem Installer backend: uv if on PATH (fast, parallel). Never auto-installed.
+    where uv >nul 2>&1
+    if !errorlevel!==0 (
+        set "_PIP=uv pip"
+        echo [INFO] uv detected -- using it for fast installs
+    ) else (
+        set "_PIP=python -m pip"
+        echo [INFO] uv not found -- using pip; install uv to speed this up
+        echo [INFO] Upgrading pip...
+        python -m pip install --upgrade pip
+    )
+
+    rem CPU-only torch by default -- mememo embeds short text with MiniLM on
+    rem CPU; the default Windows torch is CPU already but the CPU index is
+    rem smaller and faster. --gpu opts into the CUDA build.
+    if not "%GPU_MODE%"=="true" (
+        echo [INFO] Installing CPU-only torch -- pass --gpu for the CUDA build...
+        !_PIP! install "torch>=2.0.0" --index-url https://download.pytorch.org/whl/cpu
+        if errorlevel 1 (echo [ERROR] torch install failed & exit /b 1)
+    )
 
     rem Build the extras list from --dev / --with-web / --with-graph flags.
     set "_extras="
@@ -445,10 +469,10 @@ rem ========================================================
     if defined _extras (
         set "_extras=!_extras:~0,-1!"
         echo [INFO] Installing mememo with extras: !_extras!
-        pip install -e ".[!_extras!]"
+        !_PIP! install -e ".[!_extras!]"
     ) else (
         echo [INFO] Installing mememo production deps...
-        pip install -e .
+        !_PIP! install -e .
     )
     if errorlevel 1 (echo [ERROR] Installation failed & exit /b 1)
     for /f %%v in ('python -c "from importlib.metadata import version; print(version(\"mememo\"))"') do set "_inst_ver=%%v"
@@ -558,8 +582,18 @@ rem ========================================================
 
 
     call %VENV_DIR%\Scripts\activate.bat
-    python -m pip install --upgrade pip
-    pip install --upgrade -e ".[dev]"
+    where uv >nul 2>&1
+    if !errorlevel!==0 (
+        set "_PIP=uv pip"
+        echo [INFO] uv detected -- using it for fast upgrade
+    ) else (
+        set "_PIP=python -m pip"
+        python -m pip install --upgrade pip
+    )
+    if not "%GPU_MODE%"=="true" (
+        !_PIP! install --upgrade "torch>=2.0.0" --index-url https://download.pytorch.org/whl/cpu
+    )
+    !_PIP! install --upgrade -e ".[dev]"
     for /f %%v in ('python -c "from importlib.metadata import version; print(version(\"mememo\"))"') do set "_inst_ver=%%v"
     echo [OK] mememo !_inst_ver! upgraded
     echo !_inst_ver!>"%VENV_DIR%\.mememo_installed"
@@ -936,6 +970,9 @@ rem ========================================================
     echo       --dev           Install dev/test dependencies
     echo       --with-web      Install optional FastAPI web UI extras (mememo serve)
     echo       --with-graph    Install optional clustering + dedup extras
+    echo       --gpu           Install the CUDA torch build; default is CPU-only
+    echo                       ^(mememo never needs GPU; CPU is faster to install,
+    echo                       identical runtime for MiniLM embedding^)
     echo   -h, --help          Show this help
     echo.
     echo Backward-compatible aliases:
