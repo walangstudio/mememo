@@ -357,14 +357,14 @@ import json, sys, os
 config_path = os.path.abspath(sys.argv[1])
 python_path = sys.executable
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         config = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     config = {}
 config.setdefault('mcpServers', {})
 config['mcpServers']['$SERVER_NAME'] = {'command': python_path, 'args': ['-m', '$SERVER_NAME']}
 os.makedirs(os.path.dirname(config_path), exist_ok=True)
-with open(config_path, 'w') as f:
+with open(config_path, 'w', encoding='utf-8') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
 " "$config_path"
@@ -380,14 +380,14 @@ remove_mcp_config() {
 import json, sys
 config_path = sys.argv[1]
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         config = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     sys.exit(0)
 servers = config.get('mcpServers', {})
 if '$SERVER_NAME' in servers:
     del servers['$SERVER_NAME']
-    with open(config_path, 'w') as f:
+    with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2)
         f.write('\n')
     print('[OK] Removed $SERVER_NAME from config')
@@ -409,14 +409,14 @@ import json, sys, os
 config_path = os.path.abspath(sys.argv[1])
 python_path = sys.executable
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         config = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     config = {}
 config.setdefault('servers', {})
 config['servers']['$SERVER_NAME'] = {'type': 'stdio', 'command': python_path, 'args': ['-m', '$SERVER_NAME']}
 os.makedirs(os.path.dirname(config_path), exist_ok=True)
-with open(config_path, 'w') as f:
+with open(config_path, 'w', encoding='utf-8') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
 " "$config_path"
@@ -432,14 +432,14 @@ remove_vscode_config() {
 import json, sys
 config_path = sys.argv[1]
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         config = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     sys.exit(0)
 servers = config.get('servers', {})
 if '$SERVER_NAME' in servers:
     del servers['$SERVER_NAME']
-    with open(config_path, 'w') as f:
+    with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2)
         f.write('\n')
     print('[OK] Removed $SERVER_NAME from VS Code config')
@@ -467,7 +467,7 @@ new_section = '\n' + section_header + '\ncommand = \"' + cmd + '\"\nstartup_time
 os.makedirs(os.path.dirname(config_path) or '.', exist_ok=True)
 existing = ''
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         existing = f.read()
 except FileNotFoundError:
     pass
@@ -485,7 +485,7 @@ if section_header in existing:
 existing = existing.rstrip()
 if existing:
     existing += '\n'
-with open(config_path, 'w') as f:
+with open(config_path, 'w', encoding='utf-8') as f:
     f.write(existing + new_section)
 " "$config_path"
 }
@@ -502,7 +502,7 @@ config_path = sys.argv[1]
 sn = '$SERVER_NAME'
 section_header = '[mcp_servers.' + sn + ']'
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         existing = f.read()
 except FileNotFoundError:
     sys.exit(0)
@@ -518,7 +518,7 @@ if start != -1:
             end = i
             break
     del lines[start:end]
-    with open(config_path, 'w') as f:
+    with open(config_path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines))
     print('[OK] Removed $SERVER_NAME from codex config')
 " "$config_path"
@@ -537,7 +537,7 @@ import json, sys, os
 config_path = os.path.abspath(sys.argv[1])
 python_path = sys.executable
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         config = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     config = {}
@@ -546,7 +546,7 @@ config['context_servers']['$SERVER_NAME'] = {
     'command': {'path': python_path, 'args': ['-m', '$SERVER_NAME'], 'env': {}}
 }
 os.makedirs(os.path.dirname(config_path), exist_ok=True)
-with open(config_path, 'w') as f:
+with open(config_path, 'w', encoding='utf-8') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
 " "$config_path"
@@ -562,14 +562,14 @@ remove_zed_config() {
 import json, sys
 config_path = sys.argv[1]
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         config = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     sys.exit(0)
 cs = config.get('context_servers', {})
 if '$SERVER_NAME' in cs:
     del cs['$SERVER_NAME']
-    with open(config_path, 'w') as f:
+    with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2)
         f.write('\n')
     print('[OK] Removed $SERVER_NAME from Zed config')
@@ -591,7 +591,7 @@ import json, sys, os
 config_path = os.path.abspath(sys.argv[1])
 python_path = sys.executable
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         config = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     config = {}
@@ -600,7 +600,7 @@ config['mcp']['$SERVER_NAME'] = {'type': 'local', 'command': [python_path, '-m',
 d = os.path.dirname(config_path)
 if d:
     os.makedirs(d, exist_ok=True)
-with open(config_path, 'w') as f:
+with open(config_path, 'w', encoding='utf-8') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
 " "$config_path"
@@ -616,14 +616,14 @@ remove_opencode_config() {
 import json, sys
 config_path = sys.argv[1]
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         config = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError):
     sys.exit(0)
 mcp = config.get('mcp', {})
 if '$SERVER_NAME' in mcp:
     del mcp['$SERVER_NAME']
-    with open(config_path, 'w') as f:
+    with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2)
         f.write('\n')
     print('[OK] Removed $SERVER_NAME from OpenCode config')
@@ -658,7 +658,7 @@ except ImportError:
 config_path = os.path.abspath(sys.argv[1])
 python_path = sys.executable
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         config = yaml.safe_load(f) or {}
 except FileNotFoundError:
     config = {}
@@ -670,7 +670,7 @@ config['extensions']['$SERVER_NAME'] = {
 d = os.path.dirname(config_path)
 if d:
     os.makedirs(d, exist_ok=True)
-with open(config_path, 'w') as f:
+with open(config_path, 'w', encoding='utf-8') as f:
     yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 " "$config_path"
 }
@@ -690,14 +690,14 @@ except ImportError:
     sys.exit(0)
 config_path = sys.argv[1]
 try:
-    with open(config_path) as f:
+    with open(config_path, encoding='utf-8') as f:
         config = yaml.safe_load(f) or {}
 except FileNotFoundError:
     sys.exit(0)
 ext = config.get('extensions', {})
 if '$SERVER_NAME' in ext:
     del ext['$SERVER_NAME']
-    with open(config_path, 'w') as f:
+    with open(config_path, 'w', encoding='utf-8') as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
     print('[OK] Removed $SERVER_NAME from Goose config')
 else:
