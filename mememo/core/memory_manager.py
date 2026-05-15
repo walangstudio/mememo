@@ -331,7 +331,10 @@ class MemoryManager:
         return await self.storage_manager.find_memories(filters, context)
 
     async def search_similar(
-        self, params: SearchParams, cwd: str | None = None
+        self,
+        params: SearchParams,
+        cwd: str | None = None,
+        content_types: list[str] | set[str] | None = None,
     ) -> list[SearchResult]:
         """
         Search for similar memories using vector similarity.
@@ -339,6 +342,8 @@ class MemoryManager:
         Args:
             params: Search parameters
             cwd: Working directory for git context detection
+            content_types: Optional set of content types to keep. Pushed into the
+                batch loader so the JSON blob is never read for filtered rows.
 
         Returns:
             List of search results with similarity scores
@@ -362,44 +367,37 @@ class MemoryManager:
         # Using exponential decay: similarity = exp(-distance)
         import math
 
-        results: list[SearchResult] = []
-
+        candidates: list[tuple[str, float]] = []
         for memory_id, distance in zip(memory_ids, distances):
-            # Convert L2 distance to similarity score
             similarity = math.exp(-distance)
-
-            # Apply minimum similarity threshold
             if similarity < params.min_similarity:
                 continue
+            candidates.append((memory_id, similarity))
 
-            # Load memory
-            try:
-                memory = await self.storage_manager.load_memory(memory_id, context)
+        if not candidates:
+            logger.info("Found 0 similar memories")
+            return []
 
-                # Exclude stale memories unless caller opts in
-                if memory.metadata.stale and not params.include_stale:
-                    continue
+        memories = await self.storage_manager.load_memories(
+            [mid for mid, _ in candidates], context, content_types=content_types
+        )
+        sim_by_id = dict(candidates)
+        loaded_ids = {m.id for m in memories}
+        for mid, _ in candidates:
+            if mid not in loaded_ids:
+                logger.warning(f"Memory {mid} not found in storage")
 
-                # Apply type filter if specified
-                if params.type and memory.content.type != params.type:
-                    continue
-
-                # Apply tag filter (AND logic: all specified tags must be present)
-                if params.tags:
-                    memory_tags = set(memory.metadata.tags or [])
-                    if not all(t in memory_tags for t in params.tags):
-                        continue
-
-                results.append(
-                    SearchResult(
-                        memory=memory,
-                        similarity=similarity,
-                    )
-                )
-            except ValueError:
-                # Memory not found - index out of sync, skip
-                logger.warning(f"Memory {memory_id} not found in storage")
+        results: list[SearchResult] = []
+        for memory in memories:
+            if memory.metadata.stale and not params.include_stale:
                 continue
+            if params.type and memory.content.type != params.type:
+                continue
+            if params.tags:
+                memory_tags = set(memory.metadata.tags or [])
+                if not all(t in memory_tags for t in params.tags):
+                    continue
+            results.append(SearchResult(memory=memory, similarity=sim_by_id[memory.id]))
 
         logger.info(f"Found {len(results)} similar memories")
         return results

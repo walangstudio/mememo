@@ -612,6 +612,48 @@ def test_t010_recall_params_validate() -> None:
         RecallAtCommitParams(query="", sha=SHA_A, repo_path="/tmp")  # empty query
 
 
+def test_t010_recall_at_commit_unknown_sha_returns_empty_success(tmp_path: Path) -> None:
+    """SHA exists in git but no memory events match: success=True, empty results.
+
+    Catches a regression where unknown-to-mememo SHAs would crash or be reported
+    as failures. The contract is "success with 0 alive memories".
+    """
+    from mememo.core.storage_manager import StorageManager
+    from mememo.tools.recall_at_commit import RecallAtCommitParams, recall_at_commit
+    from mememo.types import BranchContext, GitContext, RepoContext
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    storage = StorageManager(base_dir=tmp_path / "store")
+
+    class _StubGit:
+        async def detect_context(self, cwd):  # noqa: ARG002
+            return GitContext(
+                repo=RepoContext(id="r", name="r", path=str(repo_dir), remote_url=None),
+                branch=BranchContext(name="main", commit_hash=SHA_A),
+            )
+
+        async def _exec_git(self, command, args, cwd):  # noqa: ARG002
+            # Simulate git knowing the SHA — returns a real commit timestamp.
+            return "1700000000"
+
+    class _StubMM:
+        git_manager = _StubGit()
+        storage_manager = storage
+
+        async def search_similar(self, *a, **k):  # noqa: ARG002
+            raise AssertionError("search must be short-circuited when alive set is empty")
+
+    params = RecallAtCommitParams(query="anything", sha=SHA_A, repo_path=str(repo_dir))
+    resp = asyncio.run(recall_at_commit(params, _StubMM()))
+    assert resp.success is True
+    assert resp.alive_count == 0
+    assert resp.results == []
+    assert resp.sha == SHA_A
+    assert resp.target_ts == 1700000000
+    assert "No memories alive" in resp.message
+
+
 # ---------- T007 / T008: tool schema smokes ---------------------------------
 
 

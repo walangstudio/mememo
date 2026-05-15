@@ -461,6 +461,80 @@ class StorageManager:
 
         return await self._row_to_memory(dict(row))
 
+    async def load_memories(
+        self,
+        ids: list[str],
+        context: GitContext,
+        content_types: list[str] | set[str] | None = None,
+    ) -> list[Memory]:
+        """Batch-load memories by id, scoped to context. Missing ids are silently skipped.
+
+        Returns memories in the same order as `ids`. One SELECT per table (memories,
+        tags, relationships) instead of 3+ per memory.
+
+        When `content_types` is given, rows are filtered at SQL row level before the
+        JSON content blob is read — saves one disk read per skipped memory.
+        """
+        if not ids:
+            return []
+
+        seen: set[str] = set()
+        unique_ids = [i for i in ids if not (i in seen or seen.add(i))]
+        placeholders = ",".join("?" * len(unique_ids))
+
+        cursor = self.conn.cursor()
+        cursor.execute(
+            f"SELECT * FROM memories WHERE id IN ({placeholders}) "
+            "AND repo_id = ? AND branch_name = ?",
+            (*unique_ids, context.repo.id, context.branch.name),
+        )
+        rows_by_id: dict[str, dict] = {r["id"]: dict(r) for r in cursor.fetchall()}
+
+        if content_types is not None:
+            allowed = set(content_types)
+            rows_by_id = {
+                mid: row for mid, row in rows_by_id.items() if row["content_type"] in allowed
+            }
+
+        present_ids = list(rows_by_id.keys())
+        tags_by_id: dict[str, list[str]] = {}
+        rels_by_id: dict[str, dict[str, list[str]]] = {}
+
+        if present_ids:
+            ph = ",".join("?" * len(present_ids))
+            cursor.execute(
+                f"SELECT memory_id, tag FROM tags WHERE memory_id IN ({ph})",
+                present_ids,
+            )
+            for r in cursor.fetchall():
+                tags_by_id.setdefault(r["memory_id"], []).append(r["tag"])
+
+            cursor.execute(
+                f"SELECT from_memory_id, to_memory_id, relationship_type "
+                f"FROM relationships WHERE from_memory_id IN ({ph}) "
+                "AND relationship_type IN ('depends_on','related_to')",
+                present_ids,
+            )
+            for r in cursor.fetchall():
+                rels_by_id.setdefault(r["from_memory_id"], {}).setdefault(
+                    r["relationship_type"], []
+                ).append(r["to_memory_id"])
+
+        result: list[Memory] = []
+        for mid in ids:
+            row = rows_by_id.get(mid)
+            if row is None:
+                continue
+            result.append(
+                self._build_memory(
+                    row,
+                    tags_by_id.get(mid, []),
+                    rels_by_id.get(mid, {}).get("depends_on", []),
+                    rels_by_id.get(mid, {}).get("related_to", []),
+                )
+            )
+        return result
+
     async def _row_to_memory(self, row: dict) -> Memory:
         """
         Convert database row to Memory object.
@@ -471,16 +545,10 @@ class StorageManager:
         Returns:
             Memory object
         """
-        # Load content blob
-        content_path = self.base_dir / row["content_ref"]
-        content_blob = json.loads(content_path.read_text(encoding="utf-8"))
-
-        # Load tags
         cursor = self.conn.cursor()
         cursor.execute("SELECT tag FROM tags WHERE memory_id = ?", (row["id"],))
         tags = [r["tag"] for r in cursor.fetchall()]
 
-        # Load relationships
         cursor.execute(
             "SELECT to_memory_id FROM relationships WHERE from_memory_id = ? AND relationship_type = ?",
             (row["id"], "depends_on"),
@@ -493,6 +561,17 @@ class StorageManager:
         )
         related_to = [r["to_memory_id"] for r in cursor.fetchall()]
 
+        return self._build_memory(row, tags, depends_on, related_to)
+
+    def _build_memory(
+        self,
+        row: dict,
+        tags: list[str],
+        depends_on: list[str],
+        related_to: list[str],
+    ) -> Memory:
+        content_path = self.base_dir / row["content_ref"]
+        content_blob = json.loads(content_path.read_text(encoding="utf-8"))
         return Memory(
             id=row["id"],
             repo=RepoContext(

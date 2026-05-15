@@ -176,63 +176,71 @@ class VectorIndex:
         if len(embeddings) != len(memory_ids) or len(embeddings) != len(checksums):
             raise ValueError("embeddings, memory_ids, and checksums must have same length")
 
-        np.array(embeddings, dtype="float32")
+        if not embeddings:
+            return
 
         conn = sqlite3.connect(str(self.db_path))
         cursor = conn.cursor()
 
-        # Get current global index
-        cursor.execute("SELECT COALESCE(MAX(global_index), -1) + 1 FROM vector_mappings")
-        global_index = cursor.fetchone()[0]
+        try:
+            cursor.execute("SELECT COALESCE(MAX(global_index), -1) + 1 FROM vector_mappings")
+            next_global = cursor.fetchone()[0]
 
-        for i, (embedding, memory_id, checksum) in enumerate(
-            zip(embeddings, memory_ids, checksums)
-        ):
-            # Check if current shard is full
             cursor.execute(
-                "SELECT COUNT(*) FROM vector_mappings WHERE shard_id = ?", (self.current_shard,)
+                "SELECT COUNT(*) FROM vector_mappings WHERE shard_id = ?",
+                (self.current_shard,),
             )
-            shard_count = cursor.fetchone()[0]
+            shard_local_next = cursor.fetchone()[0]
 
-            if shard_count >= self.SHARD_SIZE:
-                # Save current shard and move to next
-                logger.info(f"Shard {self.current_shard} full, creating new shard")
-                current_index = self._load_shard(self.current_shard)
-                shard_path = self.index_dir / f"shard_{self.current_shard}.faiss"
-                faiss.write_index(current_index, str(shard_path))
-                self.current_shard += 1
+            per_shard_vectors: dict[int, list[list[float]]] = {}
+            mappings: list[tuple] = []
+            now = int(time.time())
 
-            # Load current shard index
-            index = self._load_shard(self.current_shard)
+            for i, (embedding, memory_id, checksum) in enumerate(
+                zip(embeddings, memory_ids, checksums)
+            ):
+                if shard_local_next >= self.SHARD_SIZE:
+                    pending = per_shard_vectors.pop(self.current_shard, None)
+                    current_index = self._load_shard(self.current_shard)
+                    if pending:
+                        current_index.add(np.array(pending, dtype="float32"))
+                    shard_path = self.index_dir / f"shard_{self.current_shard}.faiss"
+                    faiss.write_index(current_index, str(shard_path))
+                    logger.info(f"Shard {self.current_shard} full, creating new shard")
+                    self.current_shard += 1
+                    shard_local_next = 0
 
-            # Get local index within shard
-            cursor.execute(
-                "SELECT COUNT(*) FROM vector_mappings WHERE shard_id = ?", (self.current_shard,)
-            )
-            local_index = cursor.fetchone()[0]
+                per_shard_vectors.setdefault(self.current_shard, []).append(embedding)
+                mappings.append(
+                    (
+                        self.current_shard,
+                        shard_local_next,
+                        next_global + i,
+                        memory_id,
+                        checksum,
+                        now,
+                    )
+                )
+                shard_local_next += 1
 
-            # Add to FAISS index
-            index.add(np.array([embedding], dtype="float32"))
+            for shard_id, vectors in per_shard_vectors.items():
+                if not vectors:
+                    continue
+                index = self._load_shard(shard_id)
+                index.add(np.array(vectors, dtype="float32"))
 
-            # Add mapping to SQLite
-            cursor.execute(
+            cursor.executemany(
                 """
                 INSERT INTO vector_mappings
                 (shard_id, local_index, global_index, memory_id, checksum, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    self.current_shard,
-                    local_index,
-                    global_index + i,
-                    memory_id,
-                    checksum,
-                    int(time.time()),
-                ),
+                """,
+                mappings,
             )
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
 
         logger.info(f"Added {len(embeddings)} vectors to index")
 
