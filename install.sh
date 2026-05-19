@@ -5,6 +5,9 @@ set -e
 VENV_DIR=".venv"
 MARKER="$VENV_DIR/.mememo_installed"
 PYTHON_MIN_VERSION="3.10"
+PYTHON_MAX_VERSION="3.14"
+PYTHON_PINNED_FALLBACK="3.12"
+UV_BIN="$(command -v uv 2>/dev/null || true)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_NAME="mememo"
 WORKSPACE_DIR="$PWD"
@@ -142,17 +145,34 @@ if [[ "$GLOBAL_CONFIG" == true && -n "$CLIENT" ]]; then
 fi
 
 # -- Python & venv -----------------------------------------
+# True when $1 <= $2 (version sort).
+_ver_le() {
+    [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]
+}
+
+# Sets SYS_PY_OK (true/false) and PYTHON_VERSION. Does not exit: when uv is
+# available it can supply a supported Python even if the system one is not.
 check_python_version() {
+    SYS_PY_OK=false
     if ! command -v python3 &>/dev/null; then
-        log_error "python3 not found. Install Python $PYTHON_MIN_VERSION+"
+        PYTHON_VERSION="(none)"
+    else
+        PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+        if _ver_le "$PYTHON_MIN_VERSION" "$PYTHON_VERSION" \
+            && _ver_le "$PYTHON_VERSION" "$PYTHON_MAX_VERSION"; then
+            SYS_PY_OK=true
+        fi
+    fi
+
+    if [[ "$SYS_PY_OK" == true ]]; then
+        log_success "Python $PYTHON_VERSION detected"
+    elif [[ -n "$UV_BIN" ]]; then
+        log_warn "System Python $PYTHON_VERSION outside supported ${PYTHON_MIN_VERSION}-${PYTHON_MAX_VERSION}; uv will provide Python $PYTHON_PINNED_FALLBACK"
+    else
+        log_error "Python ${PYTHON_MIN_VERSION}-${PYTHON_MAX_VERSION} required, found $PYTHON_VERSION, and 'uv' is not installed."
+        log_error "Install uv (https://docs.astral.sh/uv/) or a Python in ${PYTHON_MIN_VERSION}-${PYTHON_MAX_VERSION}, then re-run."
         exit 1
     fi
-    PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
-    if [ "$(printf '%s\n' "$PYTHON_MIN_VERSION" "$PYTHON_VERSION" | sort -V | head -n1)" != "$PYTHON_MIN_VERSION" ]; then
-        log_error "Python $PYTHON_MIN_VERSION+ required, found $PYTHON_VERSION"
-        exit 1
-    fi
-    log_success "Python $PYTHON_VERSION detected"
 }
 
 create_venv() {
@@ -161,13 +181,22 @@ create_venv() {
         return 0
     fi
     log_info "Creating virtual environment..."
-    python3 -m venv "$VENV_DIR"
+    if [[ -n "$UV_BIN" ]]; then
+        local target="$PYTHON_PINNED_FALLBACK"
+        [[ "$SYS_PY_OK" == true ]] && target="$PYTHON_VERSION"
+        log_info "Using uv (Python $target)"
+        uv venv --python "$target" "$VENV_DIR"
+    else
+        python3 -m venv "$VENV_DIR"
+    fi
     log_success "Virtual environment created"
 }
 
 activate_venv() {
     if [ -f "$VENV_DIR/bin/activate" ]; then
         source "$VENV_DIR/bin/activate"
+    elif [ -f "$VENV_DIR/Scripts/activate" ]; then
+        source "$VENV_DIR/Scripts/activate"
     else
         log_error "Virtual environment not found"
         exit 1
@@ -198,12 +227,17 @@ _build_extras() {
 
 install_production() {
     local extras="$(_build_extras)"
-    python -m pip install --upgrade pip
+    local spec="."
+    [[ -n "$extras" ]] && spec=".[${extras}]"
+    if [[ -n "$UV_BIN" ]]; then
+        uv pip install -e "$spec"
+    else
+        python -m pip install --upgrade pip
+        python -m pip install -e "$spec"
+    fi
     if [[ -n "$extras" ]]; then
-        python -m pip install -e ".[${extras}]"
         log_success "mememo $(python -c 'import mememo; print(mememo.__version__)') installed with extras: ${extras}"
     else
-        python -m pip install -e .
         log_success "mememo $(python -c 'import mememo; print(mememo.__version__)') installed"
     fi
     python -c 'import mememo; print(mememo.__version__)' > "$MARKER"

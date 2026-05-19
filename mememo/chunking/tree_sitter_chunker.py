@@ -18,12 +18,70 @@ logger = logging.getLogger(__name__)
 
 # Try to import tree-sitter packages
 try:
-    from tree_sitter_languages import get_language, get_parser
+    from tree_sitter import Language, Parser
 
     TREE_SITTER_AVAILABLE = True
 except ImportError:
     TREE_SITTER_AVAILABLE = False
-    logger.warning("tree-sitter-languages not available, tree-sitter chunker disabled")
+    logger.warning("tree-sitter not available, tree-sitter chunker disabled")
+
+
+# Map mememo language name -> (grammar module, capsule factory). Each
+# ``tree-sitter-<lang>`` wheel is self-contained and fully offline (no
+# runtime grammar download), unlike the now-unmaintained
+# ``tree-sitter-languages``. Imported lazily so a single missing grammar
+# only disables that one language.
+_GRAMMARS = {
+    "typescript": ("tree_sitter_typescript", "language_typescript"),
+    "tsx": ("tree_sitter_typescript", "language_tsx"),
+    "javascript": ("tree_sitter_javascript", "language"),
+    "go": ("tree_sitter_go", "language"),
+    "rust": ("tree_sitter_rust", "language"),
+    "java": ("tree_sitter_java", "language"),
+    "c": ("tree_sitter_c", "language"),
+    "cpp": ("tree_sitter_cpp", "language"),
+    "csharp": ("tree_sitter_c_sharp", "language"),
+}
+
+
+def get_language(name: str) -> "Language":
+    import importlib
+
+    if name not in _GRAMMARS:
+        raise LookupError(f"no tree-sitter grammar registered for {name!r}")
+    mod_name, factory = _GRAMMARS[name]
+    mod = importlib.import_module(mod_name)
+    return Language(getattr(mod, factory)())
+
+
+def get_parser(name: str) -> "Parser":
+    return Parser(get_language(name))
+
+
+def _run_query(language_obj, query_text: str, root):
+    """Run a tree-sitter query, returning ``[(node, capture_name), ...]``.
+
+    Bridges the API break between tree-sitter <=0.21 (``Language.query()`` +
+    ``Query.captures()`` -> list of tuples) and >=0.25 (``Query(lang, src)`` +
+    ``QueryCursor(query).captures()`` -> ``dict[str, list[Node]]``).
+    """
+    try:
+        from tree_sitter import Query
+
+        query = Query(language_obj, query_text)
+    except (ImportError, TypeError):
+        query = language_obj.query(query_text)
+
+    try:
+        from tree_sitter import QueryCursor
+
+        caps = QueryCursor(query).captures(root)
+    except (ImportError, AttributeError, TypeError):
+        caps = query.captures(root)
+
+    if isinstance(caps, dict):
+        return [(node, name) for name, nodes in caps.items() for node in nodes]
+    return caps
 
 
 # Language-specific query patterns
@@ -56,8 +114,7 @@ LANGUAGE_QUERIES = {
             name: (identifier) @function.name) @function.def
 
         (method_declaration
-            name: (field_identifier) @method.name
-            receiver: (parameter_list) @method.receiver) @method.def
+            name: (field_identifier) @method.name) @method.def
 
         (type_declaration
             (type_spec
@@ -138,8 +195,8 @@ class TreeSitterChunker(BaseChunker):
 
         if not TREE_SITTER_AVAILABLE:
             raise RuntimeError(
-                "tree-sitter-languages not installed. "
-                "Install with: pip install tree-sitter-languages"
+                "tree-sitter not installed. "
+                "Install with: pip install tree-sitter"
             )
 
     def _get_parser(self, language: str):
@@ -245,10 +302,9 @@ class TreeSitterChunker(BaseChunker):
         # Get query for language
         query_text = LANGUAGE_QUERIES[language]
         language_obj = self._languages[language]
-        query = language_obj.query(query_text)
 
-        # Extract captures
-        captures = query.captures(tree.root_node)
+        # Extract captures (version-compat across tree-sitter API break)
+        captures = _run_query(language_obj, query_text, tree.root_node)
 
         chunks = []
         processed_nodes = set()  # Avoid duplicates

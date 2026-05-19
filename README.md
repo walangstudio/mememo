@@ -147,7 +147,21 @@ bash install.sh -c all                       # all detected clients
 
 This creates a virtual environment at `.venv` and installs all dependencies.
 
+The bundled `install.sh` / `install.bat` auto-detect [`uv`](https://docs.astral.sh/uv/):
+when present they create the venv with uv (falling back to a pinned CPython 3.12
+when the system Python is outside the supported 3.10–3.14 range) and install with
+`uv pip`. Plain `python -m venv` + `pip` is used when uv is absent.
+
 ### Manual Install
+
+With uv (recommended — downloads CPython if the system one is unsupported):
+
+```bash
+uv venv --python 3.12          # or any 3.10-3.14; omit --python to use system
+uv pip install -e ".[web,graph]"
+```
+
+Or with stock venv + pip:
 
 ```bash
 python3 -m venv .venv

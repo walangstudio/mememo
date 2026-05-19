@@ -118,7 +118,7 @@ Please include:
 
 To add support for a new programming language:
 
-1. **Add tree-sitter parser** (if not already in `tree-sitter-languages`)
+1. **Add tree-sitter parser** (add the `tree-sitter-<lang>` wheel + register it in `_GRAMMARS` in `tree_sitter_chunker.py`)
 2. **Create chunker** in `mememo/chunking/`
 3. **Register language** in `mememo/chunking/factory.py`
 4. **Add tests** in `tests/`
