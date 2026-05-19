@@ -116,11 +116,25 @@ class Embedder:
         logger.info(f"  Dimension: {model_info['dimension']}")
         logger.info(f"  Size: ~{model_info['size_mb']} MB")
 
-        # Load model with device
-        self._model = SentenceTransformer(
-            model_info["name"],
-            device=self.device,
-        )
+        # Load model with device. Try cache-only first: a cached model must not
+        # trigger a network adapter-config probe (huggingface_hub + httpx raise
+        # "client has been closed" on that path). Fall back to a real download
+        # only when the model isn't cached yet.
+        try:
+            self._model = SentenceTransformer(
+                model_info["name"],
+                device=self.device,
+                local_files_only=True,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Cache-only load failed ({type(e).__name__}: {e}); "
+                f"falling back to download for {model_info['name']}"
+            )
+            self._model = SentenceTransformer(
+                model_info["name"],
+                device=self.device,
+            )
 
         self._dimension = self._model.get_sentence_embedding_dimension()
         logger.info(f"Model loaded successfully. Dimension: {self._dimension}")
