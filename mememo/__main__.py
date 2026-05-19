@@ -268,7 +268,7 @@ def main() -> None:
     )
     parser.add_argument("--version", action="version", version=f"mememo v{__version__}")
     parser.parse_args(args)
-    print(f"Starting mememo v{__version__}...")
+    print(f"Starting mememo v{__version__}...", file=sys.stderr)
     run()
 
 
