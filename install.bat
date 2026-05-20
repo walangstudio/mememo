@@ -387,8 +387,16 @@ echo ======================================
 echo.
 
 if "%STATUS%"=="true" (
-    set "_py_path=%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe"
-    if not exist "!_py_path!" (
+    set "_py_path="
+    rem A real venv has pyvenv.cfg. Falling back via python.exe alone breaks
+    rem when an uninstall was interrupted: python.exe stays, pyvenv.cfg goes,
+    rem and running that python prints "No pyvenv.cfg file".
+    if exist "%SCRIPT_DIR%\%VENV_DIR%\pyvenv.cfg" (
+        if exist "%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe" (
+            set "_py_path=%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe"
+        )
+    )
+    if not defined _py_path (
         for %%P in (python python3) do (
             where %%P >nul 2>&1 && set "_py_path=%%P"
         )
@@ -607,8 +615,13 @@ rem ========================================================
 
 rem ========================================================
 :do_uninstall
-    set "_py_path=%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe"
-    if not exist "!_py_path!" (
+    set "_py_path="
+    if exist "%SCRIPT_DIR%\%VENV_DIR%\pyvenv.cfg" (
+        if exist "%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe" (
+            set "_py_path=%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe"
+        )
+    )
+    if not defined _py_path (
         for %%P in (python python3) do (
             where %%P >nul 2>&1 && set "_py_path=%%P"
         )
@@ -631,7 +644,15 @@ rem ========================================================
     echo [INFO] Uninstalling...
 
     if exist "%VENV_DIR%" (
-        rmdir /s /q "%VENV_DIR%"
+        rmdir /s /q "%VENV_DIR%" >nul 2>&1
+        if exist "%VENV_DIR%" (
+            echo [ERROR] Could not remove %VENV_DIR% — files are locked.
+            echo [ERROR] mememo's MCP server is likely running and holding .pyd/.dll files open.
+            echo [ERROR] Close Claude Code ^(or any client running the mememo MCP server^) and re-run:
+            echo [ERROR]   install.bat -u
+            echo [ERROR] If the .venv is left half-deleted, you can manually remove it once nothing is using it.
+            exit /b 1
+        )
         echo [OK] Virtual environment removed
     )
 
