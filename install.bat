@@ -646,7 +646,7 @@ rem ========================================================
     if exist "%VENV_DIR%" (
         rmdir /s /q "%VENV_DIR%" >nul 2>&1
         if exist "%VENV_DIR%" (
-            echo [ERROR] Could not remove %VENV_DIR% — files are locked.
+            echo [ERROR] Could not remove %VENV_DIR% -- files are locked.
             echo [ERROR] mememo's MCP server is likely running and holding .pyd/.dll files open.
             echo [ERROR] Close Claude Code ^(or any client running the mememo MCP server^) and re-run:
             echo [ERROR]   install.bat -u
