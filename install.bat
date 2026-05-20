@@ -411,7 +411,7 @@ rem ========================================================
     python --version >nul 2>&1
     if not errorlevel 1 (
         for /f %%v in ('python -c "import sys;print('{}.{}'.format(*sys.version_info[:2]))" 2^>nul') do set "SYS_PY_VER=%%v"
-        for /f %%v in ('python -c "import sys;v=sys.version_info[:2];print(1 if (3,10)^<=v^<=(3,14) else 0)" 2^>nul') do set "SYS_PY_OK=%%v"
+        for /f %%v in ('python -c "import sys;print(1 if sys.version_info[:2] in [(3,10),(3,11),(3,12),(3,13),(3,14)] else 0)" 2^>nul') do set "SYS_PY_OK=%%v"
     )
     if "%SYS_PY_OK%"=="1" (
         echo [OK] Python %SYS_PY_VER% detected
@@ -466,15 +466,23 @@ rem ========================================================
     if "%DEV_MODE%"=="true" set "_extras=!_extras!dev,"
     if "%WITH_WEB%"=="true" set "_extras=!_extras!web,"
     if "%WITH_GRAPH%"=="true" set "_extras=!_extras!graph,"
-    set "_pip=pip"
-    if defined UV_BIN set "_pip=uv pip"
-    if defined _extras (
-        set "_extras=!_extras:~0,-1!"
-        echo [INFO] Installing mememo with extras: !_extras!
-        !_pip! install -e ".[!_extras!]"
+    if defined _extras set "_extras=!_extras:~0,-1!"
+    if defined UV_BIN (
+        if defined _extras (
+            echo [INFO] Installing mememo with extras: !_extras!
+            uv pip install -e ".[!_extras!]"
+        ) else (
+            echo [INFO] Installing mememo ^(production^)...
+            uv pip install -e .
+        )
     ) else (
-        echo [INFO] Installing mememo (production)...
-        !_pip! install -e .
+        if defined _extras (
+            echo [INFO] Installing mememo with extras: !_extras!
+            pip install -e ".[!_extras!]"
+        ) else (
+            echo [INFO] Installing mememo ^(production^)...
+            pip install -e .
+        )
     )
     if errorlevel 1 (echo [ERROR] Installation failed & exit /b 1)
     for /f %%v in ('python -c "from importlib.metadata import version; print(version(\"mememo\"))"') do set "_inst_ver=%%v"
