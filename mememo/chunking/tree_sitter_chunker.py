@@ -194,10 +194,7 @@ class TreeSitterChunker(BaseChunker):
         self._failed_languages: set = set()
 
         if not TREE_SITTER_AVAILABLE:
-            raise RuntimeError(
-                "tree-sitter not installed. "
-                "Install with: pip install tree-sitter"
-            )
+            raise RuntimeError("tree-sitter not installed. Install with: pip install tree-sitter")
 
     def _get_parser(self, language: str):
         """
