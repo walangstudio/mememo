@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Rust edge extraction** `walk_rust` emits the full edge taxonomy for Rust: IMPORTS (`use` paths), CALLS (bare/scoped/field callees), IMPLEMENTS (`impl Trait for Type`), and USES (method-to-`impl` type binding), plus function/method/struct/enum/trait chunks. Previously Rust produced chunks but zero edges.
+
+### Changed
+- `chunk_with_edges` now dispatches through the `ts_edges.EDGE_WALKERS` registry instead of hardcoded per-language branches, so adding a language is a single registry entry. Java/C/C++/C# still fall back to no edges until their walkers land.
+
 ## [0.6.2] - 2026-05-20
 
 ### Changed

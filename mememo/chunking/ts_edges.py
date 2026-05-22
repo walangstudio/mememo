@@ -1,4 +1,4 @@
-"""Tree-sitter edge emission for TypeScript / JavaScript / Go (FR-014).
+"""Tree-sitter edge emission for TypeScript / JavaScript / Go / Rust (FR-014).
 
 A single scope-aware walk per language emits both chunks (with proper
 ``parent_class``) and raw edges (IMPORTS / CALLS / EXTENDS / IMPLEMENTS /
@@ -215,7 +215,7 @@ def walk_typescript_or_javascript(
 
 
 def walk_go(
-    tree, code_bytes: bytes, module: str, file_path: str
+    tree, code_bytes: bytes, module: str, file_path: str, language: str | None = None
 ) -> tuple[list[Chunk], list[RawEdge]]:
     """Walk a Go AST and emit chunks + edges.
 
@@ -332,6 +332,157 @@ def walk_go(
     return chunks, edges
 
 
+def _rust_callee(node, code_bytes: bytes) -> str:
+    """Flatten a Rust ``call_expression`` callee to a path/dotted string.
+
+    Rust callees come as ``identifier`` (``f()``), ``scoped_identifier``
+    (``Foo::bar()``, joined with ``::``), or ``field_expression``
+    (``x.method()``, joined with ``.``). ``_flatten_member_expression``
+    doesn't know these node shapes, hence a Rust-specific flattener.
+    """
+    t = node.type
+    if t in ("identifier", "type_identifier", "field_identifier"):
+        return _text(node, code_bytes)
+    if t == "scoped_identifier":
+        path = node.child_by_field_name("path")
+        name = node.child_by_field_name("name")
+        left = _rust_callee(path, code_bytes) if path is not None else ""
+        right = _text(name, code_bytes) if name is not None else ""
+        return "::".join(p for p in (left, right) if p)
+    if t == "field_expression":
+        value = node.child_by_field_name("value")
+        field = node.child_by_field_name("field")
+        left = _rust_callee(value, code_bytes) if value is not None else ""
+        right = _text(field, code_bytes) if field is not None else ""
+        return f"{left}.{right}" if left and right else (left or right)
+    return _text(node, code_bytes)
+
+
+def walk_rust(
+    tree, code_bytes: bytes, module: str, file_path: str, language: str | None = None
+) -> tuple[list[Chunk], list[RawEdge]]:
+    """Walk a Rust AST and emit chunks + edges.
+
+    Edges:
+    - ``use_declaration`` (argument path) -> IMPORTS
+    - ``call_expression`` inside fn/method bodies -> CALLS
+    - ``impl Trait for Type`` -> Type IMPLEMENTS Trait
+    - method in an ``impl Type`` block -> method USES Type (binding, like Go receivers)
+    Chunks: ``function_item`` (function/method), ``struct_item`` / ``enum_item``
+    / ``trait_item`` (class).
+    """
+    chunks: list[Chunk] = []
+    edges: list[RawEdge] = []
+    scope_stack: list[tuple[str, str]] = [("module", module)]
+
+    def cur() -> str:
+        return ".".join(part for _, part in scope_stack)
+
+    def visit(node, impl_type: str | None = None) -> None:
+        t = node.type
+
+        if t == "use_declaration":
+            arg = node.child_by_field_name("argument")
+            if arg is not None:
+                path = _text(arg, code_bytes).strip()
+                if path:
+                    edges.append(RawEdge(module, path, "IMPORTS"))
+            return
+
+        if t == "function_item":
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            start, end = _line_range(node)
+            if impl_type:
+                qual = f"{cur()}.{impl_type}.{name}"
+                chunks.append(
+                    Chunk(
+                        text=_text(node, code_bytes),
+                        start_line=start,
+                        end_line=end,
+                        chunk_type="method",
+                        function_name=name,
+                        parent_class=impl_type,
+                        language="rust",
+                        file_path=file_path,
+                    )
+                )
+                edges.append(RawEdge(qual, impl_type, "USES"))
+                scope_stack.append(("function", f"{impl_type}.{name}"))
+            else:
+                chunks.append(
+                    Chunk(
+                        text=_text(node, code_bytes),
+                        start_line=start,
+                        end_line=end,
+                        chunk_type="function",
+                        function_name=name,
+                        language="rust",
+                        file_path=file_path,
+                    )
+                )
+                scope_stack.append(("function", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t in ("struct_item", "enum_item", "trait_item"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="class",
+                    class_name=name,
+                    language="rust",
+                    file_path=file_path,
+                )
+            )
+            if t == "trait_item":
+                # Default-method bodies (function_item) can still emit CALLS.
+                body = node.child_by_field_name("body")
+                if body is not None:
+                    for child in body.children:
+                        if child.type == "function_item":
+                            visit(child, impl_type=name)
+            return
+
+        if t == "impl_item":
+            type_node = node.child_by_field_name("type")
+            trait_node = node.child_by_field_name("trait")
+            impl_t = _text(type_node, code_bytes) if type_node is not None else None
+            if trait_node is not None and impl_t:
+                edges.append(RawEdge(impl_t, _text(trait_node, code_bytes), "IMPLEMENTS"))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    if child.type == "function_item":
+                        visit(child, impl_type=impl_t)
+                    else:
+                        visit(child)
+            return
+
+        if t == "call_expression":
+            fn = node.child_by_field_name("function")
+            if fn is not None:
+                tgt = _rust_callee(fn, code_bytes)
+                if tgt:
+                    edges.append(RawEdge(cur(), tgt, "CALLS"))
+
+        for child in node.children:
+            visit(child)
+
+    for child in tree.root_node.children:
+        visit(child)
+    return chunks, edges
+
+
 # Public dispatch — language -> walker.
 LanguageWalker = Callable[..., tuple[list[Chunk], list[RawEdge]]]
 
@@ -340,4 +491,5 @@ EDGE_WALKERS: dict[str, LanguageWalker] = {
     "tsx": walk_typescript_or_javascript,
     "javascript": walk_typescript_or_javascript,
     "go": walk_go,
+    "rust": walk_rust,
 }
