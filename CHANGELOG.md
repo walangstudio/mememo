@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2] - 2026-05-20
+
+### Changed
+- **tree-sitter dependency migrated** `tree-sitter-languages` (unmaintained, no wheels past Python 3.12) replaced with the per-language `tree-sitter-typescript/-javascript/-go/-rust/-java/-c/-cpp/-c-sharp` wheels. Each is self-contained and fully offline (no runtime grammar download), so mememo now installs and parses natively on Python 3.10–3.14 with plain pip. Core `tree-sitter` pin moved `>=0.20,<0.22` → `>=0.25.2,<0.26`
+- **tree-sitter chunker query API** updated for tree-sitter 0.25 (`Query(lang, src)` + `QueryCursor.captures()` returning `dict`). A version-compat shim keeps the legacy ≤0.21 path working too
+- **Installers are uv-aware** `install.sh` / `install.bat` detect `uv` and create the venv with it (falling back to pinned CPython 3.12 when the system Python is unsupported), then `uv pip install`. Plain `python -m venv` + `pip` remain the fallback when uv is absent
+
 ## [0.6.0] - 2026-05-13
 
 ### Added

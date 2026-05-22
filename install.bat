@@ -4,6 +4,8 @@ setlocal enabledelayedexpansion
 
 set VENV_DIR=.venv
 set PYTHON_MIN=3.10
+set PYTHON_MAX=3.14
+set PYTHON_PINNED=3.12
 set "SCRIPT_DIR=%~dp0"
 if "!SCRIPT_DIR:~-1!"=="\" set "SCRIPT_DIR=!SCRIPT_DIR:~0,-1!"
 
@@ -385,8 +387,16 @@ echo ======================================
 echo.
 
 if "%STATUS%"=="true" (
-    set "_py_path=%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe"
-    if not exist "!_py_path!" (
+    set "_py_path="
+    rem A real venv has pyvenv.cfg. Falling back via python.exe alone breaks
+    rem when an uninstall was interrupted: python.exe stays, pyvenv.cfg goes,
+    rem and running that python prints "No pyvenv.cfg file".
+    if exist "%SCRIPT_DIR%\%VENV_DIR%\pyvenv.cfg" (
+        if exist "%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe" (
+            set "_py_path=%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe"
+        )
+    )
+    if not defined _py_path (
         for %%P in (python python3) do (
             where %%P >nul 2>&1 && set "_py_path=%%P"
         )
@@ -402,9 +412,22 @@ goto do_install
 rem ========================================================
 :do_install
     echo [INFO] Checking Python version...
+    set "UV_BIN="
+    where uv >nul 2>&1 && set "UV_BIN=1"
+    set "SYS_PY_OK="
+    set "SYS_PY_VER=(none)"
     python --version >nul 2>&1
-    if errorlevel 1 (
-        echo [ERROR] Python not found. Install Python %PYTHON_MIN%+
+    if not errorlevel 1 (
+        for /f %%v in ('python -c "import sys;print('{}.{}'.format(*sys.version_info[:2]))" 2^>nul') do set "SYS_PY_VER=%%v"
+        for /f %%v in ('python -c "import sys;print(1 if sys.version_info[:2] in [(3,10),(3,11),(3,12),(3,13),(3,14)] else 0)" 2^>nul') do set "SYS_PY_OK=%%v"
+    )
+    if "%SYS_PY_OK%"=="1" (
+        echo [OK] Python %SYS_PY_VER% detected
+    ) else if defined UV_BIN (
+        echo [WARN] System Python %SYS_PY_VER% outside supported %PYTHON_MIN%-%PYTHON_MAX%; uv will provide Python %PYTHON_PINNED%
+    ) else (
+        echo [ERROR] Python %PYTHON_MIN%-%PYTHON_MAX% required, found %SYS_PY_VER%, and 'uv' is not installed.
+        echo [ERROR] Install uv ^(https://docs.astral.sh/uv/^) or a Python in %PYTHON_MIN%-%PYTHON_MAX%, then re-run.
         exit /b 1
     )
 
@@ -427,28 +450,47 @@ rem ========================================================
     if exist "%VENV_DIR%" (
         echo [INFO] Virtual environment exists at %VENV_DIR%
     ) else (
-        python -m venv %VENV_DIR%
+        if defined UV_BIN (
+            set "_uv_py=%PYTHON_PINNED%"
+            if "%SYS_PY_OK%"=="1" set "_uv_py=%SYS_PY_VER%"
+            echo [INFO] Using uv ^(Python !_uv_py!^)
+            uv venv --python !_uv_py! %VENV_DIR%
+        ) else (
+            python -m venv %VENV_DIR%
+        )
         echo [OK] Virtual environment created
     )
 
     echo [INFO] Activating virtual environment...
     call %VENV_DIR%\Scripts\activate.bat
 
-    echo [INFO] Upgrading pip...
-    python -m pip install --upgrade pip
+    if not defined UV_BIN (
+        echo [INFO] Upgrading pip...
+        python -m pip install --upgrade pip
+    )
 
     rem Build the extras list from --dev / --with-web / --with-graph flags.
     set "_extras="
     if "%DEV_MODE%"=="true" set "_extras=!_extras!dev,"
     if "%WITH_WEB%"=="true" set "_extras=!_extras!web,"
     if "%WITH_GRAPH%"=="true" set "_extras=!_extras!graph,"
-    if defined _extras (
-        set "_extras=!_extras:~0,-1!"
-        echo [INFO] Installing mememo with extras: !_extras!
-        pip install -e ".[!_extras!]"
+    if defined _extras set "_extras=!_extras:~0,-1!"
+    if defined UV_BIN (
+        if defined _extras (
+            echo [INFO] Installing mememo with extras: !_extras!
+            uv pip install -e ".[!_extras!]"
+        ) else (
+            echo [INFO] Installing mememo ^(production^)...
+            uv pip install -e .
+        )
     ) else (
-        echo [INFO] Installing mememo (production)...
-        pip install -e .
+        if defined _extras (
+            echo [INFO] Installing mememo with extras: !_extras!
+            pip install -e ".[!_extras!]"
+        ) else (
+            echo [INFO] Installing mememo ^(production^)...
+            pip install -e .
+        )
     )
     if errorlevel 1 (echo [ERROR] Installation failed & exit /b 1)
     for /f %%v in ('python -c "from importlib.metadata import version; print(version(\"mememo\"))"') do set "_inst_ver=%%v"
@@ -573,8 +615,13 @@ rem ========================================================
 
 rem ========================================================
 :do_uninstall
-    set "_py_path=%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe"
-    if not exist "!_py_path!" (
+    set "_py_path="
+    if exist "%SCRIPT_DIR%\%VENV_DIR%\pyvenv.cfg" (
+        if exist "%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe" (
+            set "_py_path=%SCRIPT_DIR%\%VENV_DIR%\Scripts\python.exe"
+        )
+    )
+    if not defined _py_path (
         for %%P in (python python3) do (
             where %%P >nul 2>&1 && set "_py_path=%%P"
         )
@@ -597,7 +644,15 @@ rem ========================================================
     echo [INFO] Uninstalling...
 
     if exist "%VENV_DIR%" (
-        rmdir /s /q "%VENV_DIR%"
+        rmdir /s /q "%VENV_DIR%" >nul 2>&1
+        if exist "%VENV_DIR%" (
+            echo [ERROR] Could not remove %VENV_DIR% -- files are locked.
+            echo [ERROR] mememo's MCP server is likely running and holding .pyd/.dll files open.
+            echo [ERROR] Close Claude Code ^(or any client running the mememo MCP server^) and re-run:
+            echo [ERROR]   install.bat -u
+            echo [ERROR] If the .venv is left half-deleted, you can manually remove it once nothing is using it.
+            exit /b 1
+        )
         echo [OK] Virtual environment removed
     )
 

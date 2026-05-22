@@ -1,7 +1,7 @@
 """v0.5 batch 3 — TypeScript / JavaScript / Go edge taxonomy via tree-sitter.
 
 Covers T016 (TypeScript), T017 (JavaScript), T018 (Go). Skipped when
-tree-sitter-languages isn't installed.
+the tree-sitter grammars aren't installed.
 """
 
 from __future__ import annotations
@@ -47,7 +47,8 @@ _stub_module("fastmcp", FastMCP=_Stub)
 
 # Tree-sitter is the actual subject under test here — skip the whole module
 # when it isn't installed.
-pytest.importorskip("tree_sitter_languages")
+pytest.importorskip("tree_sitter")
+pytest.importorskip("tree_sitter_go")
 
 from mememo.chunking.tree_sitter_chunker import TreeSitterChunker  # noqa: E402
 
