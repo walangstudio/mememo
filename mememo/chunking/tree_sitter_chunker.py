@@ -228,13 +228,14 @@ class TreeSitterChunker(BaseChunker):
     ) -> tuple[list[Chunk], list]:
         """Return ``(chunks, raw_edges)`` for one tree-sitter language.
 
-        Full edge taxonomy lands for TypeScript, JavaScript, and Go via
-        ``ts_edges``. Other supported languages emit only IMPORTS edges as
-        a fallback so the relations table still gets some coverage; the
-        per-language extractor for those is deferred to v0.7+.
+        Languages with a registered walker in ``ts_edges.EDGE_WALKERS``
+        (TypeScript, JavaScript, Go, Rust) get the full edge taxonomy.
+        Anything else falls back to chunking with no edges until a walker
+        is added to the registry.
         """
         from .base_chunker import RawEdge
         from .python_ast_chunker import file_path_to_module
+        from .ts_edges import EDGE_WALKERS
 
         if language is None:
             from .language_detector import detect_language
@@ -250,17 +251,11 @@ class TreeSitterChunker(BaseChunker):
         module = file_path_to_module(file_path.replace("\\", "/"))
         code_bytes = bytes(code, "utf-8")
 
-        if language in ("typescript", "tsx", "javascript"):
-            from .ts_edges import walk_typescript_or_javascript
+        walker = EDGE_WALKERS.get(language)
+        if walker is not None:
+            return walker(tree, code_bytes, module, file_path, language)
 
-            return walk_typescript_or_javascript(tree, code_bytes, module, file_path, language)
-        if language == "go":
-            from .ts_edges import walk_go
-
-            return walk_go(tree, code_bytes, module, file_path)
-
-        # Fallback: chunk via the legacy path; emit no edges. Future per-language
-        # extractors can be slotted into EDGE_WALKERS.
+        # No walker registered yet: chunk without edges.
         chunks = self.chunk(code, file_path, language)
         edges: list[RawEdge] = []
         return chunks, edges
