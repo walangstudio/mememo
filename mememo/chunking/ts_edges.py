@@ -1,4 +1,4 @@
-"""Tree-sitter edge emission for TypeScript / JavaScript / Go / Rust / Java (FR-014).
+"""Tree-sitter edge emission for TS / JS / Go / Rust / Java / C / C++ (FR-014).
 
 A single scope-aware walk per language emits both chunks (with proper
 ``parent_class``) and raw edges (IMPORTS / CALLS / EXTENDS / IMPLEMENTS /
@@ -626,6 +626,174 @@ def walk_java(
     return chunks, edges
 
 
+def _c_callee(node, code_bytes: bytes) -> str:
+    """Flatten a C/C++ ``call_expression`` callee to dotted/scoped form.
+
+    Shapes: ``identifier`` (``f()``), ``field_expression`` (``p.x`` / ``this->run``,
+    joined with ``.``), ``qualified_identifier`` (``std::sort``, joined with ``::``).
+    """
+    t = node.type
+    if t == "this":
+        return "this"
+    if t in ("identifier", "field_identifier", "type_identifier", "namespace_identifier"):
+        return _text(node, code_bytes)
+    if t == "field_expression":
+        arg = node.child_by_field_name("argument")
+        field = node.child_by_field_name("field")
+        left = _c_callee(arg, code_bytes) if arg is not None else ""
+        right = _text(field, code_bytes) if field is not None else ""
+        return f"{left}.{right}" if left and right else (left or right)
+    if t == "qualified_identifier":
+        scope = node.child_by_field_name("scope")
+        name = node.child_by_field_name("name")
+        left = _c_callee(scope, code_bytes) if scope is not None else ""
+        right = _c_callee(name, code_bytes) if name is not None else ""
+        return "::".join(p for p in (left, right) if p)
+    return _text(node, code_bytes)
+
+
+def _c_decl_name(declarator, code_bytes: bytes) -> str | None:
+    """Pull the function name out of a (possibly pointer/reference-wrapped) declarator."""
+    n = declarator
+    while n is not None and n.type in (
+        "pointer_declarator",
+        "reference_declarator",
+        "array_declarator",
+    ):
+        n = n.child_by_field_name("declarator")
+    if n is not None and n.type == "function_declarator":
+        inner = n.child_by_field_name("declarator")
+        if inner is not None:
+            if inner.type == "qualified_identifier":
+                name = inner.child_by_field_name("name")
+                return _text(name, code_bytes) if name is not None else _text(inner, code_bytes)
+            return _text(inner, code_bytes)
+    return None
+
+
+def walk_c_family(
+    tree, code_bytes: bytes, module: str, file_path: str, language: str | None = None
+) -> tuple[list[Chunk], list[RawEdge]]:
+    """Walk a C or C++ AST and emit chunks + edges (shared; C++ adds inheritance).
+
+    Verified against tree-sitter-c 0.24.2 / tree-sitter-cpp 0.23.4. Edges:
+    - ``preproc_include`` -> IMPORTS (header path, brackets/quotes stripped)
+    - ``class_specifier`` ``base_class_clause`` -> EXTENDS (C++; multiple bases all EXTENDS)
+    - ``call_expression`` -> CALLS (bare / ``this->m`` / ``Ns::f`` callees)
+    - method in a class body -> USES the class (binding); ``this->field`` read -> USES
+    Chunks: struct/class definition (class), function/method definition.
+    """
+    lang = language or "c"
+    chunks: list[Chunk] = []
+    edges: list[RawEdge] = []
+    scope_stack: list[tuple[str, str]] = [("module", module)]
+
+    def cur() -> str:
+        return ".".join(part for _, part in scope_stack)
+
+    def enclosing_class() -> str | None:
+        for kind, name in reversed(scope_stack):
+            if kind == "class":
+                return name
+        return None
+
+    def visit(node) -> None:
+        t = node.type
+
+        if t == "preproc_include":
+            path_node = node.child_by_field_name("path")
+            if path_node is not None:
+                path = _text(path_node, code_bytes).strip().strip('<>"')
+                if path:
+                    edges.append(RawEdge(module, path, "IMPORTS"))
+            return
+
+        if t in ("class_specifier", "struct_specifier"):
+            body = node.child_by_field_name("body")
+            if body is None:  # forward decl or type reference, not a definition
+                return
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            qual = f"{cur()}.{name}"
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="class",
+                    class_name=name,
+                    parent_class=enclosing_class(),
+                    language=lang,
+                    file_path=file_path,
+                )
+            )
+            base = node.child_by_field_name("base_class_clause")
+            if base is None:
+                for child in node.children:
+                    if child.type == "base_class_clause":
+                        base = child
+                        break
+            if base is not None:
+                for sub in base.children:
+                    if sub.type == "type_identifier":
+                        edges.append(RawEdge(qual, _text(sub, code_bytes), "EXTENDS"))
+            scope_stack.append(("class", name))
+            for child in body.children:
+                visit(child)
+            scope_stack.pop()
+            return
+
+        if t == "function_definition":
+            declarator = node.child_by_field_name("declarator")
+            name = _c_decl_name(declarator, code_bytes) if declarator is not None else None
+            name = name or "(anonymous)"
+            parent = enclosing_class()
+            start, end = _line_range(node)
+            qual = f"{cur()}.{name}"  # cur() already carries the enclosing class
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="method" if parent else "function",
+                    function_name=name,
+                    parent_class=parent,
+                    language=lang,
+                    file_path=file_path,
+                )
+            )
+            if parent:
+                edges.append(RawEdge(qual, parent, "USES"))
+            scope_stack.append(("function", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t == "call_expression":
+            fn = node.child_by_field_name("function")
+            if fn is not None:
+                tgt = _c_callee(fn, code_bytes)
+                if tgt:
+                    edges.append(RawEdge(cur(), tgt, "CALLS"))
+
+        if t == "field_expression":
+            arg = node.child_by_field_name("argument")
+            field = node.child_by_field_name("field")
+            if arg is not None and field is not None and _text(arg, code_bytes) == "this":
+                edges.append(RawEdge(cur(), _text(field, code_bytes), "USES"))
+
+        for child in node.children:
+            visit(child)
+
+    for child in tree.root_node.children:
+        visit(child)
+    return chunks, edges
+
+
 # Public dispatch — language -> walker.
 LanguageWalker = Callable[..., tuple[list[Chunk], list[RawEdge]]]
 
@@ -636,4 +804,6 @@ EDGE_WALKERS: dict[str, LanguageWalker] = {
     "go": walk_go,
     "rust": walk_rust,
     "java": walk_java,
+    "c": walk_c_family,
+    "cpp": walk_c_family,
 }

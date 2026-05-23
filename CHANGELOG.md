@@ -5,9 +5,10 @@
 ### Added
 - **Rust edge extraction** `walk_rust` emits the full edge taxonomy for Rust: IMPORTS (`use` paths), CALLS (bare/scoped/field callees), IMPLEMENTS (`impl Trait for Type`), and USES (method-to-`impl` type binding), plus function/method/struct/enum/trait chunks. Previously Rust produced chunks but zero edges.
 - **Java edge extraction** `walk_java` emits IMPORTS (dotted paths, wildcard preserved), EXTENDS (`superclass`), IMPLEMENTS (`super_interfaces`), CALLS (bare/`this`-qualified/field-access callees), and USES (`this` field reads), plus class/interface/method/constructor chunks. Verified against tree-sitter-java 0.23.5. Previously Java produced chunks but zero edges.
+- **C / C++ edge extraction** `walk_c_family` (shared) emits IMPORTS (`#include`, brackets/quotes stripped), CALLS (bare/`this->m`/`Ns::f` callees), and for C++ EXTENDS (`base_class_clause`, multiple bases) + USES (method-to-class binding and `this->field` reads), plus struct/class and function/method chunks. Verified against tree-sitter-c 0.24.2 / tree-sitter-cpp 0.23.4. Previously C/C++ produced chunks but zero edges.
 
 ### Changed
-- `chunk_with_edges` now dispatches through the `ts_edges.EDGE_WALKERS` registry instead of hardcoded per-language branches, so adding a language is a single registry entry. C/C++/C# still fall back to no edges until their walkers land.
+- `chunk_with_edges` now dispatches through the `ts_edges.EDGE_WALKERS` registry instead of hardcoded per-language branches, so adding a language is a single registry entry. C# still falls back to no edges until its walker lands.
 
 ## [0.6.2] - 2026-05-20
 
