@@ -1,4 +1,4 @@
-"""Tree-sitter edge emission for TypeScript / JavaScript / Go / Rust (FR-014).
+"""Tree-sitter edge emission for TypeScript / JavaScript / Go / Rust / Java (FR-014).
 
 A single scope-aware walk per language emits both chunks (with proper
 ``parent_class``) and raw edges (IMPORTS / CALLS / EXTENDS / IMPLEMENTS /
@@ -483,6 +483,149 @@ def walk_rust(
     return chunks, edges
 
 
+def _java_callee(node, code_bytes: bytes) -> str:
+    """Flatten a Java ``method_invocation`` / ``field_access`` callee to dotted form.
+
+    Shapes: bare ``helper()`` (name only), ``this.legs()`` (object=``this``),
+    ``System.out.println()`` (object=``field_access``). ``scoped_identifier``
+    text is already dotted.
+    """
+    t = node.type
+    if t == "this":
+        return "this"
+    if t in ("identifier", "type_identifier", "field_identifier", "scoped_identifier"):
+        return _text(node, code_bytes)
+    if t in ("field_access", "method_invocation"):
+        obj = node.child_by_field_name("object")
+        tail = node.child_by_field_name("field") or node.child_by_field_name("name")
+        left = _java_callee(obj, code_bytes) if obj is not None else ""
+        right = _text(tail, code_bytes) if tail is not None else ""
+        return f"{left}.{right}" if left and right else (left or right)
+    return _text(node, code_bytes)
+
+
+def walk_java(
+    tree, code_bytes: bytes, module: str, file_path: str, language: str | None = None
+) -> tuple[list[Chunk], list[RawEdge]]:
+    """Walk a Java AST and emit chunks + edges.
+
+    Verified against tree-sitter-java 0.23.5. Edges:
+    - ``import_declaration`` -> IMPORTS (dotted path; wildcard keeps ``.*``)
+    - ``class_declaration`` ``superclass`` -> EXTENDS
+    - ``class_declaration`` ``interfaces`` (super_interfaces > type_list) -> IMPLEMENTS
+    - ``method_invocation`` inside bodies -> CALLS (callee flattened)
+    - ``field_access`` on ``this`` -> USES
+    Chunks: class/interface (class), method/constructor (method).
+    """
+    chunks: list[Chunk] = []
+    edges: list[RawEdge] = []
+    scope_stack: list[tuple[str, str]] = [("module", module)]
+
+    def cur() -> str:
+        return ".".join(part for _, part in scope_stack)
+
+    def enclosing_class() -> str | None:
+        for kind, name in reversed(scope_stack):
+            if kind == "class":
+                return name
+        return None
+
+    def visit(node) -> None:
+        t = node.type
+
+        if t == "import_declaration":
+            path = ""
+            for child in node.children:
+                if child.type in ("scoped_identifier", "identifier"):
+                    path = _text(child, code_bytes)
+                    break
+            if path:
+                if any(c.type == "asterisk" for c in node.children):
+                    path = f"{path}.*"
+                edges.append(RawEdge(module, path, "IMPORTS"))
+            return
+
+        if t in ("class_declaration", "interface_declaration", "enum_declaration"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            qual = f"{cur()}.{name}"
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="class",
+                    class_name=name,
+                    parent_class=enclosing_class(),
+                    language="java",
+                    file_path=file_path,
+                )
+            )
+            superclass = node.child_by_field_name("superclass")
+            if superclass is not None:
+                for sub in superclass.children:
+                    if sub.type == "type_identifier":
+                        edges.append(RawEdge(qual, _text(sub, code_bytes), "EXTENDS"))
+            interfaces = node.child_by_field_name("interfaces")
+            if interfaces is not None:
+                for tlist in interfaces.children:
+                    if tlist.type == "type_list":
+                        for sub in tlist.children:
+                            if sub.type == "type_identifier":
+                                edges.append(RawEdge(qual, _text(sub, code_bytes), "IMPLEMENTS"))
+            scope_stack.append(("class", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t in ("method_declaration", "constructor_declaration"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            parent = enclosing_class()
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="method" if parent else "function",
+                    function_name=name,
+                    parent_class=parent,
+                    language="java",
+                    file_path=file_path,
+                )
+            )
+            scope_stack.append(("function", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t == "method_invocation":
+            tgt = _java_callee(node, code_bytes)
+            if tgt:
+                edges.append(RawEdge(cur(), tgt, "CALLS"))
+
+        if t == "field_access":
+            obj = node.child_by_field_name("object")
+            field = node.child_by_field_name("field")
+            if obj is not None and field is not None and _text(obj, code_bytes) == "this":
+                edges.append(RawEdge(cur(), _text(field, code_bytes), "USES"))
+
+        for child in node.children:
+            visit(child)
+
+    for child in tree.root_node.children:
+        visit(child)
+    return chunks, edges
+
+
 # Public dispatch — language -> walker.
 LanguageWalker = Callable[..., tuple[list[Chunk], list[RawEdge]]]
 
@@ -492,4 +635,5 @@ EDGE_WALKERS: dict[str, LanguageWalker] = {
     "javascript": walk_typescript_or_javascript,
     "go": walk_go,
     "rust": walk_rust,
+    "java": walk_java,
 }
