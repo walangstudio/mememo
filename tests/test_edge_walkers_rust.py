@@ -16,6 +16,11 @@ import pytest
 def _stub_module(name: str, **attrs: object) -> None:
     if name in sys.modules:
         return
+    try:  # never shadow a real, installed module (would leak into other tests)
+        __import__(name)
+        return
+    except ImportError:
+        pass
     m = _types.ModuleType(name)
     for k, v in attrs.items():
         setattr(m, k, v)
