@@ -222,7 +222,10 @@ class StorageManager:
                 source_memory_id TEXT NOT NULL,
                 target_memory_id TEXT,
                 target_symbol TEXT,
-                type TEXT NOT NULL CHECK (type IN ('IMPORTS','CALLS','EXTENDS','IMPLEMENTS','USES','DECORATED_BY')),
+                -- No DB-level CHECK on `type`: edge-type values are validated by
+                -- the RelationType / EdgeType Literals (Pydantic) before insert.
+                -- Adding a new edge type (v0.7 DOCUMENTS, etc.) needs no DDL change.
+                type TEXT NOT NULL,
                 confidence TEXT NOT NULL CHECK (confidence IN ('EXTRACTED','INFERRED','AMBIGUOUS')),
                 created_at_sha TEXT NOT NULL CHECK (length(created_at_sha) = 40),
                 stale INTEGER DEFAULT 0,
@@ -241,6 +244,39 @@ class StorageManager:
             );
         """)
         self.conn.commit()
+
+        # v0.7: drop the legacy relations.type CHECK so new edge types
+        # (DOCUMENTS, etc.) insert without a DDL migration each time. Enforcement
+        # moved to the RelationType/EdgeType Pydantic literals. Idempotent: only
+        # rebuilds a pre-existing table that still carries the hardcoded CHECK.
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='relations'"
+        ).fetchone()
+        if row and row[0] and "CHECK (type IN" in row[0]:
+            self.conn.executescript("""
+                BEGIN;
+                CREATE TABLE relations_new (
+                    id TEXT PRIMARY KEY,
+                    repo_id TEXT NOT NULL,
+                    branch TEXT NOT NULL,
+                    source_memory_id TEXT NOT NULL,
+                    target_memory_id TEXT,
+                    target_symbol TEXT,
+                    type TEXT NOT NULL,
+                    confidence TEXT NOT NULL CHECK (confidence IN ('EXTRACTED','INFERRED','AMBIGUOUS')),
+                    created_at_sha TEXT NOT NULL CHECK (length(created_at_sha) = 40),
+                    stale INTEGER DEFAULT 0,
+                    community INTEGER
+                );
+                INSERT INTO relations_new SELECT * FROM relations;
+                DROP TABLE relations;
+                ALTER TABLE relations_new RENAME TO relations;
+                CREATE INDEX IF NOT EXISTS idx_rel_src ON relations(source_memory_id, type);
+                CREATE INDEX IF NOT EXISTS idx_rel_tgt ON relations(target_memory_id, type);
+                CREATE INDEX IF NOT EXISTS idx_rel_repo ON relations(repo_id, branch);
+                COMMIT;
+            """)
+            self.conn.commit()
 
         # v0.3 -> v0.4 idempotent backfill (FR-001, FR-002, FR-003 / Task T011).
         # If memories exist without created_at_sha, seed from branch.commit_hash

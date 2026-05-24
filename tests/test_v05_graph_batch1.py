@@ -183,17 +183,74 @@ def test_t020_relations_table_round_trip(tmp_path: Path) -> None:
     assert rows[0].type == "CALLS"
 
 
-def test_t020_type_check_constraint(tmp_path: Path) -> None:
-    import sqlite3
+def test_t020_edge_type_validated_by_pydantic_not_db(tmp_path: Path) -> None:
+    # v0.7: the relations.type DB CHECK was dropped so new edge types
+    # (DOCUMENTS, ...) need no DDL migration. Enforcement moved to the
+    # RelationType Pydantic literal — that is where a bad type is rejected.
+    from pydantic import ValidationError
 
-    storage = StorageManager(base_dir=tmp_path / "store")
-    with pytest.raises(sqlite3.IntegrityError):
-        storage.conn.execute(
-            "INSERT INTO relations (id, repo_id, branch, source_memory_id, type, "
-            "confidence, created_at_sha) VALUES "
-            "(?, ?, ?, ?, ?, ?, ?)",
-            ("x", "r", "main", "m", "NOT_A_REAL_TYPE", "EXTRACTED", SHA),
+    from mememo.types.memory import Relation
+
+    with pytest.raises(ValidationError):
+        Relation(
+            id="x",
+            repo_id="r",
+            branch="main",
+            source_memory_id="m",
+            target_symbol="t",
+            type="NOT_A_REAL_TYPE",  # type: ignore[arg-type]
+            created_at_sha=SHA,
         )
+
+    # The DB no longer rejects arbitrary type strings, and the new DOCUMENTS
+    # edge type inserts cleanly.
+    storage = StorageManager(base_dir=tmp_path / "store")
+    storage.conn.execute(
+        "INSERT INTO relations (id, repo_id, branch, source_memory_id, target_symbol, "
+        "type, confidence, created_at_sha) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("d1", "r", "main", "m", "Foo", "DOCUMENTS", "INFERRED", SHA),
+    )
+    storage.conn.commit()
+    row = storage.conn.execute("SELECT type FROM relations WHERE id='d1'").fetchone()
+    assert row[0] == "DOCUMENTS"
+
+
+def test_t020_legacy_relations_check_is_migrated(tmp_path: Path) -> None:
+    # Simulate a pre-v0.7 DB whose relations table still carries the hardcoded
+    # type CHECK, then confirm _migrate_schema rebuilds it (rows preserved, new
+    # edge types insertable). This is the migration's highest-risk path.
+    storage = StorageManager(base_dir=tmp_path / "store")
+    storage.conn.executescript("""
+        DROP TABLE relations;
+        CREATE TABLE relations (
+            id TEXT PRIMARY KEY, repo_id TEXT NOT NULL, branch TEXT NOT NULL,
+            source_memory_id TEXT NOT NULL, target_memory_id TEXT, target_symbol TEXT,
+            type TEXT NOT NULL CHECK (type IN ('IMPORTS','CALLS','EXTENDS','IMPLEMENTS','USES','DECORATED_BY')),
+            confidence TEXT NOT NULL CHECK (confidence IN ('EXTRACTED','INFERRED','AMBIGUOUS')),
+            created_at_sha TEXT NOT NULL CHECK (length(created_at_sha) = 40),
+            stale INTEGER DEFAULT 0, community INTEGER
+        );
+        """)
+    storage.conn.execute(
+        "INSERT INTO relations (id, repo_id, branch, source_memory_id, target_symbol, "
+        "type, confidence, created_at_sha) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("old", "r", "main", "m", "Bar", "CALLS", "EXTRACTED", SHA),
+    )
+    storage.conn.commit()
+
+    storage._migrate_schema()  # idempotent rebuild
+
+    assert (
+        storage.conn.execute("SELECT type FROM relations WHERE id='old'").fetchone()[0] == "CALLS"
+    )
+    ddl = storage.conn.execute("SELECT sql FROM sqlite_master WHERE name='relations'").fetchone()[0]
+    assert "CHECK (type IN" not in ddl
+    storage.conn.execute(
+        "INSERT INTO relations (id, repo_id, branch, source_memory_id, target_symbol, "
+        "type, confidence, created_at_sha) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("new", "r", "main", "m", "Foo", "DOCUMENTS", "INFERRED", SHA),
+    )
+    storage.conn.commit()
 
 
 def test_t020_sha_length_check(tmp_path: Path) -> None:

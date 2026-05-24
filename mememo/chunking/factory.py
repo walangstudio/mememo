@@ -11,6 +11,7 @@ import logging
 
 from .base_chunker import BaseChunker, Chunk
 from .language_detector import detect_language, get_chunker_type
+from .markdown_chunker import MarkdownChunker
 from .python_ast_chunker import PythonASTChunker
 from .text_chunker import TextChunker
 from .tree_sitter_chunker import TREE_SITTER_AVAILABLE, TreeSitterChunker
@@ -33,6 +34,7 @@ class ChunkerFactory:
         self._python_chunker: PythonASTChunker | None = None
         self._tree_sitter_chunker: TreeSitterChunker | None = None
         self._text_chunker: TextChunker | None = None
+        self._markdown_chunker: MarkdownChunker | None = None
 
     def get_chunker(self, file_path: str) -> BaseChunker:
         """
@@ -59,6 +61,10 @@ class ChunkerFactory:
             # Python AST chunker
             logger.debug(f"Using Python AST chunker for {file_path}")
             return self._get_python_chunker()
+
+        elif chunker_type == "markdown":
+            logger.debug(f"Using markdown chunker for {file_path}")
+            return self._get_markdown_chunker()
 
         elif chunker_type == "tree_sitter":
             # Tree-sitter multi-language chunker
@@ -137,6 +143,12 @@ class ChunkerFactory:
         if self._text_chunker is None:
             self._text_chunker = TextChunker()
         return self._text_chunker
+
+    def _get_markdown_chunker(self) -> MarkdownChunker:
+        """Get or create markdown chunker (lazy loading)."""
+        if self._markdown_chunker is None:
+            self._markdown_chunker = MarkdownChunker()
+        return self._markdown_chunker
 
     def get_supported_languages(self) -> list[str]:
         """
