@@ -1,4 +1,4 @@
-"""Tree-sitter edge emission for TS / JS / Go / Rust / Java / C / C++ (FR-014).
+"""Tree-sitter edge emission for TS / JS / Go / Rust / Java / C / C++ / C# (FR-014).
 
 A single scope-aware walk per language emits both chunks (with proper
 ``parent_class``) and raw edges (IMPORTS / CALLS / EXTENDS / IMPLEMENTS /
@@ -794,6 +794,145 @@ def walk_c_family(
     return chunks, edges
 
 
+def walk_csharp(
+    tree, code_bytes: bytes, module: str, file_path: str, language: str | None = None
+) -> tuple[list[Chunk], list[RawEdge]]:
+    """Walk a C# AST and emit chunks + edges.
+
+    Verified against tree-sitter-c-sharp 0.23.5. Edges:
+    - ``using_directive`` -> IMPORTS (namespace/alias target, dotted)
+    - ``base_list`` on class/interface -> EXTENDS (C# does not separate base
+      class from interfaces in the grammar, so every base type is EXTENDS)
+    - ``invocation_expression`` -> CALLS (callee text: ``Helper`` / ``this.Run`` / ``Console.WriteLine``)
+    - method in a class -> USES the class; ``this.<member>`` -> USES
+    Chunks: class/interface/struct/enum/record (class), method/constructor.
+    """
+    chunks: list[Chunk] = []
+    edges: list[RawEdge] = []
+    scope_stack: list[tuple[str, str]] = [("module", module)]
+
+    def cur() -> str:
+        return ".".join(part for _, part in scope_stack)
+
+    def enclosing_class() -> str | None:
+        for kind, name in reversed(scope_stack):
+            if kind == "class":
+                return name
+        return None
+
+    def visit(node) -> None:
+        t = node.type
+
+        if t == "using_directive":
+            target = ""
+            for child in node.children:
+                if child.type in ("identifier", "qualified_name"):
+                    target = _text(child, code_bytes)  # last wins (alias target)
+            if target:
+                edges.append(RawEdge(module, target, "IMPORTS"))
+            return
+
+        if t == "namespace_declaration":
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(global)"
+            scope_stack.append(("namespace", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t in (
+            "class_declaration",
+            "interface_declaration",
+            "struct_declaration",
+            "enum_declaration",
+            "record_declaration",
+        ):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            qual = f"{cur()}.{name}"
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="class",
+                    class_name=name,
+                    parent_class=enclosing_class(),
+                    language="csharp",
+                    file_path=file_path,
+                )
+            )
+            for child in node.children:
+                if child.type == "base_list":
+                    for sub in child.children:
+                        if sub.type in ("identifier", "qualified_name"):
+                            edges.append(RawEdge(qual, _text(sub, code_bytes), "EXTENDS"))
+            scope_stack.append(("class", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t in ("method_declaration", "constructor_declaration", "local_function_statement"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            parent = enclosing_class()
+            qual = f"{cur()}.{name}"
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="method" if parent else "function",
+                    function_name=name,
+                    parent_class=parent,
+                    language="csharp",
+                    file_path=file_path,
+                )
+            )
+            if parent:
+                edges.append(RawEdge(qual, parent, "USES"))
+            scope_stack.append(("function", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t == "invocation_expression":
+            fn = node.child_by_field_name("function")
+            if fn is not None:
+                tgt = _text(fn, code_bytes).strip()
+                if tgt:
+                    edges.append(RawEdge(cur(), tgt, "CALLS"))
+
+        if t == "member_access_expression":
+            name = node.child_by_field_name("name")
+            expr = node.child_by_field_name("expression")
+            is_this = (
+                _text(expr, code_bytes).strip() == "this"
+                if expr is not None
+                else _text(node, code_bytes).startswith("this.")
+            )
+            if is_this and name is not None:
+                edges.append(RawEdge(cur(), _text(name, code_bytes), "USES"))
+
+        for child in node.children:
+            visit(child)
+
+    for child in tree.root_node.children:
+        visit(child)
+    return chunks, edges
+
+
 # Public dispatch — language -> walker.
 LanguageWalker = Callable[..., tuple[list[Chunk], list[RawEdge]]]
 
@@ -806,4 +945,5 @@ EDGE_WALKERS: dict[str, LanguageWalker] = {
     "java": walk_java,
     "c": walk_c_family,
     "cpp": walk_c_family,
+    "csharp": walk_csharp,
 }
