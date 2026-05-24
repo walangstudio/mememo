@@ -8,10 +8,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Literal
 
-ChunkType = Literal["function", "method", "class", "module", "import", "text"]
+ChunkType = Literal["function", "method", "class", "module", "import", "text", "heading"]
 
 # v0.5 typed-edge taxonomy (FR-013, FR-014). Stored in the relations table.
-EdgeType = Literal["IMPORTS", "CALLS", "EXTENDS", "IMPLEMENTS", "USES", "DECORATED_BY"]
+# v0.7 adds DOCUMENTS (doc section -> code symbol). Edge-type values are no
+# longer constrained at the DB layer (the relations.type CHECK was dropped);
+# this Literal + the RelationType Literal in types/memory.py are the source of
+# truth, enforced by Pydantic before every insert.
+EdgeType = Literal["IMPORTS", "CALLS", "EXTENDS", "IMPLEMENTS", "USES", "DECORATED_BY", "DOCUMENTS"]
 
 # Edge confidence — every edge is born EXTRACTED. Resolver may downgrade
 # to INFERRED (fuzzy match) or AMBIGUOUS (no resolution).

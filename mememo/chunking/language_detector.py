@@ -118,6 +118,11 @@ LANGUAGE_CATEGORIES = {
         "chunker": "tree_sitter",
         "description": "Svelte with tree-sitter",
     },
+    "markdown": {
+        "category": "markdown",
+        "chunker": "markdown",
+        "description": "Markdown docs (heading-scoped, pure-Python)",
+    },
 }
 
 

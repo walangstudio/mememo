@@ -7,6 +7,13 @@
 - **Java edge extraction** `walk_java` emits IMPORTS (dotted paths, wildcard preserved), EXTENDS (`superclass`), IMPLEMENTS (`super_interfaces`), CALLS (bare/`this`-qualified/field-access callees), and USES (`this` field reads), plus class/interface/method/constructor chunks. Verified against tree-sitter-java 0.23.5. Previously Java produced chunks but zero edges.
 - **C / C++ edge extraction** `walk_c_family` (shared) emits IMPORTS (`#include`, brackets/quotes stripped), CALLS (bare/`this->m`/`Ns::f` callees), and for C++ EXTENDS (`base_class_clause`, multiple bases) + USES (method-to-class binding and `this->field` reads), plus struct/class and function/method chunks. Verified against tree-sitter-c 0.24.2 / tree-sitter-cpp 0.23.4. Previously C/C++ produced chunks but zero edges.
 - **C# edge extraction** `walk_csharp` emits IMPORTS (`using`, dotted; alias resolves to its target), EXTENDS (`base_list` — C# does not separate base class from interfaces in-grammar, so every base type is EXTENDS), CALLS (bare/`this.M`/member-access callees), and USES (method-to-class binding and `this.<member>` reads), plus class/interface/struct/enum/record and method/constructor chunks, namespace-aware qualnames. Verified against tree-sitter-c-sharp 0.23.5. This closes the edge-graph gap — every language mememo chunks now emits edges.
+- **Markdown docs in the graph** `MarkdownChunker` (pure-Python, heading-scoped) chunks `.md` files into one chunk per heading section (parent/child hierarchy), and emits `DOCUMENTS` edges from a doc section to the code symbols it names — backtick-quoted identifiers and bare `path/to/file.ext` mentions, resolved against the indexed symbol table at INFERRED confidence. Doc qualnames are namespace-aware (`file.heading-slug`). New `heading` chunk type; new `DOCUMENTS` edge type.
+
+### Changed
+- **Edge-type values are no longer constrained at the DB layer.** The `relations.type` `CHECK` was dropped; edge types are validated by the `RelationType`/`EdgeType` literals (Pydantic) before insert. Existing databases are migrated in place (table rebuild, rows preserved). Adding a future edge type now needs no schema migration.
+
+### Fixed
+- **Edge pass now runs for every walker language.** `index_repository` hardcoded the edge-pass language list to the original five (python/typescript/tsx/javascript/go), so the Rust/Java/C/C++/C# walkers added in v0.7 never ran during real indexing. The list is now driven by `ts_edges.EDGE_WALKERS`, so a new walker is picked up automatically.
 
 ## [0.6.2] - 2026-05-20
 
