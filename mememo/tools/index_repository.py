@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..chunking import ChunkerFactory
+from ..chunking.ts_edges import EDGE_WALKERS
 from ..types.memory import CreateMemoryParams, MemoryRelationships
 from .schemas import IndexRepositoryParams, IndexRepositoryResponse
 
@@ -22,6 +23,13 @@ if TYPE_CHECKING:
     from ..core.memory_manager import MemoryManager
 
 logger = logging.getLogger(__name__)
+
+# Languages that emit edges in the v0.5 edge pass: Python (AST chunker) plus
+# every tree-sitter walker registered in ts_edges.EDGE_WALKERS. Driven by the
+# registry so a new language walker is picked up here automatically instead of
+# silently producing no edges (regression guard — rust/java/c/cpp/csharp were
+# walked but never indexed because this list was hardcoded to the original 5).
+EDGE_PASS_LANGUAGES: frozenset[str] = frozenset({"python", *EDGE_WALKERS})
 
 
 async def index_repository(
@@ -138,7 +146,7 @@ async def index_repository(
                         parts.append(chunk.function_name)
                     symbols.append(SymbolEntry(memory_id=memory.id, qualname=".".join(parts)))
 
-                if file_lang in ("python", "typescript", "tsx", "javascript", "go"):
+                if file_lang in EDGE_PASS_LANGUAGES:
                     edge_inputs.append((rel_path, content, file_lang))
 
                 files_indexed += 1
@@ -335,7 +343,7 @@ async def _run_edge_pass(
         try:
             if lang == "python":
                 _, edges = py_chunker.chunk_with_edges(content, rel_path)
-            elif lang in ("typescript", "tsx", "javascript", "go") and ts_chunker is not None:
+            elif lang in EDGE_WALKERS and ts_chunker is not None:
                 _, edges = ts_chunker.chunk_with_edges(content, rel_path, lang)
             else:
                 continue
