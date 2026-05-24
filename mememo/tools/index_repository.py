@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # registry so a new language walker is picked up here automatically instead of
 # silently producing no edges (regression guard — rust/java/c/cpp/csharp were
 # walked but never indexed because this list was hardcoded to the original 5).
-EDGE_PASS_LANGUAGES: frozenset[str] = frozenset({"python", *EDGE_WALKERS})
+EDGE_PASS_LANGUAGES: frozenset[str] = frozenset({"python", "markdown", *EDGE_WALKERS})
 
 
 async def index_repository(
@@ -329,7 +329,10 @@ async def _run_edge_pass(
     branch = context.branch.name
     commit_sha = coerce_sha(context.branch.commit_hash)
 
+    from ..chunking.markdown_chunker import MarkdownChunker
+
     py_chunker = PythonASTChunker()
+    md_chunker = MarkdownChunker()
     ts_chunker = None
     try:
         from ..chunking.tree_sitter_chunker import TreeSitterChunker
@@ -343,6 +346,8 @@ async def _run_edge_pass(
         try:
             if lang == "python":
                 _, edges = py_chunker.chunk_with_edges(content, rel_path)
+            elif lang == "markdown":
+                _, edges = md_chunker.chunk_with_edges(content, rel_path)
             elif lang in EDGE_WALKERS and ts_chunker is not None:
                 _, edges = ts_chunker.chunk_with_edges(content, rel_path, lang)
             else:
