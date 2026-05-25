@@ -97,3 +97,43 @@ def test_empty_and_headingless_docs_do_not_crash():
     chunks, edges = MarkdownChunker().chunk_with_edges("just prose, no heading", "x.md")
     assert chunks and chunks[0].chunk_type == "text"
     assert edges == []
+
+
+def test_documents_edges_resolve_end_to_end():
+    # Regression guard: the DOCUMENTS edge source_qualname MUST equal the
+    # qualname the indexer registers for the heading chunk, or resolve_edges
+    # silently drops the edge (it skips edges with an unknown source). The
+    # indexer now registers chunk.qualname verbatim — simulate that here.
+    from mememo.core.symbol_resolver import SymbolEntry, resolve_edges
+
+    md = "# Guide\n\nUses `StorageManager` for persistence.\n"
+    chunks, edges = MarkdownChunker().chunk_with_edges(md, "docs/guide.md")
+
+    symbols = [
+        SymbolEntry(memory_id=f"doc{i}", qualname=c.qualname)
+        for i, c in enumerate(chunks)
+        if c.qualname
+    ]
+    assert symbols, "heading chunk must carry a qualname for the indexer to register"
+    symbols.append(
+        SymbolEntry(memory_id="code1", qualname="mememo.core.storage_manager.StorageManager")
+    )
+
+    rels = resolve_edges(edges, repo_id="r", branch="main", commit_sha="a" * 40, symbols=symbols)
+    docs = [r for r in rels if r.type == "DOCUMENTS"]
+    assert docs, "DOCUMENTS edge was dropped — source qualname mismatch regression"
+    assert any(r.target_memory_id == "code1" for r in docs)
+
+
+def test_heading_chunk_line_range_is_inclusive():
+    chunks, _ = MarkdownChunker().chunk_with_edges("# A\nline1\nline2\n", "x.md")
+    h = next(c for c in chunks if c.function_name == "A")
+    assert h.start_line == 1
+    assert h.end_line == 3  # heading line + 2 body lines (was off-by-one: 2)
+
+
+def test_url_is_not_emitted_as_a_path_target():
+    md = "# A\n\nSee https://example.com/docs/setup.py for details.\n"
+    _, edges = MarkdownChunker().chunk_with_edges(md, "x.md")
+    targets = {e.target_label for e in edges}
+    assert not any("example.com" in t for t in targets)

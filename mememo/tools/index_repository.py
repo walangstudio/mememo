@@ -139,12 +139,19 @@ async def index_repository(
                     memory = await memory_manager.create_memory(create_params, cwd=str(repo_path))
                     chunks_created += 1
 
-                    parts = [module]
-                    if chunk.class_name:
-                        parts.append(chunk.class_name)
-                    if chunk.function_name:
-                        parts.append(chunk.function_name)
-                    symbols.append(SymbolEntry(memory_id=memory.id, qualname=".".join(parts)))
+                    if chunk.qualname:
+                        # Chunker supplied an explicit qualname (e.g. Markdown
+                        # slug-path); register it verbatim so edges emitted with
+                        # the same source_qualname resolve.
+                        qualname = chunk.qualname
+                    else:
+                        parts = [module]
+                        if chunk.class_name:
+                            parts.append(chunk.class_name)
+                        if chunk.function_name:
+                            parts.append(chunk.function_name)
+                        qualname = ".".join(parts)
+                    symbols.append(SymbolEntry(memory_id=memory.id, qualname=qualname))
 
                 if file_lang in EDGE_PASS_LANGUAGES:
                     edge_inputs.append((rel_path, content, file_lang))

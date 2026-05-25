@@ -255,6 +255,7 @@ class StorageManager:
         if row and row[0] and "CHECK (type IN" in row[0]:
             self.conn.executescript("""
                 BEGIN;
+                DROP TABLE IF EXISTS relations_new;
                 CREATE TABLE relations_new (
                     id TEXT PRIMARY KEY,
                     repo_id TEXT NOT NULL,

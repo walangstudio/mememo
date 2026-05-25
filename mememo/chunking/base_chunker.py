@@ -64,6 +64,14 @@ class Chunk:
     file_path: str | None = None
     complexity: int | None = None  # Cyclomatic complexity (future)
 
+    # Explicit symbol qualname for this chunk. When set, the indexer registers
+    # the chunk's symbol under this exact string (instead of deriving it from
+    # module/class/function). Lets a chunker keep its emitted edge
+    # source_qualnames in sync with the registered symbol — required for
+    # Markdown doc sections, whose slug-path qualname doesn't match the
+    # module.heading-text derivation. None = derive as before.
+    qualname: str | None = None
+
     def __repr__(self) -> str:
         if self.function_name:
             return f"Chunk(function={self.function_name}, lines={self.start_line}-{self.end_line})"
