@@ -31,6 +31,9 @@ _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 _SYMBOL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:[.:]{1,2}[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?$")
 # A bare file path mention: at least one '/' and a dotted extension.
 _PATH_RE = re.compile(r"\b([\w./-]+/[\w.-]+\.[A-Za-z0-9]+)\b")
+# URLs are stripped before path scanning so a link like https://host/x.py
+# doesn't masquerade as a repo path (links are out of scope here — P2).
+_URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
 
 
 def _slug(text: str) -> str:
@@ -81,9 +84,14 @@ class MarkdownChunker(BaseChunker):
             body = section["body"]
             text = "\n".join(body).rstrip()
             start = section["start"] + 1
-            end = section["start"] + max(len(body), 1)
+            # Section spans the heading line plus its body lines.
+            end = start + len(body)
             parent = section["parent_heading"]
-            qual_parts = [module, *section["slug_path"]]
+            # Slug-path qualname is the chunk's identity AND the source of every
+            # DOCUMENTS edge it emits — they MUST match or the resolver drops the
+            # edge (it skips edges whose source qualname is unknown). The indexer
+            # registers the chunk under Chunk.qualname, so both sides agree.
+            source_qual = ".".join([module, *section["slug_path"]])
             chunks.append(
                 Chunk(
                     text=(
@@ -98,9 +106,9 @@ class MarkdownChunker(BaseChunker):
                     parent_class=parent,
                     language="markdown",
                     file_path=file_path,
+                    qualname=source_qual,
                 )
             )
-            source_qual = ".".join(qual_parts)
             for target in _scan_symbols(body):
                 edges.append(RawEdge(source_qual, target, "DOCUMENTS", "INFERRED"))
 
@@ -194,7 +202,7 @@ def _scan_symbols(body_lines: list[str]) -> list[str]:
             if sym and sym not in seen:
                 seen.add(sym)
                 targets.append(sym)
-        for path in _PATH_RE.findall(line):
+        for path in _PATH_RE.findall(_URL_RE.sub(" ", line)):
             if path not in seen:
                 seen.add(path)
                 targets.append(path)

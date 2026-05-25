@@ -14,6 +14,7 @@
 
 ### Fixed
 - **Edge pass now runs for every walker language.** `index_repository` hardcoded the edge-pass language list to the original five (python/typescript/tsx/javascript/go), so the Rust/Java/C/C++/C# walkers added in v0.7 never ran during real indexing. The list is now driven by `ts_edges.EDGE_WALKERS`, so a new walker is picked up automatically.
+- **Markdown `DOCUMENTS` edges now actually persist.** The chunker emitted edges with a slug-path `source_qualname` while the indexer registered the heading chunk under `module.<heading-text>`, so the resolver (which drops edges with an unknown source) discarded every doc→code edge. `Chunk` gained an explicit `qualname` the indexer registers verbatim, keeping both sides in sync; an end-to-end resolve test guards it. Also fixed heading-chunk `end_line` off-by-one and stopped URLs being emitted as bare-path edge targets. The `relations.type` migration is now re-runnable (`DROP TABLE IF EXISTS relations_new`).
 
 ## [0.6.2] - 2026-05-20
 
