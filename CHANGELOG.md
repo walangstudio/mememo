@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-24
+
 ### Added
 - **Rust edge extraction** `walk_rust` emits the full edge taxonomy for Rust: IMPORTS (`use` paths), CALLS (bare/scoped/field callees), IMPLEMENTS (`impl Trait for Type`), and USES (method-to-`impl` type binding), plus function/method/struct/enum/trait chunks. Previously Rust produced chunks but zero edges.
 - **Java edge extraction** `walk_java` emits IMPORTS (dotted paths, wildcard preserved), EXTENDS (`superclass`), IMPLEMENTS (`super_interfaces`), CALLS (bare/`this`-qualified/field-access callees), and USES (`this` field reads), plus class/interface/method/constructor chunks. Verified against tree-sitter-java 0.23.5. Previously Java produced chunks but zero edges.
