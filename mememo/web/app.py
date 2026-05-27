@@ -62,6 +62,7 @@ def create_app(storage_getter=None) -> FastAPI:
         repo_id: str | None = None,
         branch: str | None = None,
         as_of_sha: str | None = None,
+        q: str | None = None,
         limit: int = Query(default=50, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, Any]:
@@ -80,6 +81,14 @@ def create_app(storage_getter=None) -> FastAPI:
         if branch:
             conditions.append("branch_name = ?")
             params.append(branch)
+        if q:
+            # Substring search over the human-meaningful columns. '%' in the
+            # query is treated as a wildcard (fine for a dev search box).
+            like = f"%{q}%"
+            conditions.append(
+                "(file_path LIKE ? OR function_name LIKE ? OR class_name LIKE ?)"
+            )
+            params.extend([like, like, like])
         if as_of_sha:
             from ..types import SHA_PREFIX_PATTERN
 

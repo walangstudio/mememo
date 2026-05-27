@@ -19,6 +19,7 @@ const state = {
   page: 0,
   pageSize: 50,
   total: 0,
+  q: '', // memories-table text search (file / fn / class)
   asOfSha: null, // null = live; sha prefix = filter to memories alive at that SHA
   aliveSet: null, // populated from /snapshots so the graph view can dim nodes
   colorByCommunity: false, // off = neutral fill; on = community palette
@@ -58,6 +59,7 @@ const shaInput = $('sha-input');
 const snapshotBtn = $('snapshot');
 const snapshotClearBtn = $('snapshot-clear');
 const snapshotState = $('snapshot-state');
+const memSearch = $('mem-search');
 const tbody = document.querySelector('#memories tbody');
 const pageInfo = $('page-info');
 const prevBtn = $('prev');
@@ -124,6 +126,7 @@ async function loadMemories() {
         repo_id: state.repoId,
         branch: state.branch,
         as_of_sha: state.asOfSha,
+        q: state.q,
         limit: state.pageSize,
         offset: state.page * state.pageSize,
       })
@@ -479,6 +482,15 @@ resetBtn.addEventListener('click', () => {
 });
 snapshotBtn.addEventListener('click', () => applySnapshot());
 snapshotClearBtn.addEventListener('click', () => clearSnapshot());
+let searchTimer = null;
+memSearch.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.q = memSearch.value.trim();
+    state.page = 0;
+    loadMemories();
+  }, 200);
+});
 prevBtn.addEventListener('click', () => {
   state.page = Math.max(0, state.page - 1);
   loadMemories();
