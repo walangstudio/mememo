@@ -163,11 +163,37 @@ def test_memories_as_of_sha_validates_hex(client: TestClient) -> None:
     assert r.status_code == 400
 
 
+def test_memories_search_filters_by_q(client: TestClient) -> None:
+    # q matches file_path/function_name/class_name substrings.
+    r = client.get("/memories", params={"repo_id": "r", "q": "a.py"})
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["id"] == "m1"
+    # Matches function_name too (m1.function_name == 'f', m2 == 'g', m3 == 'h').
+    assert {
+        row["id"]
+        for row in client.get("/memories", params={"repo_id": "r", "q": "h"}).json()["items"]
+    } == {"m3"}
+    # No match -> empty.
+    assert client.get("/memories", params={"repo_id": "r", "q": "zzz"}).json()["total"] == 0
+    # '_' is a literal, not a LIKE wildcard — no seed path contains one, so 0
+    # (a bare wildcard would otherwise match every row).
+    assert client.get("/memories", params={"repo_id": "r", "q": "_"}).json()["total"] == 0
+
+
 def test_relations_returns_edges(client: TestClient) -> None:
     r = client.get("/relations", params={"repo_id": "r", "branch": "main"})
     assert r.status_code == 200
     items = r.json()["items"]
     assert {row["id"] for row in items} == {"rel1", "rel2"}
+    # P2: endpoints carry memory labels via the JOIN (rel1: m1 -> m2).
+    rel1 = next(row for row in items if row["id"] == "rel1")
+    assert rel1["source_file"] == "a.py"
+    assert rel1["source_class"] == "C"
+    assert rel1["source_fn"] == "f"
+    assert rel1["target_file"] == "b.py"
+    assert rel1["target_fn"] == "g"
 
 
 def test_relations_community_filter(client: TestClient) -> None:

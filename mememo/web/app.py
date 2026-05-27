@@ -62,6 +62,7 @@ def create_app(storage_getter=None) -> FastAPI:
         repo_id: str | None = None,
         branch: str | None = None,
         as_of_sha: str | None = None,
+        q: str | None = None,
         limit: int = Query(default=50, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, Any]:
@@ -80,6 +81,17 @@ def create_app(storage_getter=None) -> FastAPI:
         if branch:
             conditions.append("branch_name = ?")
             params.append(branch)
+        if q:
+            # Literal substring search over the human-meaningful columns. Escape
+            # LIKE metacharacters (\ % _) so e.g. 'audit_tail' matches literally.
+            escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{escaped}%"
+            conditions.append(
+                "(file_path LIKE ? ESCAPE '\\' "
+                "OR function_name LIKE ? ESCAPE '\\' "
+                "OR class_name LIKE ? ESCAPE '\\')"
+            )
+            params.extend([like, like, like])
         if as_of_sha:
             from ..types import SHA_PREFIX_PATTERN
 
@@ -149,19 +161,29 @@ def create_app(storage_getter=None) -> FastAPI:
         conditions: list[str] = []
         params: list = []
         if repo_id:
-            conditions.append("repo_id = ?")
+            conditions.append("r.repo_id = ?")
             params.append(repo_id)
         if branch:
-            conditions.append("branch = ?")
+            conditions.append("r.branch = ?")
             params.append(branch)
         if community is not None:
-            conditions.append("community = ?")
+            conditions.append("r.community = ?")
             params.append(community)
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        # LEFT JOIN memories on both endpoints so the client can label nodes
+        # (file_path + class.fn) instead of showing raw UUIDs. LEFT keeps edges
+        # whose target is an unresolved symbol (target_memory_id IS NULL).
         rows = storage.conn.execute(
-            "SELECT id, source_memory_id, target_memory_id, target_symbol, "
-            "       type, confidence, community, created_at_sha "
-            f"FROM relations{where} LIMIT ?",
+            "SELECT r.id, r.source_memory_id, r.target_memory_id, r.target_symbol, "
+            "       r.type, r.confidence, r.community, r.created_at_sha, "
+            "       sm.file_path AS source_file, sm.class_name AS source_class, "
+            "       sm.function_name AS source_fn, "
+            "       tm.file_path AS target_file, tm.class_name AS target_class, "
+            "       tm.function_name AS target_fn "
+            "FROM relations r "
+            "LEFT JOIN memories sm ON sm.id = r.source_memory_id "
+            "LEFT JOIN memories tm ON tm.id = r.target_memory_id "
+            f"{where} LIMIT ?",
             params + [limit],
         ).fetchall()
         return {"count": len(rows), "items": [dict(r) for r in rows]}

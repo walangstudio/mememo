@@ -19,11 +19,46 @@ const state = {
   page: 0,
   pageSize: 50,
   total: 0,
+  q: '', // memories-table text search (file / fn / class)
   asOfSha: null, // null = live; sha prefix = filter to memories alive at that SHA
   aliveSet: null, // populated from /snapshots so the graph view can dim nodes
+  colorByCommunity: false, // off = neutral fill; on = community palette
+  focusIds: null, // selected node + neighbors; highlights matching table rows
 };
 
+// Edge stroke by relation type. Unknown types fall back to the muted gray.
+const EDGE_COLORS = {
+  CALLS: '#6cbef7',
+  IMPORTS: '#6cf7a9',
+  EXTENDS: '#f7a06c',
+  IMPLEMENTS: '#c98cf7',
+  USES: '#f7e06c',
+  DECORATED_BY: '#f76c9c',
+  DOCUMENTS: '#8a93a3',
+};
+const edgeColor = (t) => EDGE_COLORS[t] || '#5a667a';
+
 const $ = (id) => document.getElementById(id);
+
+// Escape before interpolating user-derived strings (labels come from indexed
+// file paths/symbols) into innerHTML.
+const esc = (s) =>
+  String(s).replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]
+  );
+
+const basename = (p) => (p ? p.split(/[\\/]/).pop() : '');
+
+// Compact node label: "file.py:Class.fn", falling back to the resolved
+// symbol, then a short UUID. Built client-side from the /relations parts.
+function makeLabel(file, cls, fn, symbol, id) {
+  const qualified = `${cls ? cls + '.' : ''}${fn || ''}`;
+  if (file) return qualified ? `${basename(file)}:${qualified}` : basename(file);
+  if (qualified) return qualified;
+  if (symbol) return symbol;
+  return (id || '').slice(0, 8);
+}
 
 const repoSelect = $('repo-select');
 const branchInput = $('branch-input');
@@ -33,12 +68,26 @@ const shaInput = $('sha-input');
 const snapshotBtn = $('snapshot');
 const snapshotClearBtn = $('snapshot-clear');
 const snapshotState = $('snapshot-state');
+const memSearch = $('mem-search');
 const tbody = document.querySelector('#memories tbody');
 const pageInfo = $('page-info');
 const prevBtn = $('prev');
 const nextBtn = $('next');
 const svg = d3.select('#graph');
 const legend = $('graph-legend');
+const fitBtn = $('fit');
+const resetBtn = $('reset');
+const communityToggle = $('community-toggle');
+const graphSearchInput = $('graph-search');
+const nodeDetail = $('node-detail');
+
+// Set per render so the header controls can drive the live graph.
+let zoomBehavior = null;
+let fitView = () => {};
+let recolorNodes = () => {};
+let graphSearch = () => {};
+let selectedId = null; // clicked node; persists hover-highlight until cleared
+let currentSim = null; // live force sim; stopped before the next render
 
 async function fetchJson(url) {
   const r = await fetch(url);
@@ -89,6 +138,7 @@ async function loadMemories() {
         repo_id: state.repoId,
         branch: state.branch,
         as_of_sha: state.asOfSha,
+        q: state.q,
         limit: state.pageSize,
         offset: state.page * state.pageSize,
       })
@@ -97,6 +147,7 @@ async function loadMemories() {
   tbody.innerHTML = '';
   data.items.forEach((row) => {
     const tr = document.createElement('tr');
+    tr.dataset.id = row.id;
     const cls = row.class_name ? `${row.class_name}.` : '';
     const fn = row.function_name || '';
     const risk = row.risk_grade || '';
@@ -113,6 +164,7 @@ async function loadMemories() {
   pageInfo.textContent = `${start}–${
     state.page * state.pageSize + data.items.length
   } of ${data.total}${state.asOfSha ? ` (as of ${state.asOfSha})` : ''}`;
+  applyTableFocus(); // re-apply any active node focus after the rows re-render
 }
 
 async function loadGraph() {
@@ -130,11 +182,20 @@ async function loadGraph() {
 
 function renderGraph(edges) {
   const nodeIds = new Set();
+  const labels = new Map();
   const links = [];
   edges.forEach((e) => {
     if (!e.target_memory_id) return; // skip unresolved
     nodeIds.add(e.source_memory_id);
     nodeIds.add(e.target_memory_id);
+    labels.set(
+      e.source_memory_id,
+      makeLabel(e.source_file, e.source_class, e.source_fn, null, e.source_memory_id)
+    );
+    labels.set(
+      e.target_memory_id,
+      makeLabel(e.target_file, e.target_class, e.target_fn, e.target_symbol, e.target_memory_id)
+    );
     links.push({
       source: e.source_memory_id,
       target: e.target_memory_id,
@@ -142,14 +203,58 @@ function renderGraph(edges) {
       community: e.community,
     });
   });
+  // Degree + adjacency from the raw id-keyed links (forceLink mutates
+  // source/target into node objects later, so read them now while still ids).
+  const degree = new Map();
+  const neighborIds = new Map(); // id -> Set(neighbor ids)
+  const incidentEdges = new Map(); // id -> [{other, type, dir}]
+  const addIncident = (a, b, type, dir) => {
+    if (!neighborIds.has(a)) neighborIds.set(a, new Set());
+    neighborIds.get(a).add(b);
+    if (!incidentEdges.has(a)) incidentEdges.set(a, []);
+    incidentEdges.get(a).push({ other: b, type, dir });
+  };
+  links.forEach((l) => {
+    degree.set(l.source, (degree.get(l.source) || 0) + 1);
+    degree.set(l.target, (degree.get(l.target) || 0) + 1);
+    addIncident(l.source, l.target, l.type, 'out');
+    addIncident(l.target, l.source, l.type, 'in');
+  });
   const nodes = Array.from(nodeIds).map((id) => ({
     id,
+    label: labels.get(id) || id.slice(0, 8),
+    degree: degree.get(id) || 0,
     faded: state.aliveSet && !state.aliveSet.has(id),
   }));
+  const maxDegree = d3.max(nodes, (d) => d.degree) || 1;
+  const radiusFor = d3.scaleSqrt().domain([1, maxDegree]).range([4, 14]).clamp(true);
+
+  // Tear down the previous render: stop the old sim (else it keeps ticking and
+  // its sim.on('end') fires a spurious refit), and drop stale selection state.
+  if (currentSim) currentSim.stop();
+  selectedId = null;
+  hideDetail();
+  state.focusIds = null;
 
   svg.selectAll('*').remove();
   const w = svg.node().clientWidth;
   const h = svg.node().clientHeight;
+  const viewport = svg.append('g').attr('class', 'viewport');
+  let userMoved = false; // user pan/zoom suppresses the settle-time auto-fit
+
+  zoomBehavior = d3
+    .zoom()
+    .scaleExtent([0.1, 8])
+    .on('start', (event) => {
+      // sourceEvent is set only for real user gestures, not programmatic fits.
+      if (event.sourceEvent) userMoved = true;
+    })
+    .on('zoom', (event) => {
+      viewport.attr('transform', event.transform);
+      // Labels would be an unreadable smear at fit-out scale; reveal on zoom-in.
+      viewport.classed('zoomed-in', event.transform.k > 1.5);
+    });
+  svg.call(zoomBehavior);
 
   const palette = d3.schemeTableau10;
   const colorFor = (c) =>
@@ -160,13 +265,14 @@ function renderGraph(edges) {
     .force('link', d3.forceLink(links).id((d) => d.id).distance(40))
     .force('charge', d3.forceManyBody().strength(-120))
     .force('center', d3.forceCenter(w / 2, h / 2));
+  currentSim = sim;
 
-  const link = svg
+  const link = viewport
     .append('g')
-    .attr('stroke', '#5a667a')
     .selectAll('line')
     .data(links)
     .join('line')
+    .attr('stroke', (d) => edgeColor(d.type))
     .attr('class', (d) =>
       'link ' + (state.aliveSet && (!state.aliveSet.has(d.source.id || d.source) ||
                                     !state.aliveSet.has(d.target.id || d.target))
@@ -174,23 +280,18 @@ function renderGraph(edges) {
         : '')
     );
 
-  const node = svg
+  const node = viewport
     .append('g')
     .selectAll('circle')
     .data(nodes)
     .join('circle')
     .attr('class', (d) => 'node' + (d.faded ? ' faded' : ''))
-    .attr('r', 5)
-    .attr('fill', (d) => {
-      const e = links.find((l) =>
-        (l.source.id || l.source) === d.id || (l.target.id || l.target) === d.id
-      );
-      return colorFor(e ? e.community : null);
-    })
+    .attr('r', (d) => radiusFor(d.degree || 1))
     .call(
       d3
         .drag()
         .on('start', (event, d) => {
+          event.sourceEvent.stopPropagation(); // node-drag, not pan
           if (!event.active) sim.alphaTarget(0.3).restart();
           d.fx = d.x;
           d.fy = d.y;
@@ -206,7 +307,77 @@ function renderGraph(edges) {
         })
     );
 
-  node.append('title').text((d) => d.id);
+  // Default fill is neutral (degree drives size, type drives edges); the
+  // community palette is an opt-in toggle since real data is unclustered.
+  const adjacency = new Map(nodes.map((d) => [d.id, null]));
+  links.forEach((l) => {
+    const s = l.source.id || l.source;
+    const t = l.target.id || l.target;
+    if (l.community != null) {
+      adjacency.set(s, l.community);
+      adjacency.set(t, l.community);
+    }
+  });
+  const nodeFill = (d) =>
+    state.colorByCommunity ? colorFor(adjacency.get(d.id)) : '#6cbef7';
+  node.attr('fill', nodeFill);
+  recolorNodes = () => node.attr('fill', nodeFill);
+
+  node.append('title').text((d) => d.label);
+
+  const labelSel = viewport
+    .append('g')
+    .attr('class', 'labels')
+    .selectAll('text')
+    .data(nodes)
+    .join('text')
+    .attr('class', 'node-label')
+    .attr('dx', 8)
+    .attr('dy', 3)
+    .text((d) => d.label);
+
+  // Hover/click connect the graph to the detail panel + memories table.
+  const linkId = (e) => e.id || e;
+  const highlight = (id) => {
+    const keep = neighborIds.get(id) || new Set();
+    node.classed('dim', (n) => n.id !== id && !keep.has(n.id));
+    labelSel.classed('dim', (n) => n.id !== id && !keep.has(n.id));
+    link.classed(
+      'dim',
+      (l) => linkId(l.source) !== id && linkId(l.target) !== id
+    );
+  };
+  const clearHighlight = () => {
+    node.classed('dim', false);
+    node.classed('match', false);
+    labelSel.classed('dim', false);
+    link.classed('dim', false);
+    highlightTableRows(null);
+  };
+  const select = (d) => {
+    selectedId = d.id;
+    highlight(d.id);
+    showDetail(d, incidentEdges.get(d.id) || [], labels);
+    const focus = new Set([d.id, ...(neighborIds.get(d.id) || [])]);
+    highlightTableRows(focus);
+  };
+
+  node
+    .on('mouseenter', (event, d) => {
+      if (!selectedId) highlight(d.id);
+    })
+    .on('mouseleave', () => {
+      if (!selectedId) clearHighlight();
+    })
+    .on('click', (event, d) => {
+      event.stopPropagation();
+      select(d);
+    });
+  svg.on('click', () => {
+    selectedId = null;
+    clearHighlight();
+    hideDetail();
+  });
 
   sim.on('tick', () => {
     link
@@ -215,17 +386,95 @@ function renderGraph(edges) {
       .attr('x2', (d) => d.target.x)
       .attr('y2', (d) => d.target.y);
     node.attr('cx', (d) => d.x).attr('cy', (d) => d.y);
+    labelSel.attr('x', (d) => d.x).attr('y', (d) => d.y);
   });
 
-  const communities = Array.from(new Set(edges.map((e) => e.community))).sort();
-  legend.innerHTML = communities
-    .map(
-      (c) =>
-        `<span style="color:${colorFor(c)}">●</span> ${
-          c === null ? 'unclustered' : 'c' + c
-        }`
-    )
-    .join(' ');
+  const fitToNodes = (subset) => {
+    if (!subset.length) return;
+    const minX = d3.min(subset, (d) => d.x);
+    const maxX = d3.max(subset, (d) => d.x);
+    const minY = d3.min(subset, (d) => d.y);
+    const maxY = d3.max(subset, (d) => d.y);
+    const gw = maxX - minX || 1;
+    const gh = maxY - minY || 1;
+    const scale = Math.max(0.1, Math.min(8, 0.9 * Math.min(w / gw, h / gh)));
+    const tx = w / 2 - (scale * (minX + maxX)) / 2;
+    const ty = h / 2 - (scale * (minY + maxY)) / 2;
+    svg
+      .transition()
+      .duration(400)
+      .call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+  };
+  fitView = () => fitToNodes(nodes);
+  // Frame the graph once the layout settles — unless the user already navigated.
+  sim.on('end', () => {
+    if (!userMoved) fitView();
+  });
+
+  graphSearch = (query) => {
+    const q = (query || '').trim().toLowerCase();
+    if (!q) {
+      clearHighlight();
+      node.classed('match', false);
+      return;
+    }
+    const matchSet = new Set(
+      nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id)
+    );
+    node.classed('dim', (n) => !matchSet.has(n.id));
+    node.classed('match', (n) => matchSet.has(n.id));
+    labelSel.classed('dim', (n) => !matchSet.has(n.id));
+    link.classed(
+      'dim',
+      (l) => !matchSet.has(linkId(l.source)) && !matchSet.has(linkId(l.target))
+    );
+    const matches = nodes.filter((n) => matchSet.has(n.id));
+    if (matches.length) fitToNodes(matches);
+  };
+
+  const types = Array.from(new Set(links.map((l) => l.type))).filter(Boolean).sort();
+  legend.innerHTML = types
+    .map((t) => `<span style="color:${edgeColor(t)}">━</span> ${esc(t)}`)
+    .join('  ');
+}
+
+function applyTableFocus() {
+  const idSet = state.focusIds;
+  tbody.querySelectorAll('tr').forEach((tr) => {
+    tr.classList.toggle('row-focus', !!idSet && idSet.has(tr.dataset.id));
+  });
+}
+
+function highlightTableRows(idSet) {
+  state.focusIds = idSet;
+  applyTableFocus();
+}
+
+const CAP = 30; // hub nodes can have hundreds of edges; keep the panel readable
+
+function showDetail(d, incident, labelMap) {
+  const out = incident.filter((e) => e.dir === 'out');
+  const into = incident.filter((e) => e.dir === 'in');
+  const li = (e) =>
+    `<li><span class="etype" style="color:${edgeColor(e.type)}">${esc(e.type)}</span> ` +
+    `${esc(labelMap.get(e.other) || e.other.slice(0, 8))}</li>`;
+  const group = (items, heading) => {
+    if (!items.length) return '';
+    const shown = items.slice(0, CAP).map(li).join('');
+    const more = items.length > CAP ? `<li class="more">+${items.length - CAP} more</li>` : '';
+    return `<div class="detail-grp">${heading} (${items.length})</div><ul>${shown}${more}</ul>`;
+  };
+  nodeDetail.innerHTML =
+    `<div class="detail-head">${esc(d.label)}</div>` +
+    `<div class="detail-meta">degree ${d.degree}</div>` +
+    group(out, '→ outgoing') +
+    group(into, '← incoming');
+  nodeDetail.classList.remove('hidden');
+}
+
+function hideDetail() {
+  nodeDetail.classList.add('hidden');
+  nodeDetail.innerHTML = '';
 }
 
 async function applySnapshot() {
@@ -273,8 +522,30 @@ communitySelect.addEventListener('change', () => {
   state.community = communitySelect.value;
   refresh();
 });
+communityToggle.addEventListener('change', () => {
+  state.colorByCommunity = communityToggle.checked;
+  recolorNodes();
+});
+fitBtn.addEventListener('click', () => fitView());
+resetBtn.addEventListener('click', () => {
+  if (zoomBehavior) svg.transition().duration(300).call(zoomBehavior.transform, d3.zoomIdentity);
+});
 snapshotBtn.addEventListener('click', () => applySnapshot());
 snapshotClearBtn.addEventListener('click', () => clearSnapshot());
+let graphSearchTimer = null;
+graphSearchInput.addEventListener('input', () => {
+  clearTimeout(graphSearchTimer);
+  graphSearchTimer = setTimeout(() => graphSearch(graphSearchInput.value), 200);
+});
+let searchTimer = null;
+memSearch.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.q = memSearch.value.trim();
+    state.page = 0;
+    loadMemories();
+  }, 200);
+});
 prevBtn.addEventListener('click', () => {
   state.page = Math.max(0, state.page - 1);
   loadMemories();
