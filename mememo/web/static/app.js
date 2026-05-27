@@ -21,7 +21,19 @@ const state = {
   total: 0,
   asOfSha: null, // null = live; sha prefix = filter to memories alive at that SHA
   aliveSet: null, // populated from /snapshots so the graph view can dim nodes
+  colorByCommunity: false, // off = neutral fill; on = community palette
 };
+
+// Edge stroke by relation type. Unknown types fall back to the muted gray.
+const EDGE_COLORS = {
+  CALLS: '#6cbef7',
+  IMPORTS: '#6cf7a9',
+  EXTENDS: '#f7a06c',
+  IMPLEMENTS: '#c98cf7',
+  USES: '#f7e06c',
+  DOCUMENTS: '#8a93a3',
+};
+const edgeColor = (t) => EDGE_COLORS[t] || '#5a667a';
 
 const $ = (id) => document.getElementById(id);
 
@@ -53,10 +65,12 @@ const svg = d3.select('#graph');
 const legend = $('graph-legend');
 const fitBtn = $('fit');
 const resetBtn = $('reset');
+const communityToggle = $('community-toggle');
 
-// Set per render so the Fit/Reset buttons can drive the zoom of the live graph.
+// Set per render so the header controls can drive the live graph.
 let zoomBehavior = null;
 let fitView = () => {};
+let recolorNodes = () => {};
 
 async function fetchJson(url) {
   const r = await fetch(url);
@@ -169,11 +183,21 @@ function renderGraph(edges) {
       community: e.community,
     });
   });
+  // Degree from the raw id-keyed links (forceLink mutates source/target into
+  // node objects later, so count now while they're still ids).
+  const degree = new Map();
+  links.forEach((l) => {
+    degree.set(l.source, (degree.get(l.source) || 0) + 1);
+    degree.set(l.target, (degree.get(l.target) || 0) + 1);
+  });
   const nodes = Array.from(nodeIds).map((id) => ({
     id,
     label: labels.get(id) || id.slice(0, 8),
+    degree: degree.get(id) || 0,
     faded: state.aliveSet && !state.aliveSet.has(id),
   }));
+  const maxDegree = d3.max(nodes, (d) => d.degree) || 1;
+  const radiusFor = d3.scaleSqrt().domain([1, maxDegree]).range([4, 14]).clamp(true);
 
   svg.selectAll('*').remove();
   const w = svg.node().clientWidth;
@@ -202,10 +226,10 @@ function renderGraph(edges) {
 
   const link = viewport
     .append('g')
-    .attr('stroke', '#5a667a')
     .selectAll('line')
     .data(links)
     .join('line')
+    .attr('stroke', (d) => edgeColor(d.type))
     .attr('class', (d) =>
       'link ' + (state.aliveSet && (!state.aliveSet.has(d.source.id || d.source) ||
                                     !state.aliveSet.has(d.target.id || d.target))
@@ -219,13 +243,7 @@ function renderGraph(edges) {
     .data(nodes)
     .join('circle')
     .attr('class', (d) => 'node' + (d.faded ? ' faded' : ''))
-    .attr('r', 5)
-    .attr('fill', (d) => {
-      const e = links.find((l) =>
-        (l.source.id || l.source) === d.id || (l.target.id || l.target) === d.id
-      );
-      return colorFor(e ? e.community : null);
-    })
+    .attr('r', (d) => radiusFor(d.degree || 1))
     .call(
       d3
         .drag()
@@ -245,6 +263,22 @@ function renderGraph(edges) {
           d.fy = null;
         })
     );
+
+  // Default fill is neutral (degree drives size, type drives edges); the
+  // community palette is an opt-in toggle since real data is unclustered.
+  const adjacency = new Map(nodes.map((d) => [d.id, null]));
+  links.forEach((l) => {
+    const s = l.source.id || l.source;
+    const t = l.target.id || l.target;
+    if (l.community != null) {
+      adjacency.set(s, l.community);
+      adjacency.set(t, l.community);
+    }
+  });
+  const nodeFill = (d) =>
+    state.colorByCommunity ? colorFor(adjacency.get(d.id)) : '#6cbef7';
+  node.attr('fill', nodeFill);
+  recolorNodes = () => node.attr('fill', nodeFill);
 
   node.append('title').text((d) => d.label);
 
@@ -288,15 +322,10 @@ function renderGraph(edges) {
   // Frame the graph once the layout settles.
   sim.on('end', fitView);
 
-  const communities = Array.from(new Set(edges.map((e) => e.community))).sort();
-  legend.innerHTML = communities
-    .map(
-      (c) =>
-        `<span style="color:${colorFor(c)}">●</span> ${
-          c === null ? 'unclustered' : 'c' + c
-        }`
-    )
-    .join(' ');
+  const types = Array.from(new Set(links.map((l) => l.type))).filter(Boolean).sort();
+  legend.innerHTML = types
+    .map((t) => `<span style="color:${edgeColor(t)}">━</span> ${t}`)
+    .join('  ');
 }
 
 async function applySnapshot() {
@@ -343,6 +372,10 @@ refreshBtn.addEventListener('click', () => {
 communitySelect.addEventListener('change', () => {
   state.community = communitySelect.value;
   refresh();
+});
+communityToggle.addEventListener('change', () => {
+  state.colorByCommunity = communityToggle.checked;
+  recolorNodes();
 });
 fitBtn.addEventListener('click', () => fitView());
 resetBtn.addEventListener('click', () => {
