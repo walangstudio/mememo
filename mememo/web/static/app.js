@@ -39,6 +39,12 @@ const prevBtn = $('prev');
 const nextBtn = $('next');
 const svg = d3.select('#graph');
 const legend = $('graph-legend');
+const fitBtn = $('fit');
+const resetBtn = $('reset');
+
+// Set per render so the Fit/Reset buttons can drive the zoom of the live graph.
+let zoomBehavior = null;
+let fitView = () => {};
 
 async function fetchJson(url) {
   const r = await fetch(url);
@@ -150,6 +156,13 @@ function renderGraph(edges) {
   svg.selectAll('*').remove();
   const w = svg.node().clientWidth;
   const h = svg.node().clientHeight;
+  const viewport = svg.append('g').attr('class', 'viewport');
+
+  zoomBehavior = d3
+    .zoom()
+    .scaleExtent([0.1, 8])
+    .on('zoom', (event) => viewport.attr('transform', event.transform));
+  svg.call(zoomBehavior);
 
   const palette = d3.schemeTableau10;
   const colorFor = (c) =>
@@ -161,7 +174,7 @@ function renderGraph(edges) {
     .force('charge', d3.forceManyBody().strength(-120))
     .force('center', d3.forceCenter(w / 2, h / 2));
 
-  const link = svg
+  const link = viewport
     .append('g')
     .attr('stroke', '#5a667a')
     .selectAll('line')
@@ -174,7 +187,7 @@ function renderGraph(edges) {
         : '')
     );
 
-  const node = svg
+  const node = viewport
     .append('g')
     .selectAll('circle')
     .data(nodes)
@@ -191,6 +204,7 @@ function renderGraph(edges) {
       d3
         .drag()
         .on('start', (event, d) => {
+          event.sourceEvent.stopPropagation(); // node-drag, not pan
           if (!event.active) sim.alphaTarget(0.3).restart();
           d.fx = d.x;
           d.fy = d.y;
@@ -216,6 +230,25 @@ function renderGraph(edges) {
       .attr('y2', (d) => d.target.y);
     node.attr('cx', (d) => d.x).attr('cy', (d) => d.y);
   });
+
+  fitView = () => {
+    if (nodes.length === 0) return;
+    const minX = d3.min(nodes, (d) => d.x);
+    const maxX = d3.max(nodes, (d) => d.x);
+    const minY = d3.min(nodes, (d) => d.y);
+    const maxY = d3.max(nodes, (d) => d.y);
+    const gw = maxX - minX || 1;
+    const gh = maxY - minY || 1;
+    const scale = Math.max(0.1, Math.min(8, 0.9 * Math.min(w / gw, h / gh)));
+    const tx = w / 2 - (scale * (minX + maxX)) / 2;
+    const ty = h / 2 - (scale * (minY + maxY)) / 2;
+    svg
+      .transition()
+      .duration(400)
+      .call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+  };
+  // Frame the graph once the layout settles.
+  sim.on('end', fitView);
 
   const communities = Array.from(new Set(edges.map((e) => e.community))).sort();
   legend.innerHTML = communities
@@ -272,6 +305,10 @@ refreshBtn.addEventListener('click', () => {
 communitySelect.addEventListener('change', () => {
   state.community = communitySelect.value;
   refresh();
+});
+fitBtn.addEventListener('click', () => fitView());
+resetBtn.addEventListener('click', () => {
+  if (zoomBehavior) svg.transition().duration(300).call(zoomBehavior.transform, d3.zoomIdentity);
 });
 snapshotBtn.addEventListener('click', () => applySnapshot());
 snapshotClearBtn.addEventListener('click', () => clearSnapshot());

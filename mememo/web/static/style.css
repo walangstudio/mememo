@@ -102,7 +102,9 @@ section h2 {
   border: 1px solid var(--border);
   background: var(--bg);
   border-radius: 3px;
+  cursor: grab;
 }
+#graph:active { cursor: grabbing; }
 
 .node { cursor: pointer; }
 .node.faded { opacity: 0.15; }
