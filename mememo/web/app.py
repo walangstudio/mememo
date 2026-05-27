@@ -82,10 +82,15 @@ def create_app(storage_getter=None) -> FastAPI:
             conditions.append("branch_name = ?")
             params.append(branch)
         if q:
-            # Substring search over the human-meaningful columns. '%' in the
-            # query is treated as a wildcard (fine for a dev search box).
-            like = f"%{q}%"
-            conditions.append("(file_path LIKE ? OR function_name LIKE ? OR class_name LIKE ?)")
+            # Literal substring search over the human-meaningful columns. Escape
+            # LIKE metacharacters (\ % _) so e.g. 'audit_tail' matches literally.
+            escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{escaped}%"
+            conditions.append(
+                "(file_path LIKE ? ESCAPE '\\' "
+                "OR function_name LIKE ? ESCAPE '\\' "
+                "OR class_name LIKE ? ESCAPE '\\')"
+            )
             params.extend([like, like, like])
         if as_of_sha:
             from ..types import SHA_PREFIX_PATTERN

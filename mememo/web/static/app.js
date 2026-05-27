@@ -33,11 +33,20 @@ const EDGE_COLORS = {
   EXTENDS: '#f7a06c',
   IMPLEMENTS: '#c98cf7',
   USES: '#f7e06c',
+  DECORATED_BY: '#f76c9c',
   DOCUMENTS: '#8a93a3',
 };
 const edgeColor = (t) => EDGE_COLORS[t] || '#5a667a';
 
 const $ = (id) => document.getElementById(id);
+
+// Escape before interpolating user-derived strings (labels come from indexed
+// file paths/symbols) into innerHTML.
+const esc = (s) =>
+  String(s).replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]
+  );
 
 const basename = (p) => (p ? p.split(/[\\/]/).pop() : '');
 
@@ -78,6 +87,7 @@ let fitView = () => {};
 let recolorNodes = () => {};
 let graphSearch = () => {};
 let selectedId = null; // clicked node; persists hover-highlight until cleared
+let currentSim = null; // live force sim; stopped before the next render
 
 async function fetchJson(url) {
   const r = await fetch(url);
@@ -219,14 +229,26 @@ function renderGraph(edges) {
   const maxDegree = d3.max(nodes, (d) => d.degree) || 1;
   const radiusFor = d3.scaleSqrt().domain([1, maxDegree]).range([4, 14]).clamp(true);
 
+  // Tear down the previous render: stop the old sim (else it keeps ticking and
+  // its sim.on('end') fires a spurious refit), and drop stale selection state.
+  if (currentSim) currentSim.stop();
+  selectedId = null;
+  hideDetail();
+  state.focusIds = null;
+
   svg.selectAll('*').remove();
   const w = svg.node().clientWidth;
   const h = svg.node().clientHeight;
   const viewport = svg.append('g').attr('class', 'viewport');
+  let userMoved = false; // user pan/zoom suppresses the settle-time auto-fit
 
   zoomBehavior = d3
     .zoom()
     .scaleExtent([0.1, 8])
+    .on('start', (event) => {
+      // sourceEvent is set only for real user gestures, not programmatic fits.
+      if (event.sourceEvent) userMoved = true;
+    })
     .on('zoom', (event) => {
       viewport.attr('transform', event.transform);
       // Labels would be an unreadable smear at fit-out scale; reveal on zoom-in.
@@ -243,6 +265,7 @@ function renderGraph(edges) {
     .force('link', d3.forceLink(links).id((d) => d.id).distance(40))
     .force('charge', d3.forceManyBody().strength(-120))
     .force('center', d3.forceCenter(w / 2, h / 2));
+  currentSim = sim;
 
   const link = viewport
     .append('g')
@@ -383,8 +406,10 @@ function renderGraph(edges) {
       .call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
   };
   fitView = () => fitToNodes(nodes);
-  // Frame the graph once the layout settles.
-  sim.on('end', fitView);
+  // Frame the graph once the layout settles — unless the user already navigated.
+  sim.on('end', () => {
+    if (!userMoved) fitView();
+  });
 
   graphSearch = (query) => {
     const q = (query || '').trim().toLowerCase();
@@ -409,7 +434,7 @@ function renderGraph(edges) {
 
   const types = Array.from(new Set(links.map((l) => l.type))).filter(Boolean).sort();
   legend.innerHTML = types
-    .map((t) => `<span style="color:${edgeColor(t)}">━</span> ${t}`)
+    .map((t) => `<span style="color:${edgeColor(t)}">━</span> ${esc(t)}`)
     .join('  ');
 }
 
@@ -431,8 +456,8 @@ function showDetail(d, incident, labelMap) {
   const out = incident.filter((e) => e.dir === 'out');
   const into = incident.filter((e) => e.dir === 'in');
   const li = (e) =>
-    `<li><span class="etype" style="color:${edgeColor(e.type)}">${e.type}</span> ` +
-    `${labelMap.get(e.other) || e.other.slice(0, 8)}</li>`;
+    `<li><span class="etype" style="color:${edgeColor(e.type)}">${esc(e.type)}</span> ` +
+    `${esc(labelMap.get(e.other) || e.other.slice(0, 8))}</li>`;
   const group = (items, heading) => {
     if (!items.length) return '';
     const shown = items.slice(0, CAP).map(li).join('');
@@ -440,7 +465,7 @@ function showDetail(d, incident, labelMap) {
     return `<div class="detail-grp">${heading} (${items.length})</div><ul>${shown}${more}</ul>`;
   };
   nodeDetail.innerHTML =
-    `<div class="detail-head">${d.label}</div>` +
+    `<div class="detail-head">${esc(d.label)}</div>` +
     `<div class="detail-meta">degree ${d.degree}</div>` +
     group(out, '→ outgoing') +
     group(into, '← incoming');

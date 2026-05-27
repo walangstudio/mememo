@@ -177,6 +177,9 @@ def test_memories_search_filters_by_q(client: TestClient) -> None:
     } == {"m3"}
     # No match -> empty.
     assert client.get("/memories", params={"repo_id": "r", "q": "zzz"}).json()["total"] == 0
+    # '_' is a literal, not a LIKE wildcard — no seed path contains one, so 0
+    # (a bare wildcard would otherwise match every row).
+    assert client.get("/memories", params={"repo_id": "r", "q": "_"}).json()["total"] == 0
 
 
 def test_relations_returns_edges(client: TestClient) -> None:
