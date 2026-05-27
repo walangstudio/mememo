@@ -171,9 +171,10 @@ def test_memories_search_filters_by_q(client: TestClient) -> None:
     assert payload["total"] == 1
     assert payload["items"][0]["id"] == "m1"
     # Matches function_name too (m1.function_name == 'f', m2 == 'g', m3 == 'h').
-    assert {row["id"] for row in client.get("/memories", params={"repo_id": "r", "q": "h"}).json()["items"]} == {
-        "m3"
-    }
+    assert {
+        row["id"]
+        for row in client.get("/memories", params={"repo_id": "r", "q": "h"}).json()["items"]
+    } == {"m3"}
     # No match -> empty.
     assert client.get("/memories", params={"repo_id": "r", "q": "zzz"}).json()["total"] == 0
 

@@ -69,12 +69,14 @@ const legend = $('graph-legend');
 const fitBtn = $('fit');
 const resetBtn = $('reset');
 const communityToggle = $('community-toggle');
+const graphSearchInput = $('graph-search');
 const nodeDetail = $('node-detail');
 
 // Set per render so the header controls can drive the live graph.
 let zoomBehavior = null;
 let fitView = () => {};
 let recolorNodes = () => {};
+let graphSearch = () => {};
 let selectedId = null; // clicked node; persists hover-highlight until cleared
 
 async function fetchJson(url) {
@@ -324,6 +326,7 @@ function renderGraph(edges) {
   };
   const clearHighlight = () => {
     node.classed('dim', false);
+    node.classed('match', false);
     labelSel.classed('dim', false);
     link.classed('dim', false);
     highlightTableRows(null);
@@ -363,12 +366,12 @@ function renderGraph(edges) {
     labelSel.attr('x', (d) => d.x).attr('y', (d) => d.y);
   });
 
-  fitView = () => {
-    if (nodes.length === 0) return;
-    const minX = d3.min(nodes, (d) => d.x);
-    const maxX = d3.max(nodes, (d) => d.x);
-    const minY = d3.min(nodes, (d) => d.y);
-    const maxY = d3.max(nodes, (d) => d.y);
+  const fitToNodes = (subset) => {
+    if (!subset.length) return;
+    const minX = d3.min(subset, (d) => d.x);
+    const maxX = d3.max(subset, (d) => d.x);
+    const minY = d3.min(subset, (d) => d.y);
+    const maxY = d3.max(subset, (d) => d.y);
     const gw = maxX - minX || 1;
     const gh = maxY - minY || 1;
     const scale = Math.max(0.1, Math.min(8, 0.9 * Math.min(w / gw, h / gh)));
@@ -379,8 +382,30 @@ function renderGraph(edges) {
       .duration(400)
       .call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
   };
+  fitView = () => fitToNodes(nodes);
   // Frame the graph once the layout settles.
   sim.on('end', fitView);
+
+  graphSearch = (query) => {
+    const q = (query || '').trim().toLowerCase();
+    if (!q) {
+      clearHighlight();
+      node.classed('match', false);
+      return;
+    }
+    const matchSet = new Set(
+      nodes.filter((n) => n.label.toLowerCase().includes(q)).map((n) => n.id)
+    );
+    node.classed('dim', (n) => !matchSet.has(n.id));
+    node.classed('match', (n) => matchSet.has(n.id));
+    labelSel.classed('dim', (n) => !matchSet.has(n.id));
+    link.classed(
+      'dim',
+      (l) => !matchSet.has(linkId(l.source)) && !matchSet.has(linkId(l.target))
+    );
+    const matches = nodes.filter((n) => matchSet.has(n.id));
+    if (matches.length) fitToNodes(matches);
+  };
 
   const types = Array.from(new Set(links.map((l) => l.type))).filter(Boolean).sort();
   legend.innerHTML = types
@@ -482,6 +507,11 @@ resetBtn.addEventListener('click', () => {
 });
 snapshotBtn.addEventListener('click', () => applySnapshot());
 snapshotClearBtn.addEventListener('click', () => clearSnapshot());
+let graphSearchTimer = null;
+graphSearchInput.addEventListener('input', () => {
+  clearTimeout(graphSearchTimer);
+  graphSearchTimer = setTimeout(() => graphSearch(graphSearchInput.value), 200);
+});
 let searchTimer = null;
 memSearch.addEventListener('input', () => {
   clearTimeout(searchTimer);

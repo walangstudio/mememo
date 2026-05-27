@@ -85,9 +85,7 @@ def create_app(storage_getter=None) -> FastAPI:
             # Substring search over the human-meaningful columns. '%' in the
             # query is treated as a wildcard (fine for a dev search box).
             like = f"%{q}%"
-            conditions.append(
-                "(file_path LIKE ? OR function_name LIKE ? OR class_name LIKE ?)"
-            )
+            conditions.append("(file_path LIKE ? OR function_name LIKE ? OR class_name LIKE ?)")
             params.extend([like, like, like])
         if as_of_sha:
             from ..types import SHA_PREFIX_PATTERN

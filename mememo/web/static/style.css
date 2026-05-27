@@ -125,6 +125,12 @@ section h2 {
 .node.dim { opacity: 0.1; }
 .link.dim { stroke-opacity: 0.03; }
 .node-label.dim { display: none; }
+.node.match { stroke: var(--good); stroke-width: 2px; }
+
+#graph-search, #mem-search {
+  width: 100%;
+  margin-bottom: 8px;
+}
 
 #node-detail {
   margin-top: 8px;
