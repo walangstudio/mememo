@@ -10,7 +10,9 @@ Indexes repository with:
 """
 
 import logging
+import os
 import time
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -106,10 +108,46 @@ async def index_repository(
         edge_inputs: list[tuple[str, str, str]] = []
         symbols: list[SymbolEntry] = []
 
+        # Batch chunk creation: one git-detect + one batched embed + one vector
+        # add per flush instead of per chunk. The old per-chunk create_memory
+        # path spawned a git subprocess and ran a single-item embed for *every*
+        # chunk — the cause of the multi-hour indexing hang. qualname derivation
+        # needs the chunk + module, so carry that beside each pending param and
+        # zip it with the memories the batch returns (order is preserved).
+        BATCH = 256
+        pending_params: list[CreateMemoryParams] = []
+        pending_meta: list[tuple] = []  # (module, chunk)
+
         def _skip(reason: str) -> None:
             skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
 
-        for file_path in files_to_index:
+        async def _flush() -> None:
+            nonlocal chunks_created
+            if not pending_params:
+                return
+            memories = await memory_manager.create_memories_batch(
+                pending_params, cwd=str(repo_path)
+            )
+            for memory, (module, chunk) in zip(memories, pending_meta):
+                if chunk.qualname:
+                    # Chunker supplied an explicit qualname (e.g. Markdown
+                    # slug-path); register it verbatim so edges emitted with the
+                    # same source_qualname resolve.
+                    qualname = chunk.qualname
+                else:
+                    parts = [module]
+                    if chunk.class_name:
+                        parts.append(chunk.class_name)
+                    if chunk.function_name:
+                        parts.append(chunk.function_name)
+                    qualname = ".".join(parts)
+                symbols.append(SymbolEntry(memory_id=memory.id, qualname=qualname))
+            chunks_created += len(memories)
+            pending_params.clear()
+            pending_meta.clear()
+
+        total = len(files_to_index)
+        for i, file_path in enumerate(files_to_index):
             try:
                 content = file_path.read_text(encoding="utf-8")
                 chunks = chunker_factory.chunk_file(content, str(file_path))
@@ -122,47 +160,45 @@ async def index_repository(
                 file_lang = chunks[0].language
 
                 for chunk in chunks:
-                    create_params = CreateMemoryParams(
-                        content=chunk.text,
-                        type="code_snippet",
-                        language=chunk.language,
-                        file_path=rel_path,
-                        line_range=(chunk.start_line, chunk.end_line) if chunk.start_line else None,
-                        function_name=chunk.function_name,
-                        class_name=chunk.class_name,
-                        docstring=chunk.docstring,
-                        decorators=chunk.decorators,
-                        parent_class=chunk.parent_class,
-                        tags=["indexed", "repository"],
-                        relationships=MemoryRelationships(),
+                    pending_params.append(
+                        CreateMemoryParams(
+                            content=chunk.text,
+                            type="code_snippet",
+                            language=chunk.language,
+                            file_path=rel_path,
+                            line_range=(chunk.start_line, chunk.end_line)
+                            if chunk.start_line
+                            else None,
+                            function_name=chunk.function_name,
+                            class_name=chunk.class_name,
+                            docstring=chunk.docstring,
+                            decorators=chunk.decorators,
+                            parent_class=chunk.parent_class,
+                            tags=["indexed", "repository"],
+                            relationships=MemoryRelationships(),
+                        )
                     )
-                    memory = await memory_manager.create_memory(create_params, cwd=str(repo_path))
-                    chunks_created += 1
-
-                    if chunk.qualname:
-                        # Chunker supplied an explicit qualname (e.g. Markdown
-                        # slug-path); register it verbatim so edges emitted with
-                        # the same source_qualname resolve.
-                        qualname = chunk.qualname
-                    else:
-                        parts = [module]
-                        if chunk.class_name:
-                            parts.append(chunk.class_name)
-                        if chunk.function_name:
-                            parts.append(chunk.function_name)
-                        qualname = ".".join(parts)
-                    symbols.append(SymbolEntry(memory_id=memory.id, qualname=qualname))
+                    pending_meta.append((module, chunk))
 
                 if file_lang in EDGE_PASS_LANGUAGES:
                     edge_inputs.append((rel_path, content, file_lang))
 
                 files_indexed += 1
+                if len(pending_params) >= BATCH:
+                    await _flush()
+                if (i + 1) % 100 == 0:
+                    logger.info(
+                        f"Indexing progress: {i + 1}/{total} files, "
+                        f"{chunks_created + len(pending_params)} chunks"
+                    )
 
             except UnicodeDecodeError:
                 _skip("binary")
             except Exception as e:
                 _skip("error")
                 logger.warning(f"Error indexing {file_path}: {e}")
+
+        await _flush()
 
         duration = time.time() - start_time
         files_skipped = sum(skip_reasons.values())
@@ -263,6 +299,23 @@ _DEFAULT_IGNORED_DIRS = frozenset(
     }
 )
 
+# Skip obviously-binary files by extension and skip anything huge. Mirrors the
+# ignore lists GitNexus/Graphify use so we never read/chunk a media blob or a
+# generated megafile.
+_MAX_FILE_BYTES = 1_500_000
+_BINARY_EXTS = frozenset(
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff",
+        ".pdf", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+        ".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib", ".class",
+        ".jar", ".pyc", ".pyo", ".wasm",
+        ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv", ".flac", ".ogg",
+        ".ttf", ".otf", ".woff", ".woff2", ".eot",
+        ".bin", ".dat", ".db", ".sqlite", ".doc", ".docx", ".xls", ".xlsx",
+        ".ppt", ".pptx",
+    }
+)
+
 
 def _find_matching_files(
     repo_path: Path,
@@ -272,6 +325,12 @@ def _find_matching_files(
 ) -> list[Path]:
     """
     Find files matching glob patterns, excluding ignored directories.
+
+    Uses os.walk with in-place dir pruning so ignored trees (``target/``,
+    ``.git/``, ``node_modules/`` …) are never *descended* — the old glob walked
+    them fully and filtered after, which on a Rust ``target/`` (100k+ files) cost
+    minutes just to enumerate. Patterns are matched on the basename (``**/*.py``
+    → ``*.py``), preserving the extension-filter intent of the defaults.
 
     Args:
         repo_path: Repository root path
@@ -283,26 +342,27 @@ def _find_matching_files(
         List of matching file paths
     """
     skip_dirs = ignored_dirs if ignored_dirs is not None else _DEFAULT_IGNORED_DIRS
-    matching_files = set()
+    pat_names = [p.rsplit("/", 1)[-1] for p in patterns]
+    matching: list[Path] = []
 
-    for pattern in patterns:
-        for file_path in repo_path.glob(pattern):
-            if not file_path.is_file():
+    for root, dirnames, filenames in os.walk(repo_path):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for fn in filenames:
+            if Path(fn).suffix.lower() in _BINARY_EXTS:
                 continue
-
-            # Skip files inside ignored directories
-            if skip_dirs.intersection(file_path.relative_to(repo_path).parts):
+            if not any(fnmatch(fn, pat) for pat in pat_names):
                 continue
+            fpath = Path(root) / fn
+            try:
+                if fpath.stat().st_size > _MAX_FILE_BYTES:
+                    continue
+            except OSError:
+                continue
+            matching.append(fpath)
+            if len(matching) >= max_files:
+                return sorted(matching)[:max_files]
 
-            matching_files.add(file_path)
-
-            if len(matching_files) >= max_files:
-                break
-
-        if len(matching_files) >= max_files:
-            break
-
-    return sorted(matching_files)[:max_files]
+    return sorted(matching)[:max_files]
 
 
 # v0.5: edge-emission post-pass (FR-013, FR-015, FR-017) -----------------

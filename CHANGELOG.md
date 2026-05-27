@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-27
+
+### Fixed
+- **Indexing is ~90× faster — the multi-hour hang is gone.** `count_tokens` called `tiktoken.get_encoding("cl100k_base")` on every invocation; with no cached BPE file it attempted an HTTPS download that failed after ~0.8s, and the failure was never memoized. Run per chunk (and again inside `truncate_to_tokens`' binary search for summaries), this dominated indexing time. The tokenizer load is now attempted once and the failure cached, falling back to a fast offline heuristic. Indexing mememo on itself dropped from ~2030s to ~23s for the same 138 files / 1145 chunks.
+- **Repository indexing now batches chunk creation.** `index_repository` created memories one chunk at a time, so every chunk spawned a `git` subprocess (context detection), ran a single-item embed, and committed on its own. It now accumulates chunks and calls `create_memories_batch` (one git-detect + one batched embed + one vector add per flush of 256).
+- **File discovery no longer descends ignored trees.** The `glob("**/*")` walk enumerated `target/`, `.git/`, `node_modules/` etc. and filtered afterward (minutes on a large Rust `target/`); it now uses `os.walk` with in-place directory pruning, plus a max-file-size guard and a binary-extension skip list. Progress is logged every 100 files.
+
+### Changed
+- **MCP server starts fast and logs to a file.** `sentence-transformers`/`torch` and `faiss` are now imported lazily instead of at module load, so `python -m mememo` reaches the stdio handshake in ~2s (was a 5–15s cold import that could exceed Claude Code's connect window and show the server as failed). Logs are also written to `~/.mememo/logs/server.log` (rotating) since stderr is invisible once spawned.
+
 ## [0.7.0] - 2026-05-24
 
 ### Added

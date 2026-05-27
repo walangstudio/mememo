@@ -8,21 +8,32 @@ import tiktoken
 
 # Initialize tokenizer (GPT-3.5/GPT-4 compatible)
 _tokenizer = None
+# tiktoken.get_encoding downloads the BPE file over HTTPS on first use. With no
+# disk cache and no network (the common offline/sandboxed case) that call raises
+# after a ~0.8s TLS attempt. Memoize the *failure* so we don't repeat that probe
+# on every count_tokens call — left un-memoized it dominated indexing time (a
+# binary-search truncate × thousands of chunks = the multi-hour hang).
+_tokenizer_unavailable = False
 
 
 def _get_tokenizer():
-    """Get or initialize the tokenizer."""
-    global _tokenizer
-    if _tokenizer is None:
-        _tokenizer = tiktoken.get_encoding("cl100k_base")  # GPT-4 encoding
+    """Get the tiktoken encoder, or None if it can't be loaded (cached)."""
+    global _tokenizer, _tokenizer_unavailable
+    if _tokenizer is None and not _tokenizer_unavailable:
+        try:
+            _tokenizer = tiktoken.get_encoding("cl100k_base")  # GPT-4 encoding
+        except Exception:
+            _tokenizer_unavailable = True
     return _tokenizer
 
 
 def count_tokens(text: str) -> int:
     """
-    Count tokens in text using GPT tokenizer.
+    Count tokens in text.
 
-    Provides accurate token counts for context management.
+    Uses the tiktoken GPT-4 encoder when it can be loaded; otherwise falls back
+    to a fast offline heuristic (~4 chars/token). Counts here only gate summary
+    generation and metadata, so the approximation is fine and never blocks.
 
     Args:
         text: Text to count tokens for
@@ -30,14 +41,14 @@ def count_tokens(text: str) -> int:
     Returns:
         Number of tokens
     """
-    try:
-        tokenizer = _get_tokenizer()
-        tokens = tokenizer.encode(text)
-        return len(tokens)
-    except Exception:
-        # Fallback to rough estimation if encoding fails
-        # ~4 characters per token is a common approximation
-        return (len(text) + 3) // 4
+    tokenizer = _get_tokenizer()
+    if tokenizer is not None:
+        try:
+            return len(tokenizer.encode(text))
+        except Exception:
+            pass
+    # ~4 characters per token is a common approximation
+    return (len(text) + 3) // 4
 
 
 def fits_in_budget(text: str, budget: int) -> bool:
