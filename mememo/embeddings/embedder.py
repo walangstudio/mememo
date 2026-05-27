@@ -4,11 +4,15 @@ Embedding generation for mememo.
 Provides local, offline embedding generation with multiple model support.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +110,10 @@ class Embedder:
 
     def _load_model(self) -> None:
         """Load the embedding model."""
+        # Deferred import: sentence_transformers pulls torch (~seconds, cold).
+        # Keep it out of module import so the MCP stdio handshake stays fast.
+        from sentence_transformers import SentenceTransformer
+
         if self.model_name not in MODEL_REGISTRY:
             raise ValueError(
                 f"Unknown model: {self.model_name}. " f"Available: {list(MODEL_REGISTRY.keys())}"

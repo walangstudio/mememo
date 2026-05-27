@@ -4,13 +4,18 @@ FAISS vector index management with automatic sharding.
 Handles large-scale vector search with lazy loading and LRU eviction.
 """
 
+from __future__ import annotations
+
 import logging
 import sqlite3
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import faiss
 import numpy as np
+
+if TYPE_CHECKING:
+    import faiss
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +123,8 @@ class VectorIndex:
         Returns:
             Loaded FAISS index
         """
+        import faiss
+
         # Check if already loaded
         if shard_id in self.loaded_shards:
             index, _ = self.loaded_shards[shard_id]
@@ -145,6 +152,8 @@ class VectorIndex:
 
     def _evict_inactive_shards(self) -> None:
         """Evict shards inactive for >5 minutes to free memory."""
+        import faiss
+
         current_time = time.time()
         to_evict = []
 
@@ -173,6 +182,8 @@ class VectorIndex:
             memory_ids: Corresponding memory IDs
             checksums: Content checksums for deduplication
         """
+        import faiss
+
         if len(embeddings) != len(memory_ids) or len(embeddings) != len(checksums):
             raise ValueError("embeddings, memory_ids, and checksums must have same length")
 
@@ -353,6 +364,8 @@ class VectorIndex:
 
     def close(self) -> None:
         """Save all loaded shards and close."""
+        import faiss
+
         for shard_id, (index, _) in self.loaded_shards.items():
             shard_path = self.index_dir / f"shard_{shard_id}.faiss"
             faiss.write_index(index, str(shard_path))

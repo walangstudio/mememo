@@ -181,11 +181,30 @@ except PackageNotFoundError:
     # Running from a source checkout without pip install -e .
     _VERSION = "0.0.0+local"
 
-# Initialize logger
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Initialize logging. Stderr is safe for MCP stdio (only stdout carries the
+# JSON-RPC protocol), but stderr is invisible once Claude Code has spawned the
+# server, so also tee to a rotating file the user can inspect after a crash.
+_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
+def _setup_logging() -> None:
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        from logging.handlers import RotatingFileHandler
+
+        log_dir = Path.home() / ".mememo" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handlers.append(
+            RotatingFileHandler(
+                log_dir / "server.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+            )
+        )
+    except Exception:  # logging must never block startup
+        pass
+    logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT, handlers=handlers)
+
+
+_setup_logging()
 logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server
@@ -929,6 +948,7 @@ async def cleanup_memory(params: CleanupMemoryParams) -> CleanupMemoryResponse:
 
 def run():
     """Run the FastMCP server."""
+    logger.info("mememo v%s ready, serving MCP on stdio", _VERSION)
     mcp.run()
 
 
