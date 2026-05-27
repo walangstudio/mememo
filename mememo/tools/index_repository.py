@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 # walked but never indexed because this list was hardcoded to the original 5).
 EDGE_PASS_LANGUAGES: frozenset[str] = frozenset({"python", "markdown", *EDGE_WALKERS})
 
+# Chunks accumulated before a batched flush (one git-detect + one batched embed
+# + one vector add per flush).
+_INDEX_BATCH = 256
+
 
 async def index_repository(
     params: IndexRepositoryParams,
@@ -114,7 +118,6 @@ async def index_repository(
         # chunk — the cause of the multi-hour indexing hang. qualname derivation
         # needs the chunk + module, so carry that beside each pending param and
         # zip it with the memories the batch returns (order is preserved).
-        BATCH = 256
         pending_params: list[CreateMemoryParams] = []
         pending_meta: list[tuple] = []  # (module, chunk)
 
@@ -166,9 +169,9 @@ async def index_repository(
                             type="code_snippet",
                             language=chunk.language,
                             file_path=rel_path,
-                            line_range=(chunk.start_line, chunk.end_line)
-                            if chunk.start_line
-                            else None,
+                            line_range=(
+                                (chunk.start_line, chunk.end_line) if chunk.start_line else None
+                            ),
                             function_name=chunk.function_name,
                             class_name=chunk.class_name,
                             docstring=chunk.docstring,
@@ -184,7 +187,7 @@ async def index_repository(
                     edge_inputs.append((rel_path, content, file_lang))
 
                 files_indexed += 1
-                if len(pending_params) >= BATCH:
+                if len(pending_params) >= _INDEX_BATCH:
                     await _flush()
                 if (i + 1) % 100 == 0:
                     logger.info(
@@ -305,14 +308,57 @@ _DEFAULT_IGNORED_DIRS = frozenset(
 _MAX_FILE_BYTES = 1_500_000
 _BINARY_EXTS = frozenset(
     {
-        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff",
-        ".pdf", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-        ".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib", ".class",
-        ".jar", ".pyc", ".pyo", ".wasm",
-        ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv", ".flac", ".ogg",
-        ".ttf", ".otf", ".woff", ".woff2", ".eot",
-        ".bin", ".dat", ".db", ".sqlite", ".doc", ".docx", ".xls", ".xlsx",
-        ".ppt", ".pptx",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".ico",
+        ".webp",
+        ".tiff",
+        ".pdf",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".exe",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".o",
+        ".a",
+        ".lib",
+        ".class",
+        ".jar",
+        ".pyc",
+        ".pyo",
+        ".wasm",
+        ".mp3",
+        ".mp4",
+        ".wav",
+        ".avi",
+        ".mov",
+        ".mkv",
+        ".flac",
+        ".ogg",
+        ".ttf",
+        ".otf",
+        ".woff",
+        ".woff2",
+        ".eot",
+        ".bin",
+        ".dat",
+        ".db",
+        ".sqlite",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
     }
 )
 

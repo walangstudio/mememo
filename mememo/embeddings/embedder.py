@@ -7,9 +7,12 @@ Provides local, offline embedding generation with multiple model support.
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 

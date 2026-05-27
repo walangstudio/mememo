@@ -10,8 +10,12 @@ import logging
 import sqlite3
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import faiss
 
 logger = logging.getLogger(__name__)
 
