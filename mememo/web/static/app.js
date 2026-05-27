@@ -22,6 +22,7 @@ const state = {
   asOfSha: null, // null = live; sha prefix = filter to memories alive at that SHA
   aliveSet: null, // populated from /snapshots so the graph view can dim nodes
   colorByCommunity: false, // off = neutral fill; on = community palette
+  focusIds: null, // selected node + neighbors; highlights matching table rows
 };
 
 // Edge stroke by relation type. Unknown types fall back to the muted gray.
@@ -66,11 +67,13 @@ const legend = $('graph-legend');
 const fitBtn = $('fit');
 const resetBtn = $('reset');
 const communityToggle = $('community-toggle');
+const nodeDetail = $('node-detail');
 
 // Set per render so the header controls can drive the live graph.
 let zoomBehavior = null;
 let fitView = () => {};
 let recolorNodes = () => {};
+let selectedId = null; // clicked node; persists hover-highlight until cleared
 
 async function fetchJson(url) {
   const r = await fetch(url);
@@ -129,6 +132,7 @@ async function loadMemories() {
   tbody.innerHTML = '';
   data.items.forEach((row) => {
     const tr = document.createElement('tr');
+    tr.dataset.id = row.id;
     const cls = row.class_name ? `${row.class_name}.` : '';
     const fn = row.function_name || '';
     const risk = row.risk_grade || '';
@@ -145,6 +149,7 @@ async function loadMemories() {
   pageInfo.textContent = `${start}–${
     state.page * state.pageSize + data.items.length
   } of ${data.total}${state.asOfSha ? ` (as of ${state.asOfSha})` : ''}`;
+  applyTableFocus(); // re-apply any active node focus after the rows re-render
 }
 
 async function loadGraph() {
@@ -183,12 +188,22 @@ function renderGraph(edges) {
       community: e.community,
     });
   });
-  // Degree from the raw id-keyed links (forceLink mutates source/target into
-  // node objects later, so count now while they're still ids).
+  // Degree + adjacency from the raw id-keyed links (forceLink mutates
+  // source/target into node objects later, so read them now while still ids).
   const degree = new Map();
+  const neighborIds = new Map(); // id -> Set(neighbor ids)
+  const incidentEdges = new Map(); // id -> [{other, type, dir}]
+  const addIncident = (a, b, type, dir) => {
+    if (!neighborIds.has(a)) neighborIds.set(a, new Set());
+    neighborIds.get(a).add(b);
+    if (!incidentEdges.has(a)) incidentEdges.set(a, []);
+    incidentEdges.get(a).push({ other: b, type, dir });
+  };
   links.forEach((l) => {
     degree.set(l.source, (degree.get(l.source) || 0) + 1);
     degree.set(l.target, (degree.get(l.target) || 0) + 1);
+    addIncident(l.source, l.target, l.type, 'out');
+    addIncident(l.target, l.source, l.type, 'in');
   });
   const nodes = Array.from(nodeIds).map((id) => ({
     id,
@@ -293,6 +308,48 @@ function renderGraph(edges) {
     .attr('dy', 3)
     .text((d) => d.label);
 
+  // Hover/click connect the graph to the detail panel + memories table.
+  const linkId = (e) => e.id || e;
+  const highlight = (id) => {
+    const keep = neighborIds.get(id) || new Set();
+    node.classed('dim', (n) => n.id !== id && !keep.has(n.id));
+    labelSel.classed('dim', (n) => n.id !== id && !keep.has(n.id));
+    link.classed(
+      'dim',
+      (l) => linkId(l.source) !== id && linkId(l.target) !== id
+    );
+  };
+  const clearHighlight = () => {
+    node.classed('dim', false);
+    labelSel.classed('dim', false);
+    link.classed('dim', false);
+    highlightTableRows(null);
+  };
+  const select = (d) => {
+    selectedId = d.id;
+    highlight(d.id);
+    showDetail(d, incidentEdges.get(d.id) || [], labels);
+    const focus = new Set([d.id, ...(neighborIds.get(d.id) || [])]);
+    highlightTableRows(focus);
+  };
+
+  node
+    .on('mouseenter', (event, d) => {
+      if (!selectedId) highlight(d.id);
+    })
+    .on('mouseleave', () => {
+      if (!selectedId) clearHighlight();
+    })
+    .on('click', (event, d) => {
+      event.stopPropagation();
+      select(d);
+    });
+  svg.on('click', () => {
+    selectedId = null;
+    clearHighlight();
+    hideDetail();
+  });
+
   sim.on('tick', () => {
     link
       .attr('x1', (d) => d.source.x)
@@ -326,6 +383,45 @@ function renderGraph(edges) {
   legend.innerHTML = types
     .map((t) => `<span style="color:${edgeColor(t)}">━</span> ${t}`)
     .join('  ');
+}
+
+function applyTableFocus() {
+  const idSet = state.focusIds;
+  tbody.querySelectorAll('tr').forEach((tr) => {
+    tr.classList.toggle('row-focus', !!idSet && idSet.has(tr.dataset.id));
+  });
+}
+
+function highlightTableRows(idSet) {
+  state.focusIds = idSet;
+  applyTableFocus();
+}
+
+const CAP = 30; // hub nodes can have hundreds of edges; keep the panel readable
+
+function showDetail(d, incident, labelMap) {
+  const out = incident.filter((e) => e.dir === 'out');
+  const into = incident.filter((e) => e.dir === 'in');
+  const li = (e) =>
+    `<li><span class="etype" style="color:${edgeColor(e.type)}">${e.type}</span> ` +
+    `${labelMap.get(e.other) || e.other.slice(0, 8)}</li>`;
+  const group = (items, heading) => {
+    if (!items.length) return '';
+    const shown = items.slice(0, CAP).map(li).join('');
+    const more = items.length > CAP ? `<li class="more">+${items.length - CAP} more</li>` : '';
+    return `<div class="detail-grp">${heading} (${items.length})</div><ul>${shown}${more}</ul>`;
+  };
+  nodeDetail.innerHTML =
+    `<div class="detail-head">${d.label}</div>` +
+    `<div class="detail-meta">degree ${d.degree}</div>` +
+    group(out, '→ outgoing') +
+    group(into, '← incoming');
+  nodeDetail.classList.remove('hidden');
+}
+
+function hideDetail() {
+  nodeDetail.classList.add('hidden');
+  nodeDetail.innerHTML = '';
 }
 
 async function applySnapshot() {
