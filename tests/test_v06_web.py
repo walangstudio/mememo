@@ -168,6 +168,13 @@ def test_relations_returns_edges(client: TestClient) -> None:
     assert r.status_code == 200
     items = r.json()["items"]
     assert {row["id"] for row in items} == {"rel1", "rel2"}
+    # P2: endpoints carry memory labels via the JOIN (rel1: m1 -> m2).
+    rel1 = next(row for row in items if row["id"] == "rel1")
+    assert rel1["source_file"] == "a.py"
+    assert rel1["source_class"] == "C"
+    assert rel1["source_fn"] == "f"
+    assert rel1["target_file"] == "b.py"
+    assert rel1["target_fn"] == "g"
 
 
 def test_relations_community_filter(client: TestClient) -> None:

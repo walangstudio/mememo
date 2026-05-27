@@ -25,6 +25,18 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
+const basename = (p) => (p ? p.split(/[\\/]/).pop() : '');
+
+// Compact node label: "file.py:Class.fn", falling back to the resolved
+// symbol, then a short UUID. Built client-side from the /relations parts.
+function makeLabel(file, cls, fn, symbol, id) {
+  const qualified = `${cls ? cls + '.' : ''}${fn || ''}`;
+  if (file) return qualified ? `${basename(file)}:${qualified}` : basename(file);
+  if (qualified) return qualified;
+  if (symbol) return symbol;
+  return (id || '').slice(0, 8);
+}
+
 const repoSelect = $('repo-select');
 const branchInput = $('branch-input');
 const communitySelect = $('community-select');
@@ -136,11 +148,20 @@ async function loadGraph() {
 
 function renderGraph(edges) {
   const nodeIds = new Set();
+  const labels = new Map();
   const links = [];
   edges.forEach((e) => {
     if (!e.target_memory_id) return; // skip unresolved
     nodeIds.add(e.source_memory_id);
     nodeIds.add(e.target_memory_id);
+    labels.set(
+      e.source_memory_id,
+      makeLabel(e.source_file, e.source_class, e.source_fn, null, e.source_memory_id)
+    );
+    labels.set(
+      e.target_memory_id,
+      makeLabel(e.target_file, e.target_class, e.target_fn, e.target_symbol, e.target_memory_id)
+    );
     links.push({
       source: e.source_memory_id,
       target: e.target_memory_id,
@@ -150,6 +171,7 @@ function renderGraph(edges) {
   });
   const nodes = Array.from(nodeIds).map((id) => ({
     id,
+    label: labels.get(id) || id.slice(0, 8),
     faded: state.aliveSet && !state.aliveSet.has(id),
   }));
 
@@ -161,7 +183,11 @@ function renderGraph(edges) {
   zoomBehavior = d3
     .zoom()
     .scaleExtent([0.1, 8])
-    .on('zoom', (event) => viewport.attr('transform', event.transform));
+    .on('zoom', (event) => {
+      viewport.attr('transform', event.transform);
+      // Labels would be an unreadable smear at fit-out scale; reveal on zoom-in.
+      viewport.classed('zoomed-in', event.transform.k > 1.5);
+    });
   svg.call(zoomBehavior);
 
   const palette = d3.schemeTableau10;
@@ -220,7 +246,18 @@ function renderGraph(edges) {
         })
     );
 
-  node.append('title').text((d) => d.id);
+  node.append('title').text((d) => d.label);
+
+  const labelSel = viewport
+    .append('g')
+    .attr('class', 'labels')
+    .selectAll('text')
+    .data(nodes)
+    .join('text')
+    .attr('class', 'node-label')
+    .attr('dx', 8)
+    .attr('dy', 3)
+    .text((d) => d.label);
 
   sim.on('tick', () => {
     link
@@ -229,6 +266,7 @@ function renderGraph(edges) {
       .attr('x2', (d) => d.target.x)
       .attr('y2', (d) => d.target.y);
     node.attr('cx', (d) => d.x).attr('cy', (d) => d.y);
+    labelSel.attr('x', (d) => d.x).attr('y', (d) => d.y);
   });
 
   fitView = () => {

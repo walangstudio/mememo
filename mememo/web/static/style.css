@@ -111,6 +111,17 @@ section h2 {
 .link { stroke-opacity: 0.4; }
 .link.faded { stroke-opacity: 0.05; }
 
+.node-label {
+  fill: var(--fg);
+  font-size: 9px;
+  pointer-events: none;
+  display: none;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 2px;
+}
+.viewport.zoomed-in .node-label { display: block; }
+
 #graph-legend {
   margin-top: 6px;
   font-size: 11px;
