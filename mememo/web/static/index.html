@@ -48,7 +48,19 @@
 
     <section id="table-section">
       <h2>memories</h2>
-      <input id="mem-search" placeholder="search file / fn / class" />
+      <div class="table-controls">
+        <input id="mem-search" placeholder="search file / fn / class / content" />
+        <select id="content-type-select">
+          <option value="">all types</option>
+          <option value="code_snippet">code_snippet</option>
+          <option value="context">context</option>
+          <option value="summary">summary</option>
+          <option value="relationship">relationship</option>
+          <option value="decision">decision</option>
+          <option value="analysis">analysis</option>
+          <option value="conversation">conversation</option>
+        </select>
+      </div>
       <table id="memories">
         <thead>
           <tr>

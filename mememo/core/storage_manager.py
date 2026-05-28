@@ -7,6 +7,7 @@ Handles all data persistence using hybrid storage:
 """
 
 import json
+import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,8 @@ from ..types import (
     RelationType,
     RepoContext,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class StorageManager:
@@ -285,6 +288,52 @@ class StorageManager:
         # event-replay reconstruction works on data minted before this release.
         self._backfill_v04_commit_metadata()
 
+        # v0.8 FTS5 over memory content text. Content lives in on-disk blobs, so
+        # FTS is the only way to search bodies (decisions / docs / context notes).
+        # Idempotent: CREATE IF NOT EXISTS for the virtual table + trigger;
+        # backfill is a one-shot per-row populate that no-ops once seeded.
+        self.conn.executescript("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                memory_id UNINDEXED,
+                content,
+                tokenize='unicode61 remove_diacritics 1'
+            );
+            CREATE TRIGGER IF NOT EXISTS memories_fts_after_delete
+            AFTER DELETE ON memories
+            BEGIN
+                DELETE FROM memories_fts WHERE memory_id = old.id;
+            END;
+        """)
+        self.conn.commit()
+        self._backfill_fts()
+
+    def _backfill_fts(self) -> None:
+        """Populate memories_fts for any memory that pre-dates FTS support.
+
+        Re-reads the content blob via the same ``content_ref`` path used by
+        :meth:`_build_memory`. Safe to call on every startup: a memory already
+        present in ``memories_fts`` is skipped.
+        """
+        cursor = self.conn.cursor()
+        rows = cursor.execute(
+            "SELECT id, content_ref FROM memories "
+            "WHERE id NOT IN (SELECT memory_id FROM memories_fts)"
+        ).fetchall()
+        if not rows:
+            return
+        logger.info("backfilling FTS for %d memories", len(rows))
+        for row in rows:
+            try:
+                blob = json.loads((self.base_dir / row["content_ref"]).read_text(encoding="utf-8"))
+                text = blob.get("text") or ""
+            except (OSError, json.JSONDecodeError):
+                text = ""
+            cursor.execute(
+                "INSERT INTO memories_fts (memory_id, content) VALUES (?, ?)",
+                (row["id"], text),
+            )
+        self.conn.commit()
+
     def _backfill_v04_commit_metadata(self) -> None:
         """One-shot, idempotent backfill of created_at_sha + seed memory_events.
 
@@ -449,6 +498,14 @@ class StorageManager:
                         for rel_id in memory.relationships.related_to
                     ],
                 )
+
+            # FTS over content body so /memories?q= matches decision/doc/context
+            # text, not just file/fn/class metadata. The AFTER DELETE trigger
+            # keeps it in sync on the way out.
+            cursor.execute(
+                "INSERT INTO memories_fts (memory_id, content) VALUES (?, ?)",
+                (memory.id, memory.content.text or ""),
+            )
 
             self.conn.commit()
         except Exception:

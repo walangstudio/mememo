@@ -131,6 +131,13 @@ section h2 {
   width: 100%;
   margin-bottom: 8px;
 }
+.table-controls {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.table-controls #mem-search { margin-bottom: 0; flex: 1; }
+.table-controls #content-type-select { min-width: 140px; }
 
 #node-detail {
   margin-top: 8px;

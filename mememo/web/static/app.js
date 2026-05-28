@@ -19,7 +19,8 @@ const state = {
   page: 0,
   pageSize: 50,
   total: 0,
-  q: '', // memories-table text search (file / fn / class)
+  q: '', // memories-table text search (file / fn / class / FTS content)
+  contentType: '', // content_type filter; '' = all types
   asOfSha: null, // null = live; sha prefix = filter to memories alive at that SHA
   aliveSet: null, // populated from /snapshots so the graph view can dim nodes
   colorByCommunity: false, // off = neutral fill; on = community palette
@@ -69,6 +70,7 @@ const snapshotBtn = $('snapshot');
 const snapshotClearBtn = $('snapshot-clear');
 const snapshotState = $('snapshot-state');
 const memSearch = $('mem-search');
+const contentTypeSelect = $('content-type-select');
 const tbody = document.querySelector('#memories tbody');
 const pageInfo = $('page-info');
 const prevBtn = $('prev');
@@ -139,6 +141,7 @@ async function loadMemories() {
         branch: state.branch,
         as_of_sha: state.asOfSha,
         q: state.q,
+        content_type: state.contentType,
         limit: state.pageSize,
         offset: state.page * state.pageSize,
       })
@@ -545,6 +548,11 @@ memSearch.addEventListener('input', () => {
     state.page = 0;
     loadMemories();
   }, 200);
+});
+contentTypeSelect.addEventListener('change', () => {
+  state.contentType = contentTypeSelect.value;
+  state.page = 0;
+  loadMemories();
 });
 prevBtn.addEventListener('click', () => {
   state.page = Math.max(0, state.page - 1);

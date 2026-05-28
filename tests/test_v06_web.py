@@ -66,6 +66,20 @@ def _seed(storage: StorageManager) -> None:
         f"('m2','r','demo','/tmp/demo','main','code_snippet','b.py','g',NULL,'python','k2','u2',1,2,2,1,'WILL_BREAK','{SHA}'),"
         f"('m3','r','demo','/tmp/demo','main','code_snippet','c.py','h',NULL,'python','k3','u3',1,3,3,0,NULL,'{SHA}')"
     )
+    # Decision memory: no file/fn/class (the case P7 is meant to make searchable).
+    # Insert directly into memories + memories_fts to mirror what save_memory does.
+    storage.conn.execute(
+        "INSERT INTO memories (id, repo_id, repo_name, repo_path, branch_name, "
+        "  content_type, file_path, function_name, class_name, language, "
+        "  checksum, content_ref, token_count, created_at, updated_at, "
+        "  stale, risk_grade, created_at_sha) "
+        "VALUES ('m4','r','demo','/tmp/demo','main','decision',NULL,NULL,NULL,NULL,"
+        f"  'k4','u4',8,4,4,0,NULL,'{SHA}')"
+    )
+    storage.conn.execute(
+        "INSERT INTO memories_fts (memory_id, content) VALUES (?, ?)",
+        ("m4", "we chose Postgres because of jsonb support and the new release lifecycle"),
+    )
     storage.upsert_branch_state(BranchState(repo_id="r", branch="main", last_indexed_sha=SHA))
     storage.insert_relations(
         [
@@ -129,14 +143,14 @@ def test_repos_lists_indexed_repos(client: TestClient) -> None:
     r = client.get("/repos")
     assert r.status_code == 200
     repos = r.json()
-    assert any(repo["repo_id"] == "r" and repo["memories"] == 3 for repo in repos)
+    assert any(repo["repo_id"] == "r" and repo["memories"] == 4 for repo in repos)
 
 
 def test_memories_paginates(client: TestClient) -> None:
     r = client.get("/memories", params={"repo_id": "r", "limit": 2, "offset": 0})
     assert r.status_code == 200
     payload = r.json()
-    assert payload["total"] == 3
+    assert payload["total"] == 4  # 3 code + 1 decision
     assert payload["limit"] == 2
     assert len(payload["items"]) == 2
 
@@ -180,6 +194,37 @@ def test_memories_search_filters_by_q(client: TestClient) -> None:
     # '_' is a literal, not a LIKE wildcard — no seed path contains one, so 0
     # (a bare wildcard would otherwise match every row).
     assert client.get("/memories", params={"repo_id": "r", "q": "_"}).json()["total"] == 0
+
+
+def test_memories_q_matches_decision_body_via_fts(client: TestClient) -> None:
+    """P7: a decision memory with NULL file/fn/class is findable via its body text."""
+    # 'postgres' is in the seeded decision body but not in any code metadata.
+    r = client.get("/memories", params={"repo_id": "r", "q": "postgres"})
+    payload = r.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["id"] == "m4"
+    # Prefix matching: 'jsonb' (the body has 'jsonb') and partial 'json' both hit.
+    assert client.get("/memories", params={"repo_id": "r", "q": "json"}).json()["total"] == 1
+
+
+def test_memories_content_type_filter(client: TestClient) -> None:
+    """P7: content_type narrows the result set without needing text search."""
+    r = client.get("/memories", params={"repo_id": "r", "content_type": "decision"})
+    payload = r.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["id"] == "m4"
+    r = client.get("/memories", params={"repo_id": "r", "content_type": "code_snippet"})
+    assert r.json()["total"] == 3
+
+
+def test_memories_q_and_content_type_compose(client: TestClient) -> None:
+    """P7: q + content_type AND together, not OR."""
+    # 'postgres' alone hits m4; restricting to code_snippet should give 0.
+    r = client.get(
+        "/memories",
+        params={"repo_id": "r", "q": "postgres", "content_type": "code_snippet"},
+    )
+    assert r.json()["total"] == 0
 
 
 def test_relations_returns_edges(client: TestClient) -> None:
