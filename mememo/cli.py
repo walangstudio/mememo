@@ -183,7 +183,7 @@ def _smart_context_build(results, user_prompt, cfg, srv):
 
 async def cmd_capture() -> None:
     """Stop hook: read transcript tail and auto-capture memories."""
-    from .server import initialize_mememo
+    from .server import ensure_initialized
     from .tools.capture import capture as capture_impl
     from .tools.schemas import CaptureParams
 
@@ -216,7 +216,7 @@ async def cmd_capture() -> None:
         print(json.dumps({"continue": True}))
         return
 
-    await initialize_mememo()
+    await ensure_initialized()
 
     # Re-import after initialization to get populated globals
     import mememo.server as srv
@@ -271,7 +271,7 @@ async def cmd_capture() -> None:
 
 async def cmd_inject() -> None:
     """UserPromptSubmit hook: inject relevant memories as system context."""
-    from .server import initialize_mememo
+    from .server import ensure_initialized
     from .types.memory import SearchParams
 
     raw = sys.stdin.read()
@@ -290,7 +290,7 @@ async def cmd_inject() -> None:
         print(json.dumps({"continue": True}))
         return
 
-    await initialize_mememo()
+    await ensure_initialized()
 
     import mememo.server as srv
 
@@ -423,10 +423,10 @@ async def cmd_pre_tool() -> None:
         return
 
     async def _do_search() -> str:
-        from .server import initialize_mememo
+        from .server import ensure_initialized
         from .types.memory import SearchParams
 
-        await initialize_mememo()
+        await ensure_initialized()
         import mememo.server as srv
 
         results = await srv.memory_manager.search_similar(
