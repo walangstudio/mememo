@@ -15,7 +15,18 @@ ChunkType = Literal["function", "method", "class", "module", "import", "text", "
 # longer constrained at the DB layer (the relations.type CHECK was dropped);
 # this Literal + the RelationType Literal in types/memory.py are the source of
 # truth, enforced by Pydantic before every insert.
-EdgeType = Literal["IMPORTS", "CALLS", "EXTENDS", "IMPLEMENTS", "USES", "DECORATED_BY", "DOCUMENTS"]
+EdgeType = Literal[
+    "IMPORTS",
+    "CALLS",
+    "EXTENDS",
+    "IMPLEMENTS",
+    "USES",
+    "DECORATED_BY",
+    "DOCUMENTS",
+    # v0.8: REFERENCES (doc section -> external URL). target_label IS the URL;
+    # the resolver naturally leaves it as target_symbol with target_memory_id NULL.
+    "REFERENCES",
+]
 
 # Edge confidence — every edge is born EXTRACTED. Resolver may downgrade
 # to INFERRED (fuzzy match) or AMBIGUOUS (no resolution).

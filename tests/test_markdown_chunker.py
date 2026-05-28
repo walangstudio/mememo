@@ -132,8 +132,66 @@ def test_heading_chunk_line_range_is_inclusive():
     assert h.end_line == 3  # heading line + 2 body lines (was off-by-one: 2)
 
 
-def test_url_is_not_emitted_as_a_path_target():
+def test_url_is_not_emitted_as_a_documents_path_target():
+    """The path scan still strips URLs so a link like https://host/x.py
+    doesn't masquerade as a repo path target."""
     md = "# A\n\nSee https://example.com/docs/setup.py for details.\n"
     _, edges = MarkdownChunker().chunk_with_edges(md, "x.md")
-    targets = {e.target_label for e in edges}
-    assert not any("example.com" in t for t in targets)
+    docs_targets = {e.target_label for e in _by_type(edges).get("DOCUMENTS", [])}
+    assert not any("example.com" in t for t in docs_targets)
+
+
+def test_url_emits_references_edge():
+    """v0.8: URLs in prose become REFERENCES edges from the doc section."""
+    md = "# Setup\n\nSee https://example.com/docs for details.\n"
+    _, edges = MarkdownChunker().chunk_with_edges(md, "x.md")
+    refs = _by_type(edges).get("REFERENCES", [])
+    assert refs, "expected a REFERENCES edge for the URL"
+    assert {e.target_label for e in refs} == {"https://example.com/docs"}
+    assert all(e.confidence == "INFERRED" for e in refs)
+    assert all(e.source_qualname.startswith("x.setup") for e in refs)
+
+
+def test_url_trailing_punctuation_stripped():
+    """Sentence punctuation right after a URL is not part of the URL."""
+    md = "# A\n\nSee https://example.com/a, https://example.com/b. Also (https://example.com/c).\n"
+    _, edges = MarkdownChunker().chunk_with_edges(md, "x.md")
+    targets = {e.target_label for e in _by_type(edges).get("REFERENCES", [])}
+    assert targets == {
+        "https://example.com/a",
+        "https://example.com/b",
+        "https://example.com/c",
+    }
+
+
+def test_url_in_fence_is_not_referenced():
+    """URLs inside fenced code blocks are content, not REFERENCES."""
+    md = "# A\n\n```text\nhttps://fenced.example.com/x\n```\n"
+    _, edges = MarkdownChunker().chunk_with_edges(md, "x.md")
+    assert "REFERENCES" not in _by_type(edges)
+
+
+def test_duplicate_urls_dedup_per_section():
+    md = "# A\n\nFirst https://example.com/x and again https://example.com/x .\n"
+    _, edges = MarkdownChunker().chunk_with_edges(md, "x.md")
+    refs = _by_type(edges).get("REFERENCES", [])
+    assert [e.target_label for e in refs] == ["https://example.com/x"]
+
+
+def test_references_edge_survives_resolver_as_unresolved_symbol():
+    """v0.8: REFERENCES edges must reach storage with target_memory_id=NULL
+    and target_symbol=<url> — the resolver should not silently drop them."""
+    from mememo.core.symbol_resolver import SymbolEntry, resolve_edges
+
+    md = "# Guide\n\nSee https://docs.example.com/setup for the install path.\n"
+    chunks, edges = MarkdownChunker().chunk_with_edges(md, "docs/guide.md")
+    symbols = [
+        SymbolEntry(memory_id=f"doc{i}", qualname=c.qualname)
+        for i, c in enumerate(chunks)
+        if c.qualname
+    ]
+    rels = resolve_edges(edges, repo_id="r", branch="main", commit_sha="a" * 40, symbols=symbols)
+    refs = [r for r in rels if r.type == "REFERENCES"]
+    assert refs, "REFERENCES edge dropped by resolver"
+    assert refs[0].target_memory_id is None
+    assert refs[0].target_symbol == "https://docs.example.com/setup"
