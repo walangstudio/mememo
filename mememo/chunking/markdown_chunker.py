@@ -5,11 +5,15 @@ Pure-Python (no tree-sitter): splits a Markdown file on ATX headings
 stack so each section records its parent heading. Fenced code blocks are
 left inside their section (and skipped when scanning for symbol mentions).
 
-``chunk_with_edges`` additionally emits ``DOCUMENTS`` edges from a doc
-section to code symbols it names — backtick-quoted identifiers in prose
-(`` `MyClass` ``, `` `do_thing()` ``) and bare ``path/to/file.ext``
-mentions. These are INFERRED-confidence: the symbol_resolver matches them
-against the indexed code symbol table and drops the ones that don't resolve.
+``chunk_with_edges`` additionally emits two edge types from a doc section:
+- ``DOCUMENTS``: code symbols it names — backtick-quoted identifiers in prose
+  (`` `MyClass` ``, `` `do_thing()` ``) and bare ``path/to/file.ext`` mentions.
+  INFERRED-confidence; the symbol_resolver matches them against the indexed
+  code symbol table and drops the ones that don't resolve.
+- ``REFERENCES``: outbound URLs (``http://…`` / ``https://…``). The URL string
+  is the target_label; the resolver naturally leaves it as ``target_symbol``
+  with ``target_memory_id`` NULL, so the edge survives as a typed link to an
+  external resource.
 """
 
 from __future__ import annotations
@@ -31,9 +35,14 @@ _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 _SYMBOL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:[.:]{1,2}[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?$")
 # A bare file path mention: at least one '/' and a dotted extension.
 _PATH_RE = re.compile(r"\b([\w./-]+/[\w.-]+\.[A-Za-z0-9]+)\b")
-# URLs are stripped before path scanning so a link like https://host/x.py
-# doesn't masquerade as a repo path (links are out of scope here — P2).
+# URLs are extracted as REFERENCES edges. The same regex is also used to
+# strip URLs from the path scan so a link like https://host/x.py doesn't
+# masquerade as a repo file path.
 _URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
+
+# Trailing punctuation that's almost always sentence-grammar, not part of the
+# URL itself ("see https://x/y." -> drop the dot). Matches a tail run of these.
+_URL_TRAILING_PUNCT = ".,;:!?)]>}\"'`"
 
 
 def _slug(text: str) -> str:
@@ -111,6 +120,8 @@ class MarkdownChunker(BaseChunker):
             )
             for target in _scan_symbols(body):
                 edges.append(RawEdge(source_qual, target, "DOCUMENTS", "INFERRED"))
+            for url in _scan_urls(body):
+                edges.append(RawEdge(source_qual, url, "REFERENCES", "INFERRED"))
 
         for idx, line in enumerate(lines):
             fence_m = _FENCE_RE.match(line)
@@ -178,6 +189,35 @@ class MarkdownChunker(BaseChunker):
         # Stable order: by start line.
         chunks.sort(key=lambda c: c.start_line)
         return chunks, edges
+
+
+def _scan_urls(body_lines: list[str]) -> list[str]:
+    """Collect outbound URLs from a section body (skipping fenced code blocks).
+
+    URLs inside fenced code are treated as content, not REFERENCES — matches
+    how :func:`_scan_symbols` ignores symbols in fences.
+    """
+    urls: list[str] = []
+    seen: set[str] = set()
+    in_fence = False
+    fence_marker = ""
+    for line in body_lines:
+        fence_m = _FENCE_RE.match(line)
+        if fence_m:
+            marker = fence_m.group(2)
+            if not in_fence:
+                in_fence, fence_marker = True, marker[0]
+            elif marker[0] == fence_marker:
+                in_fence = False
+            continue
+        if in_fence:
+            continue
+        for raw in _URL_RE.findall(line):
+            url = raw.rstrip(_URL_TRAILING_PUNCT)
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+    return urls
 
 
 def _scan_symbols(body_lines: list[str]) -> list[str]:

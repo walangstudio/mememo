@@ -36,6 +36,7 @@ const EDGE_COLORS = {
   USES: '#f7e06c',
   DECORATED_BY: '#f76c9c',
   DOCUMENTS: '#8a93a3',
+  REFERENCES: '#9cf76c',
 };
 const edgeColor = (t) => EDGE_COLORS[t] || '#5a667a';
 

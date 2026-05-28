@@ -179,11 +179,19 @@ class BranchState(BaseModel):
     )
 
 
-# v0.5 (FR-017): typed edges in the memory graph. v0.7 adds DOCUMENTS.
+# v0.5 (FR-017): typed edges in the memory graph. v0.7 adds DOCUMENTS;
+# v0.8 adds REFERENCES (doc section -> external URL, stays unresolved).
 # Keep in sync with chunking.base_chunker.EdgeType — together they are the
 # source of truth for edge types (the relations.type DB CHECK was dropped).
 RelationType = Literal[
-    "IMPORTS", "CALLS", "EXTENDS", "IMPLEMENTS", "USES", "DECORATED_BY", "DOCUMENTS"
+    "IMPORTS",
+    "CALLS",
+    "EXTENDS",
+    "IMPLEMENTS",
+    "USES",
+    "DECORATED_BY",
+    "DOCUMENTS",
+    "REFERENCES",
 ]
 RelationConfidence = Literal["EXTRACTED", "INFERRED", "AMBIGUOUS"]
 
