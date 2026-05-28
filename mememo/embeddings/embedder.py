@@ -156,8 +156,15 @@ class Embedder:
             Embedding dimension
         """
         if self._dimension is None:
-            # Trigger model loading
-            _ = self.model
+            # Prefer the registry: every known model already publishes its dimension,
+            # so VectorIndex(..., dimension=embedder.dimension) at server start doesn't
+            # have to load the SentenceTransformer (~6s cold on Windows) just to read
+            # a number. Unknown models fall through to a real model load.
+            info = MODEL_REGISTRY.get(self.model_name)
+            if info and "dimension" in info:
+                self._dimension = info["dimension"]
+            else:
+                _ = self.model  # fallback: discover from a loaded model
         return self._dimension
 
     def embed(self, text: str | list[str]) -> np.ndarray:
