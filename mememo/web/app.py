@@ -31,6 +31,24 @@ logger = logging.getLogger(__name__)
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+def _build_fts_query(q: str) -> str:
+    """Turn a user search box query into a safe FTS5 ``MATCH`` expression.
+
+    Strips FTS operators (-, ", *, NEAR, AND, OR, …) by reducing each token to
+    word characters, then appends ``*`` for prefix matching so ``audit``
+    matches ``audit_tail``. Multi-token queries become AND-ed prefix matches.
+    Returns ``""`` if nothing usable remains — caller falls back to LIKE only.
+    """
+    import re
+
+    tokens = []
+    for tok in q.split():
+        cleaned = re.sub(r"[^A-Za-z0-9_]", "", tok)
+        if cleaned:
+            tokens.append(cleaned + "*")
+    return " ".join(tokens)
+
+
 def create_app(storage_getter=None) -> FastAPI:
     """Build the FastAPI app.
 
@@ -63,6 +81,7 @@ def create_app(storage_getter=None) -> FastAPI:
         branch: str | None = None,
         as_of_sha: str | None = None,
         q: str | None = None,
+        content_type: str | None = None,
         limit: int = Query(default=50, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, Any]:
@@ -81,17 +100,32 @@ def create_app(storage_getter=None) -> FastAPI:
         if branch:
             conditions.append("branch_name = ?")
             params.append(branch)
+        if content_type:
+            conditions.append("content_type = ?")
+            params.append(content_type)
         if q:
             # Literal substring search over the human-meaningful columns. Escape
             # LIKE metacharacters (\ % _) so e.g. 'audit_tail' matches literally.
             escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             like = f"%{escaped}%"
-            conditions.append(
-                "(file_path LIKE ? ESCAPE '\\' "
-                "OR function_name LIKE ? ESCAPE '\\' "
-                "OR class_name LIKE ? ESCAPE '\\')"
-            )
-            params.extend([like, like, like])
+            # Also OR through FTS5 over body text so decisions/docs/context
+            # notes (which have NULL file/fn/class) are findable by content.
+            fts_q = _build_fts_query(q)
+            if fts_q:
+                conditions.append(
+                    "(file_path LIKE ? ESCAPE '\\' "
+                    "OR function_name LIKE ? ESCAPE '\\' "
+                    "OR class_name LIKE ? ESCAPE '\\' "
+                    "OR id IN (SELECT memory_id FROM memories_fts WHERE memories_fts MATCH ?))"
+                )
+                params.extend([like, like, like, fts_q])
+            else:
+                conditions.append(
+                    "(file_path LIKE ? ESCAPE '\\' "
+                    "OR function_name LIKE ? ESCAPE '\\' "
+                    "OR class_name LIKE ? ESCAPE '\\')"
+                )
+                params.extend([like, like, like])
         if as_of_sha:
             from ..types import SHA_PREFIX_PATTERN
 
