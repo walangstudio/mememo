@@ -12,6 +12,7 @@ All-Python code-aware memory server with:
 import json
 import logging
 import os
+import threading
 import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
@@ -400,11 +401,22 @@ async def initialize_mememo():
     logger.info("mememo v%s initialized successfully", _VERSION)
 
 
+# Threading lock (not asyncio.Lock) because hookd handler threads each spin a
+# fresh event loop — an asyncio.Lock would only serialize within a single loop.
+# Contention is rare (cold first init only); after that the fast-path skips the
+# lock entirely thanks to the outer is-None check.
+_init_lock = threading.Lock()
+
+
 async def ensure_initialized():
-    """Ensure mememo is initialized (lazy initialization)."""
+    """Ensure mememo is initialized (lazy, cross-thread safe)."""
     global config, memory_manager
-    if memory_manager is None:
-        await initialize_mememo()
+    if memory_manager is not None:
+        return
+    with _init_lock:
+        # Double-check: another thread may have completed init while we waited.
+        if memory_manager is None:
+            await initialize_mememo()
 
 
 def _audit_log(tool: str) -> None:

@@ -121,6 +121,84 @@ def test_hook_commands_use_ensure_initialized_not_full_init():
         assert "ensure_initialized" in src, f"{fn_name} must call ensure_initialized"
 
 
+def test_ensure_initialized_serializes_concurrent_cold_init(monkeypatch):
+    """Race guard: when N threads each spin a fresh asyncio loop and hit
+    ensure_initialized while memory_manager is still None, initialize_mememo
+    must run exactly once. Pre-lock, the double-check passed in each thread
+    and init ran N times in parallel."""
+    import asyncio as _asyncio
+    import threading as _threading
+
+    import mememo.server as srv
+
+    original_mm = srv.memory_manager
+    srv.memory_manager = None
+
+    call_count = 0
+    counter_lock = _threading.Lock()
+
+    async def fake_init():
+        nonlocal call_count
+        with counter_lock:
+            call_count += 1
+        # Hold in-flight long enough that other threads queued on the init
+        # lock can prove they actually waited (not just lost the race).
+        await _asyncio.sleep(0.05)
+        srv.memory_manager = object()
+
+    monkeypatch.setattr(srv, "initialize_mememo", fake_init)
+
+    barrier = _threading.Barrier(4)
+    errors: list[BaseException] = []
+
+    def runner():
+        try:
+            barrier.wait(timeout=5)
+            _asyncio.run(srv.ensure_initialized())
+        except BaseException as e:  # noqa: BLE001 - surface to assertion
+            errors.append(e)
+
+    threads = [_threading.Thread(target=runner) for _ in range(4)]
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+        assert not errors, f"runner failed: {errors}"
+        assert call_count == 1, f"initialize_mememo ran {call_count} times; expected 1"
+    finally:
+        srv.memory_manager = original_mm
+
+
+def test_hookd_dispatches_real_cmd_capture_default_factory(tmp_path, monkeypatch):
+    """Integration: the sidecar's default factories actually invoke the real
+    cli.cmd_* functions end-to-end (the gap that hid the ensure_initialized
+    bug behind a trivial _echo factory in earlier tests). cmd_capture's
+    early-exit path (empty payload -> no transcript_path) returns
+    {"continue": true} without forcing full server init."""
+    import urllib.request
+
+    monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(tmp_path / "data"))
+
+    disc = tmp_path / ".daemon.json"
+    # Default factories pull from cli.cmd_capture / cmd_inject / cmd_pre_tool.
+    port, token, shutdown = hookd.start(discovery_path=disc, version="test")
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/hooks/capture",
+            data=b"{}",  # empty payload -> no transcript_path -> early exit
+            method="POST",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read())
+        assert payload["exitcode"] == 0, payload
+        # cmd_capture prints {"continue": true} on the no-transcript path.
+        assert '"continue"' in payload["stdout"], payload
+    finally:
+        shutdown()
+
+
 def test_hook_exception_returns_nonzero_with_stderr(daemon, monkeypatch):
     """A hook that raises should yield exitcode=1 and the exception in stderr."""
     monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(daemon["disc"].parent / "data"))
