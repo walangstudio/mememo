@@ -103,6 +103,24 @@ def test_unknown_hook_rejected(daemon):
     assert excinfo.value.code == 404
 
 
+def test_hook_commands_use_ensure_initialized_not_full_init():
+    """Regression for the sidecar's missing win: cmd_capture/cmd_inject/
+    cmd_pre_tool must call ensure_initialized (idempotent) so the hookd
+    handler reuses the daemon's already-initialised memory_manager instead
+    of re-running full init on every hook fire."""
+    import inspect
+
+    from mememo import cli
+
+    for fn_name in ("cmd_capture", "cmd_inject", "cmd_pre_tool"):
+        src = inspect.getsource(getattr(cli, fn_name))
+        assert "initialize_mememo" not in src, (
+            f"{fn_name} still calls initialize_mememo directly; switch to "
+            "ensure_initialized so the hookd sidecar can reuse the daemon's globals"
+        )
+        assert "ensure_initialized" in src, f"{fn_name} must call ensure_initialized"
+
+
 def test_hook_exception_returns_nonzero_with_stderr(daemon, monkeypatch):
     """A hook that raises should yield exitcode=1 and the exception in stderr."""
     monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(daemon["disc"].parent / "data"))
