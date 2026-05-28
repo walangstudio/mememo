@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
@@ -216,21 +217,33 @@ def main() -> None:
     # Fast-path hook subcommands: `<name> --hook`. argparse adds milliseconds
     # of import cost and Claude Code invokes these per turn.
     if len(args) >= 2 and args[1] == "--hook":
-        if args[0] == "capture":
-            from .cli import run_capture
+        hook_name = args[0]
+        if hook_name in ("capture", "inject", "pre-tool"):
+            # Try the sidecar in the running MCP server first (sub-100ms vs ~3s
+            # cold). Falls through to the slow path on any daemon trouble.
+            if os.environ.get("MEMEMO_NO_HOOK_CLIENT") != "1":
+                try:
+                    from .hookclient import DaemonUnavailableError
+                    from .hookclient import run as _hook_run
 
-            run_capture()
-            return
-        if args[0] == "inject":
-            from .cli import run_inject
+                    sys.exit(_hook_run(hook_name))
+                except DaemonUnavailableError:
+                    pass  # fall through to in-process init
+            if hook_name == "capture":
+                from .cli import run_capture
 
-            run_inject()
-            return
-        if args[0] == "pre-tool":
-            from .cli import run_pre_tool
+                run_capture()
+                return
+            if hook_name == "inject":
+                from .cli import run_inject
 
-            run_pre_tool()
-            return
+                run_inject()
+                return
+            if hook_name == "pre-tool":
+                from .cli import run_pre_tool
+
+                run_pre_tool()
+                return
 
     if args and args[0] in _SUBCOMMANDS:
         sys.exit(_SUBCOMMANDS[args[0]](args[1:]))

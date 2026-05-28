@@ -11,6 +11,7 @@ All-Python code-aware memory server with:
 
 import json
 import logging
+import os
 import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
@@ -948,6 +949,17 @@ async def cleanup_memory(params: CleanupMemoryParams) -> CleanupMemoryResponse:
 
 def run():
     """Run the FastMCP server."""
+    # Start the hook sidecar so `mememo capture|inject|pre-tool --hook` calls
+    # from Claude Code don't each spawn a fresh ~3s python. Opt-out via env
+    # so tests / scripts can suppress it.
+    if os.environ.get("MEMEMO_NO_HOOK_DAEMON") != "1":
+        try:
+            from . import hookd
+
+            hookd.start(version=_VERSION)
+        except Exception:
+            # Daemon is an optimisation; never block MCP boot on a failure here.
+            logger.exception("hookd: failed to start sidecar (continuing without it)")
     logger.info("mememo v%s ready, serving MCP on stdio", _VERSION)
     mcp.run()
 
