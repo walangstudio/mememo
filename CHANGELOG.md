@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-28
+
+### Added
+- **FTS5 content search + `content_type` filter** (PR #36). New `memories_fts` virtual table populated by `save_memory` and kept in sync via an `AFTER DELETE ON memories` trigger, with a one-shot startup backfill for existing stores. `/memories?q=` now ORs the existing file/fn/class LIKE with an FTS prefix-match subquery, so `decision`/`context`/`summary` memories (NULL file/fn/class, body lives in a blob) are finally findable. New `/memories?content_type=` filter + frontend dropdown.
+- **Hook sidecar** (PR #35). The MCP server boots a stdlib loopback HTTP listener (127.0.0.1, bearer-token, discovery file at `~/.mememo/.daemon.json`). `mememo capture|inject|pre-tool --hook` first POSTs into the running daemon, falling back transparently to the in-process slow path when the daemon isn't reachable (e.g. git hooks fired outside Claude Code). New modules: `mememo/hookd.py`, `mememo/hookclient.py`. Opt-outs: `MEMEMO_NO_HOOK_DAEMON=1` (server), `MEMEMO_NO_HOOK_CLIENT=1` (CLI).
+- **`REFERENCES` URL edge type** (PR #37). Markdown doc sections emit a typed edge per outbound `https?://…` (trailing sentence punctuation stripped, dedup per section, fenced URLs ignored). The resolver naturally leaves the URL as `target_symbol` with `target_memory_id` NULL. Added to both `EdgeType` (chunking) and `RelationType` (types/memory) Literals; web graph renders REFERENCES with a distinct color.
+
+### Fixed
+- **MCP cold-start regression** (PR #34). `Embedder.dimension` was triggering a SentenceTransformer load (~6s cold on Windows) just to read a number `MODEL_REGISTRY` already publishes. `VectorIndex(..., dimension=embedder.dimension)` at `initialize_mememo` forced the load even though the model isn't used until the first `embed()` call. The property now reads from the registry first; cold init drops from ~9s → ~2.5s. Verified by `~/.mememo/logs/server.log` — "Loading embedding model" no longer appears at server boot.
+
+### Notes
+- **Editable installs need a refresh**: `pip install -e .` (or `uv pip install -e .`) so `importlib.metadata.version("mememo")` agrees with this bump. The daemon discovery file embeds the reported version, so the refresh is also how the sidecar advertises the new build.
+
 ## [0.7.1] - 2026-05-27
 
 ### Fixed
