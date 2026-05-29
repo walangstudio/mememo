@@ -42,6 +42,15 @@
   Non-blocking: server is usable immediately. FAISS conflicts (two old ids
   converge) clear embedding pointers for re-embedding.
 
+## [0.8.1] - 2026-05-28
+
+### Fixed
+- **Hooks now actually reuse the running daemon** (PR #38, merged into v0.8.0 but missed in that entry). `cmd_capture` / `cmd_inject` / `cmd_pre_tool` were calling `initialize_mememo()` directly, which re-ran full boot every fire — defeating the v0.8.0 hooks-sidecar. They now call `ensure_initialized()` (the idempotent gate). Live log evidence pre-fix showed ~10 fresh "Initializing mememo" blocks per minute with the sidecar up; post-fix it's once per server process lifetime.
+- **Hookd cold-init race serialized across handler threads** (PR #40). Each hookd request spins a fresh asyncio loop in its own thread, so the existing is-None check in `ensure_initialized` let multiple threads through and ran full init in parallel. Wrapped the init with a module-level `threading.Lock` using a double-checked-locking pattern; fast path stays a cheap pointer compare, only cold-init contention pays the lock.
+
+### Tests
+- Real `cmd_capture` integration test driven through hookd's default factories (PR #40), closing the wiring gap that hid the #38 bug behind a trivial `_echo` factory in earlier tests.
+
 ## [0.8.0] - 2026-05-28
 
 ### Added
