@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+### Added
+- **Portable project identity** — `repo_id` is now derived from the
+  normalized `owner/repo` path rather than the raw remote URL or local path.
+  `git@github.com:owner/repo` and `https://github.com/owner/repo` resolve to
+  the same id. SSH host aliases (e.g. `git@gh-kitty:`) are resolved to their
+  canonical hostname before normalization. Override precedence: `MEMEMO_REPO_ID`
+  env > `.mememo/project.yaml project_id` > normalized remote hash > path hash
+  fallback. Monorepo and cross-host-collision escape hatch: set `project_id` in
+  `.mememo/project.yaml`.
+- **Global lane** — memories stored outside a git repo go to `repo_id =
+  "__global__"`. SessionStart hook and workspace recall always include the
+  global lane so process/project notes surface regardless of active repo.
+- **Workspace recall** — `discover_workspace` scans immediate-child repos from
+  a parent directory (capped at `MEMEMO_WORKSPACE_MAX_REPOS`, default 8).
+  Cross-location deps declared in `.mememo/workspace.yaml` under `projects:`.
+  `recall_workspace` embeds the query once and merges results across all
+  discovered repos plus the global lane, ranked by similarity.
+- **SessionStart hook** — `python -m mememo session-start --hook` fires
+  asynchronously at Claude Code session open, recalls memories from the
+  workspace, and injects them via `additionalContext`. Register via
+  `install-git-hooks --with-session-start` or manually in
+  `~/.claude/settings.json`. `register_claude_session_start_hook()` in
+  `mememo.hooks.installer` handles programmatic registration (idempotent).
+  CLAUDE.md injection stays harness-controlled — mememo augments, does not
+  replace it.
+- **`import-md` importer** — `python -m mememo import-md <dir> [--repo <path>]
+  [--dry-run]` ingests `.md` files with YAML frontmatter (e.g.
+  `~/.claude/projects/.../memory/*.md`). Type mapping: `decision` →
+  `decision`; `project`/`user`/`feedback` → `context`; `reference` →
+  `relationship`. Idempotent: skips files whose `(file_path, checksum)` pair
+  already exists. `[[wikilink]]` references stored as `REFERENCES` edges.
+- **`reindex-identity` CLI** — `python -m mememo reindex-identity [--dry-run]`
+  recomputes every stored `repo_id` via the live resolver and moves FAISS dirs
+  to match. Supports `--dry-run` to inspect changes without writing.
+- **Auto-migration** — on first startup after upgrade, a daemon thread
+  re-derives every stored `repo_id` via the new resolver and moves FAISS dirs
+  accordingly. Guarded by `schema_meta.identity_migrated`; runs exactly once.
+  Non-blocking: server is usable immediately. FAISS conflicts (two old ids
+  converge) clear embedding pointers for re-embedding.
+
 ## [0.8.0] - 2026-05-28
 
 ### Added
