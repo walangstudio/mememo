@@ -1297,17 +1297,26 @@ class StorageManager:
             ("repo_index_metadata", "repo_id"),
             ("index_state", "repo_id"),
         ]
-        for table, col in tables:
-            try:
-                cursor.execute(
-                    f"UPDATE {table} SET {col} = ? WHERE {col} = ?",
-                    (to_repo_id, from_repo_id),
-                )
-                counts[table] = cursor.rowcount
-            except sqlite3.OperationalError:
-                # Table may not exist on older schemas; skip silently.
-                continue
-        self.conn.commit()
+        try:
+            for table, col in tables:
+                try:
+                    cursor.execute(
+                        f"UPDATE {table} SET {col} = ? WHERE {col} = ?",
+                        (to_repo_id, from_repo_id),
+                    )
+                    counts[table] = cursor.rowcount
+                except sqlite3.OperationalError:
+                    # Table may not exist on older schemas; skip silently.
+                    continue
+            self.conn.commit()
+        except Exception:
+            # A PK collision (e.g. two repos whose remotes normalise to the same
+            # id) raises IntegrityError after some tables already updated. Without
+            # this rollback the dirty UPDATE sits in the open transaction and a
+            # later request's commit would persist an inconsistent store. Make the
+            # reassign all-or-nothing and let the caller record it as skipped.
+            self.conn.rollback()
+            raise
         return counts
 
     # ----- portable identity backfill (wave 0a) ---------------------------
@@ -1375,7 +1384,28 @@ class StorageManager:
             row_count = 0
             if new_id != old_id:
                 if not dry_run:
-                    counts = self.reassign_repo_id(old_id, new_id)
+                    try:
+                        counts = self.reassign_repo_id(old_id, new_id)
+                    except Exception as exc:
+                        # reassign_repo_id rolled itself back (e.g. a PK collision
+                        # when two repos normalise to the same id). Record this
+                        # repo as skipped and keep migrating the rest.
+                        logger.warning(
+                            "_backfill_reindex_identity: reassign %s -> %s failed: %s",
+                            old_id,
+                            new_id,
+                            exc,
+                        )
+                        manifest.append(
+                            {
+                                "old_id": old_id,
+                                "new_id": old_id,
+                                "repo_path": repo_path,
+                                "row_count": 0,
+                                "skipped": True,
+                            }
+                        )
+                        continue
                     row_count = counts.get("memories", 0)
                 else:
                     count_row = cursor.execute(

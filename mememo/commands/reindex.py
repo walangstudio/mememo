@@ -17,6 +17,11 @@ _MOVED = "moved"
 _NOOP = "noop"
 
 
+def _contains_files(path: Path) -> bool:
+    """True if any regular file lives anywhere under path (empty dirs ignored)."""
+    return any(p.is_file() for p in path.rglob("*"))
+
+
 def move_vector_index(base_path: Path, old_id: str, new_id: str) -> str:
     """Move vector_index/{old_id}/ -> vector_index/{new_id}/.
 
@@ -35,8 +40,16 @@ def move_vector_index(base_path: Path, old_id: str, new_id: str) -> str:
     if not src.exists():
         return _NOOP
 
-    if dst.exists() and any(dst.iterdir()):
-        return _CONFLICT
+    if dst.exists():
+        if _contains_files(dst):
+            # Real FAISS data already lives under the new id. Don't clobber or
+            # merge shards — caller clears embedding pointers and re-embeds.
+            return _CONFLICT
+        # Empty scaffolding only: VectorIndex.__init__ pre-creates
+        # {new_id}/{branch}/ before the migration runs, so dst exists but holds
+        # no shard files. Remove it so the move replaces it (a plain
+        # shutil.move would otherwise nest src *inside* dst).
+        shutil.rmtree(dst)
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dst))
