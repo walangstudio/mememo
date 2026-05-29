@@ -173,6 +173,22 @@ class HookConfig(BaseModel):
         description="Similarity threshold for dedup during capture (skip already-stored facts)",
     )
 
+    # Session-start recall (Wave 1B)
+    session_start_enabled: bool = Field(
+        default=True, description="Recall relevant memories at session start"
+    )
+    session_start_min_similarity: float = Field(
+        default=0.2, ge=0.0, le=1.0, description="Min similarity for session-start recall"
+    )
+    session_start_token_budget: int = Field(
+        default=600, gt=0, description="Max tokens injected at session start"
+    )
+
+    # Workspace discovery (Wave 1B)
+    workspace_max_repos: int = Field(
+        default=8, gt=0, description="Max repos to scan in workspace discovery"
+    )
+
 
 class Config(BaseModel):
     """Complete mememo configuration."""
@@ -257,6 +273,15 @@ class Config(BaseModel):
                 capture_dedup_similarity=float(
                     os.getenv("MEMEMO_CAPTURE_DEDUP_SIMILARITY", "0.85")
                 ),
+                session_start_enabled=os.getenv("MEMEMO_HOOK_SESSION_START_ENABLED", "true").lower()
+                == "true",
+                session_start_min_similarity=float(
+                    os.getenv("MEMEMO_HOOK_SESSION_START_MIN_SIMILARITY", "0.2")
+                ),
+                session_start_token_budget=int(
+                    os.getenv("MEMEMO_HOOK_SESSION_START_TOKEN_BUDGET", "600")
+                ),
+                workspace_max_repos=int(os.getenv("MEMEMO_WORKSPACE_MAX_REPOS", "8")),
             ),
         )
 

@@ -11,6 +11,7 @@ from .config import (
 )
 from .memory import (
     BACKFILL_SHA,
+    GLOBAL_REPO_ID,
     NULL_SHA,
     SHA_PATTERN,
     SHA_PREFIX_PATTERN,
@@ -69,6 +70,7 @@ __all__ = [
     "BranchState",
     "NULL_SHA",
     "BACKFILL_SHA",
+    "GLOBAL_REPO_ID",
     "SHA_PATTERN",
     "SHA_PREFIX_PATTERN",
     "coerce_sha",

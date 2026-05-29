@@ -4,6 +4,7 @@ Memory type definitions using Pydantic models.
 Defines all data structures for memories, git context, and query parameters.
 """
 
+import hashlib as _hashlib
 import re
 from datetime import datetime
 from typing import Literal
@@ -83,6 +84,11 @@ MemoryEventOp = Literal["CREATED", "UPDATED", "STALED", "DELETED", "RESTORED"]
 # logs and event-replay queries, and DB-enforceable via CHECK constraints.
 NULL_SHA: str = "0" * 40
 BACKFILL_SHA: str = "b" + "a" * 38 + "1"  # 'baaa…1' — distinct sentinel for legacy seed
+
+# Opaque 16-char id for the non-repo (global) lane. Defined here to avoid a
+# circular import: types -> core -> types. core/identity.py imports this from
+# types rather than defining it independently.
+GLOBAL_REPO_ID: str = _hashlib.sha256(b"::global::").hexdigest()[:16]
 
 
 class MemoryMetadata(BaseModel):

@@ -179,6 +179,8 @@ class StorageManager:
             "ALTER TABLE memories ADD COLUMN created_at_sha TEXT",
             "ALTER TABLE memories ADD COLUMN updated_at_sha TEXT",
             "ALTER TABLE memories ADD COLUMN risk_grade TEXT",
+            # portable identity (wave 0a): git remote URL for cross-clone stable IDs
+            "ALTER TABLE memories ADD COLUMN remote_url TEXT",
         ]
         for sql in migrations:
             try:
@@ -306,6 +308,13 @@ class StorageManager:
         """)
         self.conn.commit()
         self._backfill_fts()
+
+        # portable identity (wave 0a): key/value meta table for one-shot flags.
+        # CREATE IF NOT EXISTS — safe to run every startup.
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS schema_meta " "(key TEXT PRIMARY KEY, value TEXT)"
+        )
+        self.conn.commit()
 
     def _backfill_fts(self) -> None:
         """Populate memories_fts for any memory that pre-dates FTS support.
@@ -439,8 +448,8 @@ class StorageManager:
                     function_name, class_name, language, chunk_type,
                     checksum, content_ref, token_count, created_at, updated_at,
                     embedding_shard, embedding_index, stale, stale_reason,
-                    created_at_sha, updated_at_sha, risk_grade
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at_sha, updated_at_sha, risk_grade, remote_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     memory.id,
@@ -470,6 +479,8 @@ class StorageManager:
                     memory.metadata.created_at_sha,
                     memory.metadata.updated_at_sha,
                     memory.metadata.risk_grade,
+                    # portable identity (wave 0a)
+                    memory.repo.remote_url,
                 ),
             )
 
@@ -672,7 +683,7 @@ class StorageManager:
                 id=row["repo_id"],
                 name=row["repo_name"],
                 path=row["repo_path"],
-                remote_url=None,  # Not stored in DB
+                remote_url=row["remote_url"],
             ),
             branch=BranchContext(
                 name=row["branch_name"],
@@ -1298,6 +1309,91 @@ class StorageManager:
                 continue
         self.conn.commit()
         return counts
+
+    # ----- portable identity backfill (wave 0a) ---------------------------
+
+    def _backfill_reindex_identity(
+        self,
+        resolver_callable,
+        dry_run: bool = False,
+    ) -> list[dict]:
+        """Re-derive repo_id for every repo_path that still exists on disk.
+
+        For each distinct (repo_id, repo_path) pair in memories, calls
+        resolver_callable(repo_path, remote_url) -> str to obtain the new id.
+        When new_id != repo_id and dry_run is False, calls reassign_repo_id.
+
+        Returns a manifest list of dicts:
+            {old_id, new_id, repo_path, row_count, skipped}
+
+        skipped=True means repo_path did not exist on disk.
+        FAISS dir moves are NOT performed here — Wave 1C handles that via the
+        returned manifest.
+        """
+        cursor = self.conn.cursor()
+        rows = cursor.execute(
+            "SELECT DISTINCT repo_id, repo_path, remote_url FROM memories"
+        ).fetchall()
+
+        manifest = []
+        for row in rows:
+            old_id = row["repo_id"]
+            repo_path = row["repo_path"]
+            remote_url = row["remote_url"]
+
+            from pathlib import Path as _Path
+
+            if not repo_path or not _Path(repo_path).exists():
+                manifest.append(
+                    {
+                        "old_id": old_id,
+                        "new_id": old_id,
+                        "repo_path": repo_path,
+                        "row_count": 0,
+                        "skipped": True,
+                    }
+                )
+                continue
+
+            try:
+                new_id = resolver_callable(repo_path, remote_url)
+            except Exception as exc:
+                logger.warning(
+                    "_backfill_reindex_identity: resolver failed for %s: %s", repo_path, exc
+                )
+                manifest.append(
+                    {
+                        "old_id": old_id,
+                        "new_id": old_id,
+                        "repo_path": repo_path,
+                        "row_count": 0,
+                        "skipped": True,
+                    }
+                )
+                continue
+
+            row_count = 0
+            if new_id != old_id:
+                if not dry_run:
+                    counts = self.reassign_repo_id(old_id, new_id)
+                    row_count = counts.get("memories", 0)
+                else:
+                    count_row = cursor.execute(
+                        "SELECT COUNT(*) FROM memories WHERE repo_id = ?", (old_id,)
+                    ).fetchone()
+                    row_count = count_row[0] if count_row else 0
+
+            manifest.append(
+                {
+                    "old_id": old_id,
+                    "new_id": new_id,
+                    "repo_path": repo_path,
+                    "row_count": row_count,
+                    "skipped": False,
+                }
+            )
+
+        return manifest
 
     # ----- v0.4.0 down-migration (rollback) -------------------------------
 
