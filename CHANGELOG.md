@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.0] - 2026-05-30
 
 ### Added
 - **Portable project identity** — `repo_id` is now derived from the
@@ -41,6 +41,28 @@
   accordingly. Guarded by `schema_meta.identity_migrated`; runs exactly once.
   Non-blocking: server is usable immediately. FAISS conflicts (two old ids
   converge) clear embedding pointers for re-embedding.
+- **`import-md --allow-secrets`** — opt-in bypass of secret detection for
+  trusted local markdown. Memory notes often carry placeholder credentials
+  (e.g. `postgres://user:pass@host`) that the scanner otherwise rejects.
+
+### Fixed
+- **Migration transaction safety** — `reassign_repo_id` caught
+  `OperationalError` but not `IntegrityError`. When two repos normalise to the
+  same id (incl. one repo aliased twice, each with a `branch_state` 'main' row)
+  the partial `memories` UPDATE was left dirty for the next request to commit,
+  producing an inconsistent store. Now wrapped in an explicit transaction
+  (rollback + re-raise); the backfill records the colliding repo as skipped and
+  keeps going.
+- **`normalize_remote` ssh-with-port** — `ssh://user@host:port/path` was misread
+  as SCP, making the port the "owner" segment and producing a garbage id. Added
+  a negative lookahead so scheme URLs skip the SCP branch.
+- **Vector-dir scaffolding** — `VectorIndex.__init__` pre-creates
+  `{new_id}/{branch}/` before migration runs, so `move_vector_index` always saw
+  a non-empty target → forced re-embed + orphaned `{old_id}/` every upgrade. An
+  empty pre-created target is now replaced; only real FAISS files are a conflict.
+- **CLI log-rotation contention** — running a mememo CLI command while the server
+  holds `~/.mememo/logs/server.log` spammed `WinError 32` on rollover. The file
+  handler now tolerates a locked file (skips that rotation, keeps appending).
 
 ## [0.8.1] - 2026-05-28
 

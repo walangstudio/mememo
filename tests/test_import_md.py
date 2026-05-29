@@ -405,6 +405,44 @@ class TestImportMarkdownDir:
         assert "---" not in blob["text"]
         assert "name:" not in blob["text"]
 
+
+# ---------------------------------------------------------------------------
+# --allow-secrets: trusted md with placeholder credentials
+# ---------------------------------------------------------------------------
+
+
+class TestAllowSecrets:
+    _CONN_MD = (
+        "---\nname: db\nmetadata:\n  type: project\n---\n"
+        "Connection: postgres://user:pass@host:5432/db\n"
+    )
+
+    def _enable_secrets(self, memory_manager):
+        from mememo.utils import SecretsDetector
+
+        memory_manager.secrets_detection = True
+        memory_manager.secrets_detector = SecretsDetector()
+
+    async def test_secret_blocks_without_flag(self, tmp_path, memory_manager, store):
+        self._enable_secrets(memory_manager)
+        md_dir = tmp_path / "m"
+        md_dir.mkdir()
+        _write_md(md_dir, "db.md", self._CONN_MD)
+
+        result = await import_markdown_dir(md_dir, memory_manager)
+        assert result["imported"] == 0
+        assert result["errors"] == 1
+
+    async def test_allow_secrets_imports(self, tmp_path, memory_manager, store):
+        self._enable_secrets(memory_manager)
+        md_dir = tmp_path / "m"
+        md_dir.mkdir()
+        _write_md(md_dir, "db.md", self._CONN_MD)
+
+        result = await import_markdown_dir(md_dir, memory_manager, allow_secrets=True)
+        assert result["imported"] == 1
+        assert result["errors"] == 0
+
     async def test_nested_metadata_type_tag(self, tmp_path, memory_manager, store):
         """source_type tag must reflect nested metadata.type, not just top-level type."""
         md_dir = tmp_path / "memos"

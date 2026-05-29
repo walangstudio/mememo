@@ -97,6 +97,7 @@ async def import_markdown_dir(
     memory_manager: MemoryManager,
     repo: str | None = None,
     dry_run: bool = False,
+    allow_secrets: bool = False,
 ) -> dict:
     """Import all .md files under ``path`` as memories.
 
@@ -107,6 +108,9 @@ async def import_markdown_dir(
             from that path so the memory is scoped to that code repo's id.
             Defaults to None -> memories are stamped with GLOBAL_REPO_ID.
         dry_run: When True, parse and check but do not write anything.
+        allow_secrets: Bypass secret detection. Local markdown memory often
+            contains placeholder credentials (e.g. ``postgres://user:pass@host``)
+            that the scanner rejects; set True to import trusted files anyway.
 
     Returns:
         dict with keys: imported (int), skipped (int), errors (int),
@@ -167,7 +171,9 @@ async def import_markdown_dir(
                 tags=tags or None,
                 relationships=MemoryRelationships(),
             )
-            memory = await memory_manager.create_memory(params, cwd=cwd)
+            memory = await memory_manager.create_memory(
+                params, cwd=cwd, skip_secret_scan=allow_secrets
+            )
 
             # Persist edges: URL REFERENCES from chunker + wikilink REFERENCES.
             _emit_edges(

@@ -98,7 +98,9 @@ class MemoryManager:
             )
         return self._vector_index_cache[key]
 
-    async def create_memory(self, params: CreateMemoryParams, cwd: str | None = None) -> Memory:
+    async def create_memory(
+        self, params: CreateMemoryParams, cwd: str | None = None, *, skip_secret_scan: bool = False
+    ) -> Memory:
         """
         Create a new memory.
 
@@ -112,6 +114,8 @@ class MemoryManager:
         Args:
             params: Memory creation parameters
             cwd: Working directory for git context detection
+            skip_secret_scan: Bypass secret detection for this call (used by
+                ``import-md --allow-secrets`` for trusted local markdown).
 
         Returns:
             Created memory object
@@ -120,7 +124,7 @@ class MemoryManager:
             ValueError: If secrets detected and auto_sanitize=False
         """
         # 1. Validate content (check for secrets)
-        validated_content = self._validate_content(params.content)
+        validated_content = self._validate_content(params.content, skip_scan=skip_secret_scan)
 
         # 2. Detect git context (repo + branch)
         context = await self.git_manager.detect_context(cwd)
@@ -508,12 +512,14 @@ class MemoryManager:
 
         return "".join(summary_parts)
 
-    def _validate_content(self, content: str) -> str:
+    def _validate_content(self, content: str, *, skip_scan: bool = False) -> str:
         """
         Validate content for secrets.
 
         Args:
             content: Content to validate
+            skip_scan: Bypass secret detection for this call (e.g. importing
+                trusted local markdown that contains placeholder credentials).
 
         Returns:
             Validated (and possibly sanitized) content
@@ -521,7 +527,7 @@ class MemoryManager:
         Raises:
             ValueError: If secrets detected and auto_sanitize=False
         """
-        if not self.secrets_detection or not self.secrets_detector:
+        if skip_scan or not self.secrets_detection or not self.secrets_detector:
             return content
 
         if self.secrets_detector.has_secrets(content):
