@@ -6,10 +6,13 @@ Usage:
     python -m mememo capture --hook         # Stop hook: auto-capture
     python -m mememo inject --hook          # UserPromptSubmit: inject context
     python -m mememo pre-tool --hook        # PreToolUse: related-memory block
+    python -m mememo session-start --hook   # SessionStart: recall memories
     python -m mememo install-git-hooks --repo-path <p> [--force] [--with-pretool]
     python -m mememo migrate-worktrees --repo-path <p> [--dry-run]
     python -m mememo merge-branch --repo-path <p> --source <b> --target <b> [--merge-sha <sha>]
     python -m mememo sync-commits --repo-path <p>
+    python -m mememo import-md <dir> [--repo <path>] [--dry-run]
+    python -m mememo reindex-identity [--dry-run]
     python -m mememo serve [--port 5757]
 """
 
@@ -199,12 +202,26 @@ def _cmd_sync_commits(args: list[str]) -> int:
     return asyncio.run(_run())
 
 
+def _cmd_import_md(args: list[str]) -> int:
+    from .cli import cmd_import_md
+
+    return cmd_import_md(args)
+
+
+def _cmd_reindex_identity(args: list[str]) -> int:
+    from .cli import cmd_reindex_identity
+
+    return cmd_reindex_identity(args)
+
+
 _SUBCOMMANDS = {
     "install-git-hooks": _cmd_install_git_hooks,
     "serve": _cmd_serve,
     "migrate-worktrees": _cmd_migrate_worktrees,
     "merge-branch": _cmd_merge_branch,
     "sync-commits": _cmd_sync_commits,
+    "import-md": _cmd_import_md,
+    "reindex-identity": _cmd_reindex_identity,
 }
 
 
@@ -218,7 +235,7 @@ def main() -> None:
     # of import cost and Claude Code invokes these per turn.
     if len(args) >= 2 and args[1] == "--hook":
         hook_name = args[0]
-        if hook_name in ("capture", "inject", "pre-tool"):
+        if hook_name in ("capture", "inject", "pre-tool", "session-start"):
             # Try the sidecar in the running MCP server first (sub-100ms vs ~3s
             # cold). Falls through to the slow path on any daemon trouble.
             if os.environ.get("MEMEMO_NO_HOOK_CLIENT") != "1":
@@ -244,6 +261,11 @@ def main() -> None:
 
                 run_pre_tool()
                 return
+            if hook_name == "session-start":
+                from .cli import run_session_start
+
+                run_session_start()
+                return
 
     if args and args[0] in _SUBCOMMANDS:
         sys.exit(_SUBCOMMANDS[args[0]](args[1:]))
@@ -262,9 +284,12 @@ def main() -> None:
                 "migrate-worktrees",
                 "merge-branch",
                 "sync-commits",
+                "import-md",
+                "reindex-identity",
                 "capture --hook",
                 "inject --hook",
                 "pre-tool --hook",
+                "session-start --hook",
             )
         )
         + "\n\nRun `python -m mememo <subcommand> --help` for subcommand options."
@@ -292,9 +317,12 @@ def _subcommand_help(name: str) -> str:
         "migrate-worktrees": "Re-key legacy per-worktree repo_ids onto the canonical one",
         "merge-branch": "Shim over merge_branch MCP tool (called by post-merge hook)",
         "sync-commits": "Shim over sync_commits MCP tool (called by post-commit hook)",
+        "import-md": "Import .md files from a directory as memories",
+        "reindex-identity": "Re-derive repo_ids from git remote and move FAISS dirs",
         "capture --hook": "Stop-hook fast path: auto-capture session transcript",
         "inject --hook": "UserPromptSubmit fast path: inject recall context",
         "pre-tool --hook": "PreToolUse fast path: emit related-memory block",
+        "session-start --hook": "SessionStart fast path: recall memories at session open",
     }.get(name, "")
 
 

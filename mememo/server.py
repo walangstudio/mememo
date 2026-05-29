@@ -209,6 +209,79 @@ def _setup_logging() -> None:
 _setup_logging()
 logger = logging.getLogger(__name__)
 
+
+def _maybe_start_identity_migration(storage_manager) -> None:
+    """Spawn a one-shot daemon thread to backfill repo_ids via the new resolver.
+
+    Runs only when 'identity_migrated' is not set in schema_meta. Guarded by a
+    try/except so any failure is logged and never crashes the server.
+    FAISS dir moves are delegated to the Wave 1C helper; if that module is not
+    yet available, the DB rows are still re-keyed and the move is skipped.
+    """
+    try:
+        row = storage_manager.conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'identity_migrated'"
+        ).fetchone()
+        if row is not None:
+            return
+    except Exception as exc:
+        logger.debug("identity migration guard check failed: %s", exc)
+        return
+
+    def _run():
+        try:
+            import asyncio
+
+            from .core.git_manager import GitManager
+            from .core.identity import resolve_project_id
+            from .core.project_config import load_project_config
+
+            _git = GitManager()
+
+            def _resolver(repo_path, remote_url):
+                loop = asyncio.new_event_loop()
+                try:
+                    remote = loop.run_until_complete(_git.get_remote_url(repo_path))
+                finally:
+                    loop.close()
+                return resolve_project_id(
+                    repo_path=repo_path,
+                    remote_url=remote or remote_url,
+                    project_config=load_project_config(repo_path),
+                )
+
+            manifest = storage_manager._backfill_reindex_identity(_resolver, dry_run=False)
+
+            # Attach conn so move_faiss_dirs can clear embedding pointers on conflict.
+            for entry in manifest:
+                entry["conn"] = storage_manager.conn
+
+            # Attempt FAISS dir moves via Wave 1C helper (lazy import — may not exist yet).
+            try:
+                from .commands.reindex import move_faiss_dirs
+
+                move_faiss_dirs(
+                    base_path=storage_manager.base_dir / "vector_index",
+                    manifest=manifest,
+                )
+            except ImportError:
+                logger.debug("identity migration: reindex helper unavailable, skipping FAISS moves")
+            except Exception as exc:
+                logger.warning("identity migration: FAISS dir move failed: %s", exc)
+
+            moves = sum(1 for e in manifest if not e["skipped"] and e["old_id"] != e["new_id"])
+            storage_manager.conn.execute(
+                "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('identity_migrated', '1')"
+            )
+            storage_manager.conn.commit()
+            logger.info("identity migration: %d repo(s) re-keyed", moves)
+        except Exception as exc:
+            logger.warning("identity migration: background thread failed: %s", exc)
+
+    t = threading.Thread(target=_run, daemon=True, name="mememo-identity-migration")
+    t.start()
+
+
 # Initialize FastMCP server
 mcp = FastMCP("mememo", version=_VERSION)
 
@@ -340,22 +413,24 @@ async def initialize_mememo():
     logger.info(f"Embedder initialized: {config.embedding.model_name}")
 
     # Detect git context (optional - use defaults if not in a repo)
+    from .core.identity import GLOBAL_REPO_ID
+
     try:
         git_context = await git_manager.detect_context()
         repo_id = git_context.repo.id
         branch = git_context.branch.name
         logger.info(f"Git context detected - Repository: {repo_id}, Branch: {branch}")
     except RuntimeError:
-        # Not in a git repository - use defaults. The shared 'default' repo_id
-        # means every non-git mememo session will see each other's memories,
-        # which is rarely what the user wants.
-        repo_id = "default"
+        # Not in a git repository. MEMEMO_REPO_ID (already checked inside
+        # resolve_project_id when in a repo) still applies here: if set, use it
+        # so the caller can pin a stable id without a git remote.
+        repo_id = os.environ.get("MEMEMO_REPO_ID", "").strip() or GLOBAL_REPO_ID
         branch = "main"
         logger.warning(
-            "Not in a git repository: using shared repo_id='default'. "
-            "Memories will commingle with every other non-git mememo session "
-            "on this machine. Run `cd <your-repo>` before invoking mememo, "
-            "or set MEMEMO_REPO_ID explicitly."
+            "Not in a git repository: using repo_id=%r. "
+            "Memories will commingle across non-git mememo sessions unless "
+            "MEMEMO_REPO_ID is set explicitly.",
+            repo_id,
         )
 
     # Initialize vector index
@@ -397,6 +472,13 @@ async def initialize_mememo():
 
     skill_store = SkillStore(base_dir=base_dir)
     logger.info("Skill store initialized (dir: %s)", base_dir / "skills")
+
+    # portable identity (wave 0b): one-shot background migration to re-derive
+    # repo_ids using the new resolver (remote-url hash instead of path hash).
+    # Guard: only run when the 'identity_migrated' flag is absent. Non-blocking:
+    # spawned as a daemon thread so it never delays the MCP handshake. Failure is
+    # logged only — never crashes the server.
+    _maybe_start_identity_migration(storage_manager)
 
     logger.info("mememo v%s initialized successfully", _VERSION)
 

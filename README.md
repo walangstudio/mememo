@@ -744,6 +744,9 @@ Refuses to bind to anything other than `127.0.0.1` / `localhost`. The MCP server
 | `python -m mememo merge-branch --repo-path <p> --source <b> --target <b>` | CLI shim over the `merge_branch` MCP tool — invoked by the post-merge hook |
 | `python -m mememo sync-commits --repo-path <p>` | CLI shim over the `sync_commits` MCP tool — invoked by the post-commit hook |
 | `python -m mememo capture --hook` / `inject --hook` / `pre-tool --hook` | Hook entry points consumed by Claude Code |
+| `python -m mememo session-start --hook` | SessionStart hook: recall memories at session open (see [SessionStart hook](#sessionstart-hook)) |
+| `python -m mememo import-md <dir> [--repo <path>] [--dry-run]` | Ingest existing markdown memory files (see [Importing existing memories](#importing-existing-memories)) |
+| `python -m mememo reindex-identity [--dry-run]` | Recompute repo IDs via the live resolver; move FAISS dirs to match |
 
 #### Orchestrator Integration
 
@@ -805,6 +808,228 @@ list_memories({
   "limit": 50
 })
 ```
+
+## Portable Project Identity
+
+mememo derives a stable 16-char `repo_id` for every repository. The id is
+host-agnostic: it is based on the normalized `owner/repo` path, not the full
+remote URL, so the same repository resolves to the same id regardless of how
+it was cloned.
+
+### Precedence (highest to lowest)
+
+1. `MEMEMO_REPO_ID` env var — hard override, useful in CI.
+2. `project_id` field in `.mememo/project.yaml` — checked into the repo.
+3. SHA-256 of the normalized remote URL — handles SSH/HTTPS equivalence.
+4. SHA-256 of the local repo path — fallback when no remote is configured.
+
+### SSH and HTTPS resolve to the same id
+
+Both of these point to the same index:
+
+```
+git@github.com:owner/repo.git   →  owner/repo  →  <same sha-256[:16]>
+https://github.com/owner/repo   →  owner/repo  →  <same sha-256[:16]>
+```
+
+SSH host aliases defined in `~/.ssh/config` (e.g. `git@gh-kitty:`) are
+resolved to their canonical hostname before normalization.
+
+### Escape hatches
+
+**Monorepo / multiple remotes**: set `project_id` in `.mememo/project.yaml`:
+
+```yaml
+# .mememo/project.yaml
+project_id: "my-monorepo-service-a"
+```
+
+**Cross-host collision** (same `owner/repo` on GitHub and a private GitLab):
+use `project_id` or `MEMEMO_REPO_ID` to assign distinct ids.
+
+### Global lane
+
+Memories stored without a git context (non-repo directories, process/project
+notes, cross-cutting decisions) go into the **global lane** (`repo_id =
+"__global__"`). The SessionStart hook and workspace recall always include the
+global lane so these memories surface regardless of which repo is active.
+
+Store a memory in the global lane by calling any storage tool from a
+non-git directory, or pass `repo_path` pointing at a non-git path.
+
+## Workspace Recall
+
+Run mememo from a **parent directory** that contains multiple repos and it
+recalls memories across all of them in one shot.
+
+### How it works
+
+`discover_workspace` checks the current working directory:
+
+- If `cwd` is itself a git repo, it returns `[cwd]` immediately.
+- Otherwise it scans immediate children for `.git` dirs, capped at
+  `MEMEMO_WORKSPACE_MAX_REPOS` (default: 8).
+
+Cross-location dependencies (repos not under the parent dir) are declared in
+`.mememo/workspace.yaml`:
+
+```yaml
+# .mememo/workspace.yaml  — place this in the parent/workspace dir
+projects:
+  - /absolute/path/to/other-repo
+  - ../relative/path/to/sibling-repo
+```
+
+The global lane is always included, regardless of workspace size.
+
+### Environment variables
+
+```bash
+# Max repos scanned per workspace (default: 8)
+export MEMEMO_WORKSPACE_MAX_REPOS=8
+
+# Token budget for recalled memories at session start (default: 600)
+export MEMEMO_HOOK_SESSION_START_TOKEN_BUDGET=600
+
+# Min similarity for session-start recall (default: 0.2)
+export MEMEMO_HOOK_SESSION_START_MIN_SIMILARITY=0.2
+
+# Disable session-start recall entirely
+export MEMEMO_HOOK_SESSION_START_ENABLED=false
+```
+
+## SessionStart Hook
+
+The SessionStart hook recalls relevant memories from the workspace at the
+start of every Claude Code session and injects them via `additionalContext`.
+It runs asynchronously — it does not delay Claude Code from opening the
+session.
+
+**Important**: CLAUDE.md injection is controlled by the Claude Code harness.
+mememo AUGMENTS the session context via the hook; it does not replace or
+compete with harness-injected CLAUDE.md content.
+
+### Register the hook
+
+**Automatic** (recommended):
+
+```bash
+python -m mememo install-git-hooks --repo-path <repo> --with-session-start
+```
+
+**Manual** — add this to `~/.claude/settings.json` under `hooks`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -m mememo session-start --hook",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`register_claude_session_start_hook(repo_path)` from
+`mememo.hooks.installer` writes this block programmatically. It is
+idempotent: running it twice does not duplicate the entry. If a
+`SessionStart` block already exists from another tool, pass `force=True` to
+append instead of skipping.
+
+### What gets injected
+
+The hook searches the current workspace repos plus the global lane, then
+formats the results as:
+
+```
+Memories from previous sessions:
+- [decision] Chose FAISS over ChromaDB — local, no network dep
+- [global] [context] Deploy pipeline requires manual approval on main
+- [myother-repo] [context] API rate limit is 1000 req/min per token
+```
+
+Global-lane memories are prefixed `[global]`; memories from repos outside
+the current workspace are prefixed with the repo name.
+
+## Importing Existing Memories
+
+`import-md` ingests a directory tree of `.md` files (e.g. the
+`~/.claude/projects/.../memory/` files written by Claude's built-in memory
+feature) into the mememo store.
+
+```bash
+# Ingest global process/project notes (no git context — goes to global lane)
+python -m mememo import-md ~/.claude/projects/my-project/memory/
+
+# Scope to a specific repo
+python -m mememo import-md ~/.claude/projects/my-project/memory/ \
+  --repo /path/to/my-repo
+
+# Dry run: parse and check without writing
+python -m mememo import-md ~/.claude/projects/my-project/memory/ --dry-run
+```
+
+### Type mapping
+
+The `type:` field in YAML frontmatter controls the mememo `content_type`:
+
+| Frontmatter `type` | mememo `content_type` |
+|--------------------|-----------------------|
+| `decision`         | `decision`            |
+| `project`          | `context`             |
+| `user`             | `context`             |
+| `feedback`         | `context`             |
+| `reference`        | `relationship`        |
+| (anything else)    | `context`             |
+
+The original `type` value is preserved as a `source_type:<value>` tag.
+
+### Idempotency
+
+A file is skipped when a memory with the same `file_path` AND content
+checksum already exists in the store. Re-running `import-md` on an unchanged
+directory is always a no-op. Editing a file produces a new memory; the old
+one is not auto-staled (use `cleanup_memory` for dedup).
+
+`[[wikilink]]` references in the body are stored as `REFERENCES` edges
+between memories.
+
+## Auto-Migration (Portable Identity Upgrade)
+
+On first startup after upgrading to this version, mememo runs a one-time
+background migration that recomputes every stored `repo_id` using the new
+host-agnostic resolver and moves FAISS vector-index directories to match.
+
+- **Non-blocking**: runs in a daemon thread; the server is fully usable while
+  migration is in progress.
+- **Guarded**: the `schema_meta.identity_migrated` flag ensures the migration
+  runs exactly once. Subsequent startups skip it immediately.
+- **FAISS conflicts**: if a target FAISS dir already exists (e.g. you had two
+  clones with different old ids that now converge), embedding pointers are
+  cleared so the affected repo is re-embedded on next use.
+
+### Manual escape hatch
+
+```bash
+# Inspect what would change without mutating anything
+python -m mememo reindex-identity --dry-run
+
+# Apply the migration (normally automatic, but useful after a path change)
+python -m mememo reindex-identity
+```
+
+### Durability note
+
+Keep your `.md` memory files (e.g. `~/.claude/projects/.../memory/*.md`)
+until Phase 2 confirms the migration is stable. They serve as an offline
+fallback and can be re-imported via `import-md` if needed.
 
 ## 🔧 Architecture
 
