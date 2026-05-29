@@ -105,6 +105,67 @@ def register_claude_pretool_hook(repo_path: str, force: bool = False) -> dict:
     return {"status": "added", "settings_path": str(settings_path)}
 
 
+def register_claude_session_start_hook(repo_path: str, force: bool = False) -> dict:
+    """Add a SessionStart mememo entry to ``<repo>/.claude/settings.json``.
+
+    Idempotent: if a matching entry is already present, return it unchanged.
+    The SessionStart hook runs asynchronously so it does not delay Claude Code
+    from opening the session.
+
+    Returns a dict with keys ``status`` (added / present / skipped / error),
+    ``settings_path`` and the merged settings.
+    """
+    repo = Path(repo_path).resolve()
+    settings_path = repo / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8") or "{}")
+        except json.JSONDecodeError:
+            return {
+                "status": "error",
+                "settings_path": str(settings_path),
+                "reason": "settings.json is not valid JSON",
+            }
+    else:
+        settings = {}
+
+    hooks = settings.setdefault("hooks", {})
+    session_start_hooks = hooks.setdefault("SessionStart", [])
+
+    mememo_entry = {
+        "hooks": [
+            {
+                "type": "command",
+                "command": "python -m mememo session-start --hook",
+                "async": True,
+            }
+        ]
+    }
+
+    def _has_mememo(entry: dict) -> bool:
+        for h in entry.get("hooks", []):
+            if isinstance(h, dict) and "mememo session-start" in (h.get("command") or ""):
+                return True
+        return False
+
+    for existing in session_start_hooks:
+        if isinstance(existing, dict) and _has_mememo(existing):
+            return {"status": "present", "settings_path": str(settings_path)}
+
+    if session_start_hooks and not force:
+        return {
+            "status": "skipped",
+            "settings_path": str(settings_path),
+            "reason": "SessionStart already configured; rerun with --force to append",
+        }
+
+    session_start_hooks.append(mememo_entry)
+    settings_path.write_text(json.dumps(settings, indent=2, sort_keys=True), encoding="utf-8")
+    return {"status": "added", "settings_path": str(settings_path)}
+
+
 def install_git_hooks(repo_path: str, force: bool = False) -> HookInstallResult:
     """Copy bundled hooks into <repo_path>/.git/hooks/.
 

@@ -65,11 +65,25 @@ def _default_hook_factories() -> dict[str, HookFactory]:
 
         return _runner
 
-    return {
+    factories: dict[str, HookFactory] = {
         "capture": _wrap(_cli.cmd_capture),
         "inject": _wrap(_cli.cmd_inject),
         "pre-tool": _wrap(_cli.cmd_pre_tool),
     }
+
+    # cmd_session_start lives in commands.session_start (Wave 2 wires it into
+    # cli as well). Guard so hookd stays importable if Wave 2 hasn't landed yet.
+    _cmd_session_start = getattr(_cli, "cmd_session_start", None)
+    if _cmd_session_start is None:
+        try:
+            from .commands.session_start import cmd_session_start as _cmd_session_start
+        except ImportError:
+            _cmd_session_start = None
+
+    if _cmd_session_start is not None:
+        factories["session-start"] = _wrap(_cmd_session_start)
+
+    return factories
 
 
 def _discovery_path() -> Path:
