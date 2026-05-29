@@ -22,8 +22,10 @@ from ..types.memory import GLOBAL_REPO_ID as GLOBAL_REPO_ID  # noqa: E402
 
 # Match scheme + optional user@ prefix
 _SCHEME_USER_RE = re.compile(r"^(?:https?|ssh|git)://(?:[^@]+@)?")
-# Match git@ host: prefix (SCP-style: git@github.com:owner/repo)
-_SCP_RE = re.compile(r"^[^@]+@([^:]+):(.+)$")
+# Match git@ host: prefix (SCP-style: git@github.com:owner/repo).
+# Negative lookahead so a scheme URL (ssh://user@host:port/path) is NOT
+# misread as SCP — otherwise the port becomes the "owner" segment.
+_SCP_RE = re.compile(r"^(?!(?:https?|ssh|git)://)[^@]+@([^:]+):(.+)$")
 # Map known SSH host aliases to their canonical hostname
 _HOST_ALIASES: dict[str, str] = {
     "gh-kitty": "github.com",
@@ -64,7 +66,7 @@ def normalize_remote(remote_url: str | None) -> str | None:
     if path.endswith(".git"):
         path = path[:-4]
 
-    # Must contain exactly one slash (owner/repo shape)
+    # Must contain at least one slash (owner/repo, or deeper group/.../repo)
     if not path or "/" not in path:
         return None
 

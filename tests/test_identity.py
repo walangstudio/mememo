@@ -45,6 +45,16 @@ class TestNormalizeRemote:
     def test_git_scheme(self):
         assert normalize_remote("git://github.com/owner/repo.git") == "owner/repo"
 
+    def test_ssh_scheme_with_port_not_misread_as_scp(self):
+        # Regression: ssh://user@host:port/path must NOT match the SCP branch
+        # (which would make the port the "owner"). Should resolve owner/repo.
+        assert normalize_remote("ssh://git@github.com:22/owner/repo.git") == "owner/repo"
+
+    def test_ssh_scheme_with_port_equals_https(self):
+        assert normalize_remote("ssh://git@github.com:2222/owner/repo.git") == normalize_remote(
+            "https://github.com/owner/repo.git"
+        )
+
     def test_trailing_slash(self):
         assert normalize_remote("https://github.com/owner/repo/") == "owner/repo"
 

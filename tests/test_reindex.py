@@ -114,6 +114,20 @@ class TestMoveVectorIndex:
         _make_faiss_dir(vi_base, "bbb", empty=True)
         result = move_vector_index(vi_base, "aaa", "bbb")
         assert result == "moved"
+        # NIT regression: the moved data must land AT bbb/, not nested as bbb/aaa/.
+        assert (vi_base / "bbb" / "index.faiss").exists()
+        assert not (vi_base / "bbb" / "aaa").exists()
+
+    def test_scaffolding_branch_subdir_is_not_conflict(self, vi_base):
+        # Real case: VectorIndex.__init__ pre-creates {new_id}/{branch}/ (an
+        # empty branch subdir, no shard files) before migration runs. That must
+        # be treated as scaffolding (moved), not a conflict.
+        _make_faiss_dir(vi_base, "aaa")  # src has index.faiss
+        (vi_base / "bbb" / "main").mkdir(parents=True)  # empty branch scaffolding
+        result = move_vector_index(vi_base, "aaa", "bbb")
+        assert result == "moved"
+        assert (vi_base / "bbb" / "index.faiss").exists()
+        assert not (vi_base / "aaa").exists()
 
     def test_idempotent_absent_src_after_first_move(self, vi_base):
         _make_faiss_dir(vi_base, "aaa")
@@ -331,3 +345,88 @@ class TestReindexIdentity:
         ).fetchone()
         assert row["embedding_shard"] is None
         assert row["embedding_index"] is None
+
+
+# ---------------------------------------------------------------------------
+# reassign_repo_id transaction safety (MUST-FIX: IntegrityError must roll back)
+# ---------------------------------------------------------------------------
+
+
+class TestReassignRepoIdRollback:
+    def _insert_mem(self, store, repo_id, repo_path):
+        import asyncio
+
+        asyncio.run(store.save_memory(_mem(repo_id, repo_path)))
+
+    def test_pk_collision_rolls_back_and_leaves_no_dirty_state(self, store, tmp_path):
+        # Two repos whose ids collide on (repo_id, branch) in branch_state.
+        from_id = "from_collide____"
+        to_id = "to_collide______"
+
+        self._insert_mem(store, from_id, str(tmp_path / "a"))
+        # branch_state rows for BOTH ids on the same branch -> reassigning
+        # from_id -> to_id will hit a UNIQUE PK collision on branch_state.
+        store.conn.execute(
+            "INSERT INTO branch_state (repo_id, branch, last_indexed_sha) VALUES (?, 'main', 'x')",
+            (from_id,),
+        )
+        store.conn.execute(
+            "INSERT INTO branch_state (repo_id, branch, last_indexed_sha) VALUES (?, 'main', 'y')",
+            (to_id,),
+        )
+        store.conn.commit()
+
+        with pytest.raises(Exception):
+            store.reassign_repo_id(from_id, to_id)
+
+        # The memories UPDATE (which ran before branch_state failed) must have
+        # been rolled back — repo_id stays from_id, nothing leaked to to_id.
+        assert (
+            store.conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE repo_id = ?", (from_id,)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            store.conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE repo_id = ?", (to_id,)
+            ).fetchone()[0]
+            == 0
+        )
+
+    def test_backfill_records_collision_as_skipped_and_continues(self, store, tmp_path):
+        # repo A collides into an id that already has a branch_state row; the
+        # backfill must record A skipped and keep going, leaving state clean.
+        from_id = "abf_collide_____"
+        target = "abf_target______"
+        repo_a = str(tmp_path / "a")
+        Path(repo_a).mkdir()
+
+        self._insert_mem(store, from_id, repo_a)
+        store.conn.execute(
+            "INSERT INTO branch_state (repo_id, branch, last_indexed_sha) VALUES (?, 'main', 'x')",
+            (from_id,),
+        )
+        store.conn.execute(
+            "INSERT INTO branch_state (repo_id, branch, last_indexed_sha) VALUES (?, 'main', 'y')",
+            (target,),
+        )
+        store.conn.commit()
+
+        manifest = store._backfill_reindex_identity(lambda rp, _r: target, dry_run=False)
+
+        entry = next(e for e in manifest if e["repo_path"] == repo_a)
+        assert entry["skipped"] is True
+        # memories untouched (still from_id), no dirty/leaked rows under target
+        assert (
+            store.conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE repo_id = ?", (from_id,)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            store.conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE repo_id = ?", (target,)
+            ).fetchone()[0]
+            == 0
+        )
