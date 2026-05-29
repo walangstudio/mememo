@@ -355,6 +355,78 @@ class TestImportMarkdownDir:
         }
         assert "source_type:feedback" in tags
 
+    async def test_bom_file_parsed_correctly(self, tmp_path, memory_manager, store):
+        """BOM-prefixed files (common from Windows editors) must parse cleanly.
+
+        The BOM must not leak into the body and the nested metadata.type must
+        be honoured so the memory is typed 'decision', not 'context'.
+        """
+        md_dir = tmp_path / "memos"
+        md_dir.mkdir()
+        body_content = (
+            "---\n"
+            "name: bom-decision\n"
+            "metadata:\n"
+            "  type: decision\n"
+            "---\n"
+            "\n"
+            "We chose PostgreSQL over MySQL.\n"
+        )
+        bom_file = md_dir / "bom-decision.md"
+        # UTF-8 BOM is EF BB BF; prepend it to simulate a Windows-authored file.
+        bom_file.write_bytes(b"\xef\xbb\xbf" + body_content.encode("utf-8"))
+
+        result = await import_markdown_dir(md_dir, memory_manager)
+        assert result["imported"] == 1
+        assert result["errors"] == 0
+
+        row = store.conn.execute(
+            "SELECT content_type FROM memories WHERE file_path = 'bom-decision.md'"
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "decision"
+
+        # Body must contain the real content word.
+        fts_rows = store.conn.execute(
+            "SELECT memory_id FROM memories_fts WHERE memories_fts MATCH 'PostgreSQL'"
+        ).fetchall()
+        assert len(fts_rows) == 1
+
+        # Raw frontmatter must not appear in the stored body.
+        mem_id = store.conn.execute(
+            "SELECT id FROM memories WHERE file_path = 'bom-decision.md'"
+        ).fetchone()[0]
+        content_ref = store.conn.execute(
+            "SELECT content_ref FROM memories WHERE id = ?", (mem_id,)
+        ).fetchone()[0]
+        import json
+
+        blob = json.loads((store.base_dir / content_ref).read_text(encoding="utf-8"))
+        assert "---" not in blob["text"]
+        assert "name:" not in blob["text"]
+
+    async def test_nested_metadata_type_tag(self, tmp_path, memory_manager, store):
+        """source_type tag must reflect nested metadata.type, not just top-level type."""
+        md_dir = tmp_path / "memos"
+        md_dir.mkdir()
+        _write_md(
+            md_dir,
+            "nested.md",
+            "---\nname: nested\nmetadata:\n  type: feedback\n---\n\nNested type body.\n",
+        )
+        await import_markdown_dir(md_dir, memory_manager)
+
+        mem_id = store.conn.execute(
+            "SELECT id FROM memories WHERE file_path = 'nested.md'"
+        ).fetchone()[0]
+        tags = {
+            r[0]
+            for r in store.conn.execute(
+                "SELECT tag FROM tags WHERE memory_id = ?", (mem_id,)
+            ).fetchall()
+        }
+        assert "source_type:feedback" in tags
+
     async def test_invalid_dir_raises(self, tmp_path, memory_manager):
         with pytest.raises(ValueError, match="not a directory"):
             await import_markdown_dir(tmp_path / "nonexistent", memory_manager)

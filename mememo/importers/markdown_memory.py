@@ -130,7 +130,7 @@ async def import_markdown_dir(
     for md_path in md_files:
         rel = str(md_path.relative_to(root))
         try:
-            text = md_path.read_text(encoding="utf-8")
+            text = md_path.read_text(encoding="utf-8-sig")
             meta, body = _parse_frontmatter(text)
             content_type = _map_type(meta)
 
@@ -149,7 +149,7 @@ async def import_markdown_dir(
                 details.append({"file": rel, "status": "skipped", "reason": "unchanged"})
                 continue
 
-            source_type = meta.get("type", "")
+            source_type = meta.get("type") or meta.get("metadata", {}).get("type") or ""
             tags: list[str] = list(meta.get("tags", []) or [])
             if source_type:
                 tags.append(f"source_type:{source_type}")
