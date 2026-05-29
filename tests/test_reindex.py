@@ -165,7 +165,7 @@ class TestMoveFaissDirs:
         import asyncio
 
         mem = _mem(new_id, repo_path)
-        asyncio.get_event_loop().run_until_complete(store.save_memory(mem))
+        asyncio.run(store.save_memory(mem))
         # Give it fake embedding pointers
         store.conn.execute(
             "UPDATE memories SET embedding_shard = 0, embedding_index = 42 WHERE repo_id = ?",
@@ -214,7 +214,7 @@ class TestReindexIdentity:
         import asyncio
 
         mem = _mem(repo_id, repo_path, remote_url=remote_url)
-        asyncio.get_event_loop().run_until_complete(store.save_memory(mem))
+        asyncio.run(store.save_memory(mem))
         return mem
 
     def test_rows_reassigned_and_dir_moved(self, store, vi_base, tmp_path):
