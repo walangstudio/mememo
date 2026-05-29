@@ -213,11 +213,19 @@ class GitManager:
             # Get repo name from path
             repo_name = Path(repo_path).name
 
-            # Generate stable repo ID from absolute path
-            repo_id = hash_path(repo_path)
-
-            # Get remote URL
+            # Get remote URL before resolving id (URL is an input to the resolver)
             remote_url = await self.get_remote_url(repo_path)
+
+            # portable identity (wave 0b): resolve via env > .mememo/project.yaml
+            # > remote-url hash > path hash, instead of bare hash_path.
+            from .identity import resolve_project_id
+            from .project_config import load_project_config
+
+            repo_id = resolve_project_id(
+                repo_path=repo_path,
+                remote_url=remote_url,
+                project_config=load_project_config(repo_path),
+            )
 
             # Get branch info
             branch_name = await self.get_current_branch(repo_path)
@@ -279,7 +287,15 @@ class GitManager:
             Stable repository ID (SHA-256 hash of canonical path)
         """
         repo_path = await self.canonical_repo_root(cwd)
-        return hash_path(repo_path)
+        remote_url = await self.get_remote_url(repo_path)
+        from .identity import resolve_project_id
+        from .project_config import load_project_config
+
+        return resolve_project_id(
+            repo_path=repo_path,
+            remote_url=remote_url,
+            project_config=load_project_config(repo_path),
+        )
 
     # ----- v0.4.0 commit-aware extensions (FR-006) --------------------------
 
