@@ -500,6 +500,11 @@ def cmd_import_md(args: list[str]) -> int:
     ap.add_argument("dir", help="Directory of .md files to import")
     ap.add_argument("--repo", default=None, help="Repo root path for git context")
     ap.add_argument("--dry-run", action="store_true", help="Parse but do not write")
+    ap.add_argument(
+        "--allow-secrets",
+        action="store_true",
+        help="Bypass secret detection (for trusted local md with placeholder creds)",
+    )
     ns = ap.parse_args(args)
 
     async def _run() -> int:
@@ -514,6 +519,7 @@ def cmd_import_md(args: list[str]) -> int:
             memory_manager=srv.memory_manager,
             repo=ns.repo,
             dry_run=ns.dry_run,
+            allow_secrets=ns.allow_secrets,
         )
         label = "(dry run) " if ns.dry_run else ""
         print(

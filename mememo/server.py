@@ -194,10 +194,26 @@ def _setup_logging() -> None:
     try:
         from logging.handlers import RotatingFileHandler
 
+        class _SafeRotatingFileHandler(RotatingFileHandler):
+            """Rotation that tolerates the log being held by another process.
+
+            mememo runs as a long-lived MCP server AND as short-lived CLI/hook
+            subprocesses, so two processes share server.log. On Windows the loser
+            of a rollover race gets ``PermissionError`` (WinError 32). Swallow it
+            and keep appending instead of spamming logging errors to stderr — the
+            server process will rotate successfully on its next turn.
+            """
+
+            def doRollover(self):  # noqa: N802 - overrides stdlib RotatingFileHandler
+                try:
+                    super().doRollover()
+                except OSError:
+                    pass
+
         log_dir = Path.home() / ".mememo" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         handlers.append(
-            RotatingFileHandler(
+            _SafeRotatingFileHandler(
                 log_dir / "server.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8"
             )
         )
