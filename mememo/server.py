@@ -252,6 +252,10 @@ def _maybe_start_identity_migration(storage_manager) -> None:
 
             manifest = storage_manager._backfill_reindex_identity(_resolver, dry_run=False)
 
+            # Attach conn so move_faiss_dirs can clear embedding pointers on conflict.
+            for entry in manifest:
+                entry["conn"] = storage_manager.conn
+
             # Attempt FAISS dir moves via Wave 1C helper (lazy import — may not exist yet).
             try:
                 from .commands.reindex import move_faiss_dirs

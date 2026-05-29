@@ -473,3 +473,97 @@ def run_capture():
 
 def run_inject():
     asyncio.run(cmd_inject())
+
+
+# --- session-start hook (Wave 1B) -------------------------------------------
+
+
+async def cmd_session_start() -> None:
+    """SessionStart hook: recall relevant memories at session open."""
+    from .commands.session_start import cmd_session_start as _impl
+
+    await _impl()
+
+
+def run_session_start():
+    asyncio.run(cmd_session_start())
+
+
+# --- import-md subcommand (Wave 1A) -----------------------------------------
+
+
+def cmd_import_md(args: list[str]) -> int:
+    """Import .md files from a directory as memories."""
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="mememo import-md")
+    ap.add_argument("dir", help="Directory of .md files to import")
+    ap.add_argument("--repo", default=None, help="Repo root path for git context")
+    ap.add_argument("--dry-run", action="store_true", help="Parse but do not write")
+    ns = ap.parse_args(args)
+
+    async def _run() -> int:
+        from .importers.markdown_memory import import_markdown_dir
+        from .server import initialize_mememo
+
+        await initialize_mememo()
+        import mememo.server as srv
+
+        result = await import_markdown_dir(
+            path=ns.dir,
+            memory_manager=srv.memory_manager,
+            repo=ns.repo,
+            dry_run=ns.dry_run,
+        )
+        label = "(dry run) " if ns.dry_run else ""
+        print(
+            f"import-md {label}done: imported={result['imported']}"
+            f" skipped={result['skipped']} errors={result['errors']}"
+        )
+        return 0 if result["errors"] == 0 else 1
+
+    return asyncio.run(_run())
+
+
+def run_import_md():
+    import sys
+
+    raise SystemExit(cmd_import_md(sys.argv[1:]))
+
+
+# --- reindex-identity subcommand (Wave 1C) ----------------------------------
+
+
+def cmd_reindex_identity(args: list[str]) -> int:
+    """Re-derive repo_ids from remote URL and move FAISS dirs to match."""
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="mememo reindex-identity")
+    ap.add_argument("--dry-run", action="store_true", help="Report changes without applying them")
+    ns = ap.parse_args(args)
+
+    from .commands.reindex import reindex_identity
+    from .core.storage_manager import StorageManager
+    from .types.config import MemoConfig
+
+    cfg = MemoConfig.from_env()
+    storage = StorageManager(base_dir=cfg.storage.base_dir)
+    base_path = cfg.storage.base_dir / "vector_index"
+
+    report = reindex_identity(storage=storage, base_path=base_path, dry_run=ns.dry_run)
+
+    label = " (dry run)" if report.get("dry_run") else ""
+    print(
+        f"reindex-identity{label}: moves={report['moves']} conflicts={report['conflicts']}"
+        f" noops={report['noops']} skipped={report['skipped']}"
+    )
+    changed = [e for e in report["manifest"] if not e.get("skipped") and e["old_id"] != e["new_id"]]
+    for e in changed:
+        print(f"  {e['old_id']} -> {e['new_id']}  {e['repo_path']}  rows={e['row_count']}")
+    return 0
+
+
+def run_reindex_identity():
+    import sys
+
+    raise SystemExit(cmd_reindex_identity(sys.argv[1:]))
