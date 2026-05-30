@@ -59,6 +59,11 @@ SAMPLES = {
     "c": ("a.c", "int f() { return 0; }\nstruct S { int x; };\n"),
     "cpp": ("a.cpp", "int f() { return 0; }\nclass C {};\nstruct S {};\n"),
     "csharp": ("A.cs", "class C { void M() {} }\ninterface I {}\n"),
+    "kotlin": ("A.kt", "class C { fun m() {} }\nfun f(): Int = 1\n"),
+    "ruby": ("a.rb", "class C\n  def m\n  end\nend\n"),
+    "php": ("A.php", "<?php\nclass C { public function m(): void {} }\nfunction f(): void {}\n"),
+    "swift": ("A.swift", "class C { func m() {} }\nfunc f() {}\nprotocol P {}\n"),
+    "scala": ("A.scala", "class C { def m(): Unit = {} }\nobject O {}\ntrait T {}\n"),
 }
 
 
@@ -79,6 +84,11 @@ def test_chunk_query_path_yields_definitions(chunker: TreeSitterChunker, languag
             "c": "tree_sitter_c",
             "cpp": "tree_sitter_cpp",
             "csharp": "tree_sitter_c_sharp",
+            "kotlin": "tree_sitter_kotlin",
+            "ruby": "tree_sitter_ruby",
+            "php": "tree_sitter_php",
+            "swift": "tree_sitter_swift",
+            "scala": "tree_sitter_scala",
         }[language]
     )
     file_path, code = SAMPLES[language]

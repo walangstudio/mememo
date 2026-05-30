@@ -41,6 +41,11 @@ _GRAMMARS = {
     "c": ("tree_sitter_c", "language"),
     "cpp": ("tree_sitter_cpp", "language"),
     "csharp": ("tree_sitter_c_sharp", "language"),
+    "kotlin": ("tree_sitter_kotlin", "language"),
+    "ruby": ("tree_sitter_ruby", "language"),
+    "php": ("tree_sitter_php", "language_php"),
+    "swift": ("tree_sitter_swift", "language"),
+    "scala": ("tree_sitter_scala", "language"),
 }
 
 
@@ -170,6 +175,62 @@ LANGUAGE_QUERIES = {
 
         (interface_declaration
             name: (identifier) @interface.name) @interface.def
+    """,
+    "kotlin": """
+        (class_declaration
+            (identifier) @class.name) @class.def
+
+        (function_declaration
+            (identifier) @function.name) @function.def
+
+        (object_declaration
+            (identifier) @object.name) @object.def
+    """,
+    "ruby": """
+        (class
+            name: (constant) @class.name) @class.def
+
+        (module
+            name: (constant) @module.name) @module.def
+
+        (method
+            name: (identifier) @method.name) @method.def
+    """,
+    "php": """
+        (class_declaration
+            name: (name) @class.name) @class.def
+
+        (method_declaration
+            name: (name) @method.name) @method.def
+
+        (function_definition
+            name: (name) @function.name) @function.def
+
+        (interface_declaration
+            name: (name) @interface.name) @interface.def
+    """,
+    "swift": """
+        (class_declaration
+            name: (type_identifier) @class.name) @class.def
+
+        (function_declaration
+            name: (simple_identifier) @function.name) @function.def
+
+        (protocol_declaration
+            name: (type_identifier) @protocol.name) @protocol.def
+    """,
+    "scala": """
+        (class_definition
+            name: (identifier) @class.name) @class.def
+
+        (object_definition
+            name: (identifier) @object.name) @object.def
+
+        (trait_definition
+            name: (identifier) @trait.name) @trait.def
+
+        (function_definition
+            name: (identifier) @function.name) @function.def
     """,
 }
 

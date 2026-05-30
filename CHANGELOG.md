@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.0] - 2026-05-30
+
+### Added
+- **Edge walkers for Kotlin, Ruby, PHP, Swift, Scala.** These languages were
+  text-fallback-only and emitted zero graph edges; they now have tree-sitter
+  edge walkers (`walk_kotlin`/`walk_ruby`/`walk_php`/`walk_swift`/`walk_scala`
+  in `chunking/ts_edges.py`) on par with rust/java/c/cpp/csharp. Each emits the
+  edges its AST supports: IMPORTS (import/require/use), EXTENDS + IMPLEMENTS
+  (class/superclass/interface/protocol/trait), CALLS (function/method/scoped),
+  and USES where the language has typed member access (swift/scala). Wired into
+  `_GRAMMARS`, `LANGUAGE_QUERIES`, and `LANGUAGE_CATEGORIES`; added the five
+  `tree-sitter-*` grammar deps. 44 new tests. Closes the per-language edge gap —
+  every chunked language now participates in the graph.
+
 ## [0.9.1] - 2026-05-30
 
 ### Fixed
