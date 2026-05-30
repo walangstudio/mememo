@@ -239,6 +239,14 @@ class VectorIndex:
                     continue
                 index = self._load_shard(shard_id)
                 index.add(np.array(vectors, dtype="float32"))
+                # Persist the shard immediately. Previously add() only wrote a
+                # shard to disk when it filled (50k) or was evicted after 5 min
+                # idle, so a short-lived process (import-md, hooks, a quickly
+                # restarted server) exited with the vectors in memory only —
+                # mappings.db kept the rows but the faiss shard was never
+                # written, and the next process searched an empty index.
+                shard_path = self.index_dir / f"shard_{shard_id}.faiss"
+                faiss.write_index(index, str(shard_path))
 
             cursor.executemany(
                 """
