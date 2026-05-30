@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-RECALL_TYPES = {"decision", "analysis", "context", "conversation"}
+RECALL_TYPES = {"decision", "analysis", "context", "conversation", "reference"}
 
 
 async def recall_context(

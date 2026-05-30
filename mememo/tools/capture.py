@@ -16,6 +16,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from ..chunking.url_extract import normalize_url, scan_urls
 from ..types.memory import CreateMemoryParams, MemoryRelationships, SearchParams
 from .schemas import CaptureParams, CaptureResponse, ExtractedMemory
 
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_EXTRACT_TYPES = {"decision", "analysis", "context", "conversation", "summary"}
+_EXTRACT_TYPES = {"decision", "analysis", "context", "conversation", "summary", "reference"}
 
 _SYSTEM_PROMPT = """\
 You are a memory extraction assistant. Given a text, extract all facts worth \
@@ -125,6 +126,21 @@ async def _dedup_and_store(
     return extracted
 
 
+def _url_items(text: str) -> list[tuple[str, str, list[str]]]:
+    """Return (type, content, tags) tuples for each unique URL in *text*.
+
+    Deduplication uses normalize_url so http://X and http://X/ are the same.
+    """
+    items: list[tuple[str, str, list[str]]] = []
+    seen_norm: set[str] = set()
+    for url in scan_urls(text):
+        key = normalize_url(url)
+        if key not in seen_norm:
+            seen_norm.add(key)
+            items.append(("reference", url, ["url"]))
+    return items
+
+
 async def capture(
     params: CaptureParams,
     memory_manager: "MemoryManager",
@@ -196,6 +212,8 @@ async def capture(
             continue
         tags = [str(t) for t in item.get("tags", []) if t]
         items.append((mem_type, content, tags))
+
+    items.extend(_url_items(params.text))
 
     extracted = await _dedup_and_store(items, memory_manager, cwd=params.repo_path)
     stored_count = sum(1 for e in extracted if e.memory_id)

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.11.0] - 2026-05-30
+
+### Added
+- **Links as first-class memory (multimodal docs/links P2).** URLs are now
+  extracted beyond markdown: from Python docstrings and from captured
+  conversation, materialised as a new `reference` memory type (searchable,
+  joins `PERSISTENT_MEMORY_TYPES`) plus `REFERENCES` edges, deduped by
+  normalised URL.
+  - New `chunking/url_extract.py`: `scan_urls(text)` + `normalize_url(url)`.
+  - `python_ast_chunker` scans class/function docstrings → `REFERENCES` edges
+    (source = the symbol that owns the docstring, target = the URL).
+  - `capture` extracts URLs from session text → `reference` memories (deduped).
+  - `reference` added to `MemoryContentType` + `PERSISTENT_MEMORY_TYPES` and to
+    the persistent-recall content-type sets (`recall_context`, workspace recall).
+  - `import-md` now maps frontmatter `type: reference` to the `reference` type
+    (was `relationship`).
+  - Markdown URL REFERENCES (v0.8.0) unchanged. Images remain deferred.
+
 ## [0.10.0] - 2026-05-30
 
 ### Added
