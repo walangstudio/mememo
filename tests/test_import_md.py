@@ -443,6 +443,62 @@ class TestAllowSecrets:
         assert result["imported"] == 1
         assert result["errors"] == 0
 
+
+# ---------------------------------------------------------------------------
+# Global lane stamping: import without --repo must NOT inherit the ambient repo
+# ---------------------------------------------------------------------------
+
+
+class TestForceGlobalLane:
+    def _ambient(self, repo_id):
+        from mememo.types.memory import BranchContext, GitContext, RepoContext
+
+        async def _detect(cwd=None):
+            return GitContext(
+                repo=RepoContext(id=repo_id, name="ambient", path="/x", remote_url=None),
+                branch=BranchContext(name="feature", commit_hash="a" * 40),
+            )
+
+        return _detect
+
+    async def test_repo_none_stamps_global_not_ambient(self, tmp_path, memory_manager, store):
+        # Regression: running import inside a git repo used to stamp that ambient
+        # repo (cwd=None -> detect_context). With repo=None it must be GLOBAL so
+        # the memory recalls from any project (recall_workspace queries GLOBAL).
+        memory_manager.git_manager.detect_context = self._ambient("ambient_repo_id_xx")
+
+        md_dir = tmp_path / "m"
+        md_dir.mkdir()
+        _write_md(md_dir, "n.md", "---\ntype: context\n---\n\nGlobal note body.\n")
+
+        result = await import_markdown_dir(md_dir, memory_manager)  # repo=None
+        assert result["imported"] == 1
+
+        rid = store.conn.execute(
+            "SELECT repo_id FROM memories WHERE file_path = 'n.md'"
+        ).fetchone()[0]
+        assert rid == GLOBAL_REPO_ID
+
+    async def test_with_repo_uses_detected_context(self, tmp_path, memory_manager, store):
+        # When --repo IS given, force_global is off and the detected id is used.
+        memory_manager.git_manager.detect_context = self._ambient("scoped_repo_id_yy")
+        # A non-GLOBAL repo_id would spin a real VectorIndex (stubbed faiss);
+        # return a throwaway mock so create_memory's vector add is a no-op.
+        memory_manager._get_vector_index = lambda *a, **k: MagicMock()
+
+        md_dir = tmp_path / "m"
+        md_dir.mkdir()
+        _write_md(md_dir, "s.md", "---\ntype: context\n---\n\nScoped note.\n")
+
+        result = await import_markdown_dir(md_dir, memory_manager, repo=str(tmp_path))
+        assert result["imported"] == 1
+
+        rid = store.conn.execute(
+            "SELECT repo_id FROM memories WHERE file_path = 's.md'"
+        ).fetchone()[0]
+        assert rid == "scoped_repo_id_yy"
+        assert rid != GLOBAL_REPO_ID
+
     async def test_nested_metadata_type_tag(self, tmp_path, memory_manager, store):
         """source_type tag must reflect nested metadata.type, not just top-level type."""
         md_dir = tmp_path / "memos"

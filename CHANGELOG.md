@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.1] - 2026-05-30
+
+### Fixed
+- **`import-md` now actually stamps the global lane** when `--repo` is omitted.
+  It passed `cwd=None` to `create_memory`, so running the import from inside a
+  git repo stamped that ambient repo's id instead of `GLOBAL_REPO_ID` — the
+  memories then only recalled inside that repo, not workspace-wide. `create_memory`
+  gained `force_global`; the importer sets it when no `--repo` is given, stamping
+  `(GLOBAL_REPO_ID, "main")` to match what `recall_workspace` queries. (The
+  importer's tests had stubbed git detection to return GLOBAL, which masked this.)
+
 ## [0.9.0] - 2026-05-30
 
 ### Added
