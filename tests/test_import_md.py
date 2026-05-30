@@ -176,7 +176,7 @@ class TestMapType:
         assert _map_type({"type": "project"}) == "context"
 
     def test_reference(self):
-        assert _map_type({"type": "reference"}) == "relationship"
+        assert _map_type({"type": "reference"}) == "reference"
 
     def test_user(self):
         assert _map_type({"type": "user"}) == "context"

@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 _TYPE_MAP: dict[str, MemoryContentType] = {
     "decision": "decision",
     "project": "context",
-    "reference": "relationship",
+    "reference": "reference",
     "user": "context",
     "feedback": "context",
 }

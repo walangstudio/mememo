@@ -160,7 +160,7 @@ async def recall_workspace(
                 memories = await memory_manager.storage_manager.load_memories(
                     [mid for mid, _ in candidates],
                     _ctx,
-                    content_types={"decision", "analysis", "context", "summary"},
+                    content_types={"decision", "analysis", "context", "summary", "reference"},
                 )
                 sim_by_id = dict(candidates)
                 for mem in memories:

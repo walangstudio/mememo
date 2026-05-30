@@ -14,6 +14,7 @@ import logging
 from pathlib import PurePosixPath
 
 from .base_chunker import BaseChunker, Chunk, RawEdge
+from .url_extract import scan_urls
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,7 @@ class PythonASTChunker(BaseChunker):
                 # Chunk for the class itself.
                 start = node.lineno
                 end = node.end_lineno or start
+                docstring = ast.get_docstring(node)
                 chunks.append(
                     Chunk(
                         text="\n".join(lines[start - 1 : end]),
@@ -139,7 +141,7 @@ class PythonASTChunker(BaseChunker):
                         end_line=end,
                         chunk_type="class",
                         class_name=node.name,
-                        docstring=ast.get_docstring(node),
+                        docstring=docstring,
                         decorators=[self._get_decorator_name(d) for d in node.decorator_list]
                         or None,
                         parent_class=enclosing_class(),
@@ -147,6 +149,12 @@ class PythonASTChunker(BaseChunker):
                         file_path=file_path,
                     )
                 )
+                if docstring:
+                    seen_urls: set[str] = set()
+                    for url in scan_urls(docstring):
+                        if url not in seen_urls:
+                            seen_urls.add(url)
+                            edges.append(RawEdge(qual, url, "REFERENCES", "INFERRED"))
                 for base in node.bases:
                     tgt = _name_from_attr_chain(base)
                     if tgt:
@@ -166,6 +174,7 @@ class PythonASTChunker(BaseChunker):
                 qual = f"{cur_qualname()}.{node.name}"
                 start = node.lineno
                 end = node.end_lineno or start
+                docstring = ast.get_docstring(node)
                 chunks.append(
                     Chunk(
                         text="\n".join(lines[start - 1 : end]),
@@ -173,7 +182,7 @@ class PythonASTChunker(BaseChunker):
                         end_line=end,
                         chunk_type="method" if parent else "function",
                         function_name=node.name,
-                        docstring=ast.get_docstring(node),
+                        docstring=docstring,
                         decorators=[self._get_decorator_name(d) for d in node.decorator_list]
                         or None,
                         parent_class=parent,
@@ -181,6 +190,12 @@ class PythonASTChunker(BaseChunker):
                         file_path=file_path,
                     )
                 )
+                if docstring:
+                    seen_urls: set[str] = set()
+                    for url in scan_urls(docstring):
+                        if url not in seen_urls:
+                            seen_urls.add(url)
+                            edges.append(RawEdge(qual, url, "REFERENCES", "INFERRED"))
                 for dec in node.decorator_list:
                     tgt = _name_from_attr_chain(dec.func if isinstance(dec, ast.Call) else dec)
                     if tgt:
