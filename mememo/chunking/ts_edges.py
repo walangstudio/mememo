@@ -933,6 +933,794 @@ def walk_csharp(
     return chunks, edges
 
 
+def walk_kotlin(
+    tree, code_bytes: bytes, module: str, file_path: str, language: str | None = None
+) -> tuple[list[Chunk], list[RawEdge]]:
+    """Walk a Kotlin AST and emit chunks + edges.
+
+    Verified against tree-sitter-kotlin. Edges:
+    - ``import`` (qualified_identifier) -> IMPORTS
+    - ``class_declaration`` delegation_specifiers -> EXTENDS (first base) / IMPLEMENTS (remaining)
+    - ``object_declaration`` -> class chunk (companion/singleton objects)
+    - ``function_declaration`` inside class_body -> method chunks + CALLS
+    - ``call_expression`` -> CALLS (bare identifier or navigation_expression)
+    Chunks: class_declaration / object_declaration (class), function_declaration (function/method).
+    """
+    chunks: list[Chunk] = []
+    edges: list[RawEdge] = []
+    scope_stack: list[tuple[str, str]] = [("module", module)]
+
+    def cur() -> str:
+        return ".".join(part for _, part in scope_stack)
+
+    def enclosing_class() -> str | None:
+        for kind, name in reversed(scope_stack):
+            if kind == "class":
+                return name
+        return None
+
+    def _flatten_navigation(node) -> str:
+        """Flatten a Kotlin navigation_expression (a.b.c) to dotted string."""
+        if node.type in ("identifier", "simple_identifier", "this_expression"):
+            return _text(node, code_bytes)
+        if node.type == "navigation_expression":
+            target = node.child_by_field_name("target")
+            suffix = node.child_by_field_name("suffix")
+            left = _flatten_navigation(target) if target is not None else ""
+            if suffix is not None:
+                for ch in suffix.children:
+                    if ch.type in ("identifier", "simple_identifier"):
+                        right = _text(ch, code_bytes)
+                        return f"{left}.{right}" if left else right
+            return left
+        return _text(node, code_bytes)
+
+    def _emit_delegation_edges(class_qual: str, node) -> None:
+        """Emit EXTENDS (first base) and IMPLEMENTS (rest) from delegation_specifiers."""
+        for child in node.children:
+            if child.type != "delegation_specifiers":
+                continue
+            first = True
+            for ds in child.children:
+                if ds.type != "delegation_specifier":
+                    continue
+                base_name: str | None = None
+                for sub in ds.children:
+                    if sub.type == "constructor_invocation":
+                        ut = None
+                        for s2 in sub.children:
+                            if s2.type == "user_type":
+                                ut = s2
+                                break
+                        if ut is not None:
+                            for s2 in ut.children:
+                                if s2.type == "identifier":
+                                    base_name = _text(s2, code_bytes)
+                                    break
+                    elif sub.type == "user_type":
+                        for s2 in sub.children:
+                            if s2.type == "identifier":
+                                base_name = _text(s2, code_bytes)
+                                break
+                if base_name:
+                    kind = "EXTENDS" if first else "IMPLEMENTS"
+                    edges.append(RawEdge(class_qual, base_name, kind))
+                    first = False
+
+    def visit(node) -> None:
+        t = node.type
+
+        if t == "import":
+            # children: 'import' keyword, then qualified_identifier, optional '.*'
+            qi = None
+            star = False
+            for ch in node.children:
+                if ch.type == "qualified_identifier":
+                    qi = _text(ch, code_bytes)
+                elif ch.type == "*":
+                    star = True
+            if qi:
+                target = f"{qi}.*" if star else qi
+                edges.append(RawEdge(module, target, "IMPORTS"))
+            return
+
+        if t in ("class_declaration", "object_declaration"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            qual = f"{cur()}.{name}"
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="class",
+                    class_name=name,
+                    parent_class=enclosing_class(),
+                    language="kotlin",
+                    file_path=file_path,
+                )
+            )
+            _emit_delegation_edges(qual, node)
+            scope_stack.append(("class", name))
+            # Kotlin class_declaration has no named 'body' field — find class_body by type
+            class_body = next((c for c in node.children if c.type == "class_body"), None)
+            if class_body is not None:
+                for child in class_body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t == "function_declaration":
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            parent = enclosing_class()
+            qual = f"{cur()}.{name}"
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="method" if parent else "function",
+                    function_name=name,
+                    parent_class=parent,
+                    language="kotlin",
+                    file_path=file_path,
+                )
+            )
+            scope_stack.append(("function", name))
+            # function_body wraps the block; find block inside function_body
+            fn_body = next((c for c in node.children if c.type == "function_body"), None)
+            if fn_body is not None:
+                block = next((c for c in fn_body.children if c.type == "block"), None)
+                if block is not None:
+                    for child in block.children:
+                        visit(child)
+            scope_stack.pop()
+            return
+
+        if t == "call_expression":
+            # children[0] is the callee: identifier or navigation_expression
+            if node.children:
+                callee = node.children[0]
+                tgt = _flatten_navigation(callee)
+                if tgt:
+                    edges.append(RawEdge(cur(), tgt, "CALLS"))
+            # don't recurse into value_arguments to avoid re-emitting nested calls
+            # but we must recurse into the body parts for lambda arguments
+            for child in node.children:
+                visit(child)
+            return
+
+        for child in node.children:
+            visit(child)
+
+    for child in tree.root_node.children:
+        visit(child)
+    return chunks, edges
+
+
+def walk_ruby(
+    tree, code_bytes: bytes, module: str, file_path: str, language: str | None = None
+) -> tuple[list[Chunk], list[RawEdge]]:
+    """Walk a Ruby AST and emit chunks + edges.
+
+    Verified against tree-sitter-ruby. Edges:
+    - ``call`` with method=require/require_relative -> IMPORTS
+    - ``class`` superclass -> EXTENDS
+    - ``call`` with method=include/prepend -> IMPLEMENTS (mixin)
+    - ``call`` inside method bodies -> CALLS
+    Chunks: class / module (class), method / singleton_method (function/method).
+    Ruby has no static typing so USES is not emitted.
+    """
+    chunks: list[Chunk] = []
+    edges: list[RawEdge] = []
+    scope_stack: list[tuple[str, str]] = [("module", module)]
+
+    def cur() -> str:
+        return ".".join(part for _, part in scope_stack)
+
+    def enclosing_class() -> str | None:
+        for kind, name in reversed(scope_stack):
+            if kind == "class":
+                return name
+        return None
+
+    def _call_target(node) -> str:
+        """Flatten a Ruby call receiver.method to dotted string."""
+        receiver = node.child_by_field_name("receiver")
+        method = node.child_by_field_name("method")
+        method_text = _text(method, code_bytes) if method is not None else ""
+        if receiver is not None:
+            rec_text = _text(receiver, code_bytes)
+            return f"{rec_text}.{method_text}" if method_text else rec_text
+        return method_text
+
+    def visit(node) -> None:
+        t = node.type
+
+        if t == "call":
+            method_node = node.child_by_field_name("method")
+            method_name = _text(method_node, code_bytes) if method_node is not None else ""
+            receiver = node.child_by_field_name("receiver")
+
+            if method_name in ("require", "require_relative") and receiver is None:
+                args = node.child_by_field_name("arguments")
+                if args is not None:
+                    for ch in args.children:
+                        if ch.type in ("string", "simple_string"):
+                            for sub in ch.children:
+                                if sub.type in ("string_content", "string_value"):
+                                    edges.append(RawEdge(module, _text(sub, code_bytes), "IMPORTS"))
+                                    break
+                            else:
+                                raw = _text(ch, code_bytes).strip("'\"")
+                                if raw:
+                                    edges.append(RawEdge(module, raw, "IMPORTS"))
+                return
+
+            if method_name in ("include", "prepend") and receiver is None:
+                args = node.child_by_field_name("arguments")
+                if args is not None:
+                    cls_qual = f"{cur()}.{enclosing_class()}" if enclosing_class() else cur()
+                    for ch in args.children:
+                        if ch.type == "constant":
+                            edges.append(RawEdge(cls_qual, _text(ch, code_bytes), "IMPLEMENTS"))
+                return
+
+            # generic call — emit CALLS
+            tgt = _call_target(node)
+            if tgt:
+                edges.append(RawEdge(cur(), tgt, "CALLS"))
+            for child in node.children:
+                visit(child)
+            return
+
+        if t in ("class", "module"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            qual = f"{cur()}.{name}"
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="class",
+                    class_name=name,
+                    parent_class=enclosing_class(),
+                    language="ruby",
+                    file_path=file_path,
+                )
+            )
+            if t == "class":
+                sup = node.child_by_field_name("superclass")
+                if sup is not None:
+                    for ch in sup.children:
+                        if ch.type == "constant":
+                            edges.append(RawEdge(qual, _text(ch, code_bytes), "EXTENDS"))
+                            break
+            scope_stack.append(("class", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t in ("method", "singleton_method"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            parent = enclosing_class()
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="method" if parent else "function",
+                    function_name=name,
+                    parent_class=parent,
+                    language="ruby",
+                    file_path=file_path,
+                )
+            )
+            scope_stack.append(("function", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        for child in node.children:
+            visit(child)
+
+    for child in tree.root_node.children:
+        visit(child)
+    return chunks, edges
+
+
+def walk_php(
+    tree, code_bytes: bytes, module: str, file_path: str, language: str | None = None
+) -> tuple[list[Chunk], list[RawEdge]]:
+    """Walk a PHP AST and emit chunks + edges.
+
+    Verified against tree-sitter-php 0.23+. Edges:
+    - ``namespace_use_declaration`` -> IMPORTS (each clause)
+    - ``class_declaration`` base_clause -> EXTENDS
+    - ``class_declaration`` class_interface_clause -> IMPLEMENTS (each name)
+    - ``interface_declaration`` -> class chunk
+    - ``function_call_expression`` -> CALLS
+    - ``member_call_expression`` -> CALLS (object->method)
+    - ``scoped_call_expression`` -> CALLS (Class::method)
+    Chunks: class_declaration / interface_declaration (class),
+    method_declaration / function_definition (method/function).
+    """
+    chunks: list[Chunk] = []
+    edges: list[RawEdge] = []
+    scope_stack: list[tuple[str, str]] = [("module", module)]
+
+    def cur() -> str:
+        return ".".join(part for _, part in scope_stack)
+
+    def enclosing_class() -> str | None:
+        for kind, name in reversed(scope_stack):
+            if kind == "class":
+                return name
+        return None
+
+    def _gather_use_targets(node) -> list[str]:
+        """Extract import targets from a namespace_use_declaration."""
+        targets: list[str] = []
+
+        # Walk children collecting qualified_name and name nodes (avoiding keywords)
+        def _collect(n) -> None:
+            if n.type == "namespace_use_clause":
+                # text of this clause is the full qualified name
+                targets.append(_text(n, code_bytes).strip("\\"))
+                return
+            for ch in n.children:
+                _collect(ch)
+
+        _collect(node)
+        return targets
+
+    def visit(node) -> None:
+        t = node.type
+
+        if t == "namespace_use_declaration":
+            for tgt in _gather_use_targets(node):
+                if tgt:
+                    edges.append(RawEdge(module, tgt, "IMPORTS"))
+            return
+
+        if t in ("class_declaration", "interface_declaration"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            qual = f"{cur()}.{name}"
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="class",
+                    class_name=name,
+                    parent_class=enclosing_class(),
+                    language="php",
+                    file_path=file_path,
+                )
+            )
+            # base_clause and class_interface_clause are unkeyed children in this grammar
+            for child in node.children:
+                if child.type == "base_clause":
+                    for ch in child.children:
+                        if ch.type == "name":
+                            edges.append(RawEdge(qual, _text(ch, code_bytes), "EXTENDS"))
+                            break
+                elif child.type == "class_interface_clause":
+                    for ch in child.children:
+                        if ch.type == "name":
+                            edges.append(RawEdge(qual, _text(ch, code_bytes), "IMPLEMENTS"))
+            scope_stack.append(("class", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t in ("method_declaration", "function_definition"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            parent = enclosing_class()
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="method" if parent else "function",
+                    function_name=name,
+                    parent_class=parent,
+                    language="php",
+                    file_path=file_path,
+                )
+            )
+            scope_stack.append(("function", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t == "function_call_expression":
+            fn = node.child_by_field_name("function")
+            if fn is not None:
+                edges.append(RawEdge(cur(), _text(fn, code_bytes), "CALLS"))
+            for child in node.children:
+                visit(child)
+            return
+
+        if t == "member_call_expression":
+            # object->method(args)
+            obj = node.child_by_field_name("object")
+            name_node = node.child_by_field_name("name")
+            if name_node is not None:
+                obj_text = _text(obj, code_bytes) if obj is not None else ""
+                tgt = (
+                    f"{obj_text}.{_text(name_node, code_bytes)}"
+                    if obj_text
+                    else _text(name_node, code_bytes)
+                )
+                edges.append(RawEdge(cur(), tgt, "CALLS"))
+            for child in node.children:
+                visit(child)
+            return
+
+        if t == "scoped_call_expression":
+            # Class::method(args)
+            cls_node = node.child_by_field_name("class_name") or node.child_by_field_name("scope")
+            name_node = node.child_by_field_name("name")
+            if name_node is not None:
+                cls_text = _text(cls_node, code_bytes) if cls_node is not None else ""
+                tgt = (
+                    f"{cls_text}::{_text(name_node, code_bytes)}"
+                    if cls_text
+                    else _text(name_node, code_bytes)
+                )
+                edges.append(RawEdge(cur(), tgt, "CALLS"))
+            for child in node.children:
+                visit(child)
+            return
+
+        for child in node.children:
+            visit(child)
+
+    for child in tree.root_node.children:
+        visit(child)
+    return chunks, edges
+
+
+def walk_swift(
+    tree, code_bytes: bytes, module: str, file_path: str, language: str | None = None
+) -> tuple[list[Chunk], list[RawEdge]]:
+    """Walk a Swift AST and emit chunks + edges.
+
+    Verified against tree-sitter-swift. Edges:
+    - ``import_declaration`` -> IMPORTS (identifier text)
+    - ``class_declaration`` / ``struct_declaration`` inheritance_specifier ->
+      EXTENDS (first) / IMPLEMENTS (rest)
+    - ``protocol_declaration`` -> class chunk
+    - ``function_declaration`` / ``protocol_function_declaration`` -> chunks + CALLS
+    - ``call_expression`` -> CALLS (simple_identifier or navigation_expression callee)
+    - ``navigation_expression`` with self target -> USES
+    Chunks: class_declaration / struct_declaration / protocol_declaration (class),
+    function_declaration / protocol_function_declaration (function/method).
+    """
+    chunks: list[Chunk] = []
+    edges: list[RawEdge] = []
+    scope_stack: list[tuple[str, str]] = [("module", module)]
+
+    def cur() -> str:
+        return ".".join(part for _, part in scope_stack)
+
+    def enclosing_class() -> str | None:
+        for kind, name in reversed(scope_stack):
+            if kind == "class":
+                return name
+        return None
+
+    def _flatten_nav(node) -> str:
+        """Flatten a Swift navigation_expression to a dotted string."""
+        if node.type in ("simple_identifier", "identifier"):
+            return _text(node, code_bytes)
+        if node.type == "navigation_expression":
+            target = node.child_by_field_name("target")
+            suffix = node.child_by_field_name("suffix")
+            left = _flatten_nav(target) if target is not None else ""
+            if suffix is not None:
+                for ch in suffix.children:
+                    if ch.type in ("simple_identifier", "identifier"):
+                        right = _text(ch, code_bytes)
+                        return f"{left}.{right}" if left else right
+            return left
+        return _text(node, code_bytes)
+
+    def _emit_inheritance_edges(class_qual: str, node) -> None:
+        """Emit EXTENDS (first) / IMPLEMENTS (rest) from inheritance_specifier siblings."""
+        first = True
+        for child in node.children:
+            if child.type == "inheritance_specifier":
+                base_name: str | None = None
+                for sub in child.children:
+                    if sub.type == "user_type":
+                        for s2 in sub.children:
+                            if s2.type == "type_identifier":
+                                base_name = _text(s2, code_bytes)
+                                break
+                        break
+                    if sub.type == "type_identifier":
+                        base_name = _text(sub, code_bytes)
+                        break
+                if base_name:
+                    kind = "EXTENDS" if first else "IMPLEMENTS"
+                    edges.append(RawEdge(class_qual, base_name, kind))
+                    first = False
+
+    def visit(node) -> None:
+        t = node.type
+
+        if t == "import_declaration":
+            for child in node.children:
+                if child.type == "identifier":
+                    edges.append(RawEdge(module, _text(child, code_bytes), "IMPORTS"))
+                    break
+            return
+
+        if t in ("class_declaration", "protocol_declaration"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            qual = f"{cur()}.{name}"
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="class",
+                    class_name=name,
+                    parent_class=enclosing_class(),
+                    language="swift",
+                    file_path=file_path,
+                )
+            )
+            _emit_inheritance_edges(qual, node)
+            scope_stack.append(("class", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t in ("function_declaration", "protocol_function_declaration"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            parent = enclosing_class()
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="method" if parent else "function",
+                    function_name=name,
+                    parent_class=parent,
+                    language="swift",
+                    file_path=file_path,
+                )
+            )
+            scope_stack.append(("function", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t == "call_expression":
+            if node.children:
+                callee = node.children[0]
+                tgt = _flatten_nav(callee)
+                if tgt:
+                    edges.append(RawEdge(cur(), tgt, "CALLS"))
+            for child in node.children:
+                visit(child)
+            return
+
+        if t == "navigation_expression":
+            target = node.child_by_field_name("target")
+            suffix = node.child_by_field_name("suffix")
+            if target is not None and target.type == "self_expression" and suffix is not None:
+                for ch in suffix.children:
+                    if ch.type in ("simple_identifier", "identifier"):
+                        edges.append(RawEdge(cur(), _text(ch, code_bytes), "USES"))
+                        break
+
+        for child in node.children:
+            visit(child)
+
+    for child in tree.root_node.children:
+        visit(child)
+    return chunks, edges
+
+
+def walk_scala(
+    tree, code_bytes: bytes, module: str, file_path: str, language: str | None = None
+) -> tuple[list[Chunk], list[RawEdge]]:
+    """Walk a Scala AST and emit chunks + edges.
+
+    Verified against tree-sitter-scala. Edges:
+    - ``import_declaration`` -> IMPORTS (dotted path, with namespace_selectors expanded)
+    - ``class_definition`` / ``trait_definition`` extends_clause -> EXTENDS (first) /
+      IMPLEMENTS (rest, after ``with`` keyword)
+    - ``object_definition`` -> class chunk (companion objects / singletons)
+    - ``function_definition`` / ``function_declaration`` -> chunks + CALLS
+    - ``call_expression`` -> CALLS (identifier or field_expression callee)
+    - ``field_expression`` with ``this`` value -> USES
+    Chunks: class_definition / trait_definition / object_definition (class),
+    function_definition / function_declaration (function/method).
+    """
+    chunks: list[Chunk] = []
+    edges: list[RawEdge] = []
+    scope_stack: list[tuple[str, str]] = [("module", module)]
+
+    def cur() -> str:
+        return ".".join(part for _, part in scope_stack)
+
+    def enclosing_class() -> str | None:
+        for kind, name in reversed(scope_stack):
+            if kind == "class":
+                return name
+        return None
+
+    def _flatten_field(node) -> str:
+        """Flatten a Scala field_expression (a.b) or identifier to dotted string."""
+        if node.type in ("identifier", "type_identifier"):
+            return _text(node, code_bytes)
+        if node.type == "field_expression":
+            val = node.child_by_field_name("value")
+            field = node.child_by_field_name("field")
+            left = _flatten_field(val) if val is not None else ""
+            right = _text(field, code_bytes) if field is not None else ""
+            return f"{left}.{right}" if left and right else (left or right)
+        return _text(node, code_bytes)
+
+    def _import_path(node) -> str:
+        """Reconstruct import path from import_declaration children."""
+        parts: list[str] = []
+        for ch in node.children:
+            if ch.type == "identifier":
+                parts.append(_text(ch, code_bytes))
+            elif ch.type == "namespace_selectors":
+                # {A, B} -> emit per-selector later; signal with placeholder
+                parts.append("{}")
+                break
+        return ".".join(p for p in parts if p != "{}")
+
+    def _emit_import(node) -> None:
+        base = _import_path(node)
+        # Check for namespace_selectors
+        for ch in node.children:
+            if ch.type == "namespace_selectors":
+                for sub in ch.children:
+                    if sub.type == "identifier":
+                        target = (
+                            f"{base}.{_text(sub, code_bytes)}" if base else _text(sub, code_bytes)
+                        )
+                        edges.append(RawEdge(module, target, "IMPORTS"))
+                return
+        if base:
+            edges.append(RawEdge(module, base, "IMPORTS"))
+
+    def _emit_extends_edges(class_qual: str, node) -> None:
+        """Emit EXTENDS / IMPLEMENTS from extends_clause."""
+        for child in node.children:
+            if child.type != "extends_clause":
+                continue
+            first = True
+            for sub in child.children:
+                if sub.type in ("type_identifier", "identifier"):
+                    kind = "EXTENDS" if first else "IMPLEMENTS"
+                    edges.append(RawEdge(class_qual, _text(sub, code_bytes), kind))
+                    first = False
+
+    def visit(node) -> None:
+        t = node.type
+
+        if t == "import_declaration":
+            _emit_import(node)
+            return
+
+        if t in ("class_definition", "trait_definition", "object_definition"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            qual = f"{cur()}.{name}"
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="class",
+                    class_name=name,
+                    parent_class=enclosing_class(),
+                    language="scala",
+                    file_path=file_path,
+                )
+            )
+            _emit_extends_edges(qual, node)
+            scope_stack.append(("class", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t in ("function_definition", "function_declaration"):
+            name_node = node.child_by_field_name("name")
+            name = _text(name_node, code_bytes) if name_node else "(anonymous)"
+            parent = enclosing_class()
+            start, end = _line_range(node)
+            chunks.append(
+                Chunk(
+                    text=_text(node, code_bytes),
+                    start_line=start,
+                    end_line=end,
+                    chunk_type="method" if parent else "function",
+                    function_name=name,
+                    parent_class=parent,
+                    language="scala",
+                    file_path=file_path,
+                )
+            )
+            scope_stack.append(("function", name))
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    visit(child)
+            scope_stack.pop()
+            return
+
+        if t == "call_expression":
+            fn = node.child_by_field_name("function")
+            if fn is not None:
+                tgt = _flatten_field(fn)
+                if tgt:
+                    edges.append(RawEdge(cur(), tgt, "CALLS"))
+            for child in node.children:
+                visit(child)
+            return
+
+        if t == "field_expression":
+            val = node.child_by_field_name("value")
+            field = node.child_by_field_name("field")
+            if val is not None and field is not None and _text(val, code_bytes) == "this":
+                edges.append(RawEdge(cur(), _text(field, code_bytes), "USES"))
+
+        for child in node.children:
+            visit(child)
+
+    for child in tree.root_node.children:
+        visit(child)
+    return chunks, edges
+
+
 # Public dispatch — language -> walker.
 LanguageWalker = Callable[..., tuple[list[Chunk], list[RawEdge]]]
 
@@ -946,4 +1734,9 @@ EDGE_WALKERS: dict[str, LanguageWalker] = {
     "c": walk_c_family,
     "cpp": walk_c_family,
     "csharp": walk_csharp,
+    "kotlin": walk_kotlin,
+    "ruby": walk_ruby,
+    "php": walk_php,
+    "swift": walk_swift,
+    "scala": walk_scala,
 }

@@ -113,6 +113,31 @@ LANGUAGE_CATEGORIES = {
         "chunker": "tree_sitter",
         "description": "C# with tree-sitter",
     },
+    "kotlin": {
+        "category": "tree_sitter",
+        "chunker": "tree_sitter",
+        "description": "Kotlin with tree-sitter",
+    },
+    "ruby": {
+        "category": "tree_sitter",
+        "chunker": "tree_sitter",
+        "description": "Ruby with tree-sitter",
+    },
+    "php": {
+        "category": "tree_sitter",
+        "chunker": "tree_sitter",
+        "description": "PHP with tree-sitter",
+    },
+    "swift": {
+        "category": "tree_sitter",
+        "chunker": "tree_sitter",
+        "description": "Swift with tree-sitter",
+    },
+    "scala": {
+        "category": "tree_sitter",
+        "chunker": "tree_sitter",
+        "description": "Scala with tree-sitter",
+    },
     "svelte": {
         "category": "tree_sitter",
         "chunker": "tree_sitter",
