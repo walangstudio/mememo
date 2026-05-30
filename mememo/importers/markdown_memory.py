@@ -172,7 +172,10 @@ async def import_markdown_dir(
                 relationships=MemoryRelationships(),
             )
             memory = await memory_manager.create_memory(
-                params, cwd=cwd, skip_secret_scan=allow_secrets
+                params,
+                cwd=cwd,
+                skip_secret_scan=allow_secrets,
+                force_global=repo is None,
             )
 
             # Persist edges: URL REFERENCES from chunker + wikilink REFERENCES.

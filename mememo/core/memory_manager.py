@@ -99,7 +99,12 @@ class MemoryManager:
         return self._vector_index_cache[key]
 
     async def create_memory(
-        self, params: CreateMemoryParams, cwd: str | None = None, *, skip_secret_scan: bool = False
+        self,
+        params: CreateMemoryParams,
+        cwd: str | None = None,
+        *,
+        skip_secret_scan: bool = False,
+        force_global: bool = False,
     ) -> Memory:
         """
         Create a new memory.
@@ -126,8 +131,21 @@ class MemoryManager:
         # 1. Validate content (check for secrets)
         validated_content = self._validate_content(params.content, skip_scan=skip_secret_scan)
 
-        # 2. Detect git context (repo + branch)
-        context = await self.git_manager.detect_context(cwd)
+        # 2. Detect git context (repo + branch). force_global stamps the
+        # workspace-wide GLOBAL lane (repo_id=GLOBAL_REPO_ID, branch="main") so
+        # the memory recalls from any project. This matches recall_workspace,
+        # which always queries (GLOBAL_REPO_ID, "main"). Without it, importing
+        # from inside a git repo would stamp that ambient repo instead.
+        if force_global:
+            from ..types.memory import BranchContext, GitContext, RepoContext
+            from .identity import GLOBAL_REPO_ID
+
+            context = GitContext(
+                repo=RepoContext(id=GLOBAL_REPO_ID, name="global", path="", remote_url=None),
+                branch=BranchContext(name="main", commit_hash=""),
+            )
+        else:
+            context = await self.git_manager.detect_context(cwd)
 
         # 3. Generate UUID for memory ID
         memory_id = str(uuid4())
