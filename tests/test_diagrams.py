@@ -297,3 +297,44 @@ def test_scopes_route(web_client: TestClient) -> None:
     assert "files" in body
     assert "classes" in body
     assert any("py" in f for f in body["files"])
+
+
+def test_diagram_route_defaults_repo_when_omitted(web_client: TestClient) -> None:
+    # Regression: with no repo_id/branch the route must default to the store's
+    # busiest repo, not query "" -> "%% no data" (the single-repo web UI case).
+    r = web_client.get("/diagram", params={"type": "class"})
+    assert r.status_code == 200
+    body = r.json()
+    assert "Base <|-- Derived" in body["mermaid"]
+    assert "%% no data" not in body["mermaid"]
+
+
+# ---------- MCP tool: git-context resolution --------------------------------
+
+
+class _FakeGit:
+    async def detect_context(self, cwd=None):
+        from mememo.types.memory import BranchContext, GitContext, RepoContext
+
+        return GitContext(
+            repo=RepoContext(id=REPO, name="r", path="/x", remote_url=None),
+            branch=BranchContext(name=BRANCH, commit_hash="a" * 40),
+        )
+
+
+class _FakeMM:
+    def __init__(self, store: StorageManager) -> None:
+        self.storage_manager = store
+        self.git_manager = _FakeGit()
+
+
+async def test_tool_resolves_context_when_repo_id_omitted(store: StorageManager) -> None:
+    # Regression: the tool used a nonexistent git_manager.get_context()/ctx.repo_id,
+    # which raised, got swallowed, and left repo_id="" -> "%% no data". With repo_id
+    # omitted it must resolve via detect_context and produce a real diagram.
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(GenerateDiagramParams(type="class"), _FakeMM(store), None)
+    assert resp.success
+    assert "Base <|-- Derived" in resp.mermaid
+    assert "%% no data" not in resp.mermaid

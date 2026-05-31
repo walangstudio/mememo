@@ -304,6 +304,16 @@ def create_app(storage_getter=None) -> FastAPI:
 
         resolved_repo = repo_id or ""
         resolved_branch = branch or ""
+        # Default to the busiest (repo, branch) in the store when not given, so
+        # the single-repo web UI works without the caller passing repo_id.
+        if not resolved_repo:
+            row = conn.execute(
+                "SELECT repo_id, branch_name FROM memories "
+                "GROUP BY repo_id, branch_name ORDER BY COUNT(*) DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                resolved_repo = row[0]
+                resolved_branch = resolved_branch or row[1]
 
         if type == "class":
             mermaid = class_diagram(conn, resolved_repo, resolved_branch, scope=scope)

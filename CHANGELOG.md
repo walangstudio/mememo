@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.13.1] - 2026-05-31
+
+### Fixed
+- **`generate_diagram` returned empty diagrams.** The MCP tool called a
+  nonexistent `git_manager.get_context()` and read `ctx.repo_id`/`ctx.branch`;
+  the `AttributeError` was swallowed, leaving `repo_id=""` so every diagram came
+  back `%% no data`. Now uses `detect_context()` → `ctx.repo.id`/`ctx.branch.name`
+  (and logs on failure instead of silently blanking). The web `/diagram` route
+  likewise returned "no data" when `repo_id` was omitted; it now defaults to the
+  store's busiest `(repo, branch)` so the single-repo web UI works without
+  passing one. Regression tests cover the detection + default-repo paths (the
+  earlier tests passed `repo_id` explicitly, hiding the bug). NOTE: `module`
+  diagrams are still empty for Python repos because IMPORTS edges are dropped at
+  resolve time (the chunker emits them but the module-level source qualname isn't
+  a registered symbol) — a separate pre-existing indexing bug, tracked for a
+  follow-up.
+
 ## [0.13.0] - 2026-05-31
 
 ### Added
