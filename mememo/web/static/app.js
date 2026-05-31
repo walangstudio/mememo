@@ -566,6 +566,47 @@ nextBtn.addEventListener('click', () => {
   }
 });
 
+// ---------- Diagrams section ------------------------------------------------
+
+const diagramType = $('diagram-type');
+const diagramScope = $('diagram-scope');
+const diagramGenerateBtn = $('diagram-generate');
+const diagramStatus = $('diagram-status');
+const diagramOutput = $('diagram-output');
+
+async function generateDiagram() {
+  const type = diagramType.value;
+  if (!type) return;
+  const scope = diagramScope.value.trim() || null;
+  const params = { type, repo_id: state.repoId, branch: state.branch };
+  if (scope) params.scope = scope;
+  diagramStatus.textContent = 'generating…';
+  diagramStatus.classList.remove('hidden', 'diagram-error');
+  diagramOutput.innerHTML = '';
+  try {
+    const data = await fetchJson('/diagram' + qs(params));
+    diagramStatus.classList.add('hidden');
+    const container = document.createElement('div');
+    container.innerHTML = `<pre class="mermaid">${esc(data.mermaid)}</pre>`;
+    if (data.truncated) {
+      const note = document.createElement('p');
+      note.className = 'diagram-truncated';
+      note.textContent = 'diagram truncated — increase max_nodes or narrow scope';
+      container.appendChild(note);
+    }
+    diagramOutput.appendChild(container);
+    await mermaid.run({ querySelector: '#diagram-output .mermaid' });
+  } catch (e) {
+    diagramStatus.textContent = `error: ${e.message || e}`;
+    diagramStatus.classList.remove('hidden');
+    diagramStatus.classList.add('diagram-error');
+  }
+}
+
+diagramGenerateBtn.addEventListener('click', generateDiagram);
+
+// ---------- init ------------------------------------------------------------
+
 (async function init() {
   try {
     await loadRepos();
