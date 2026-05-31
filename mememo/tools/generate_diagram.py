@@ -132,10 +132,15 @@ async def _resolve_call_root(conn, repo_id: str, branch: str, scope: str | None)
         ).fetchone()
         return row["source_memory_id"] if row else None
 
-    # UUID detection: contains '-' (standard uuid4 format) or 32+ lowercase hex.
+    # UUID detection: a real uuid4 string only. The old `"-" in scope` check
+    # misread any kebab-case function name (e.g. get-user-profile) as a UUID,
+    # skipping the function lookup and always returning "not found".
     import re
 
-    if "-" in scope or re.fullmatch(r"[0-9a-f]{32,}", scope):
+    if re.fullmatch(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        scope,
+    ):
         # Verify it exists.
         row = conn.execute("SELECT id FROM memories WHERE id = ?", (scope,)).fetchone()
         if row:
@@ -156,4 +161,8 @@ async def _resolve_call_root(conn, repo_id: str, branch: str, scope: str | None)
         "AND function_name LIKE ? AND stale = 0 LIMIT 1",
         (repo_id, branch, f"%{scope}%"),
     ).fetchone()
+    if row:
+        return row["id"]
+    # Last resort: scope as a literal memory id (non-uuid ids / raw id callers).
+    row = conn.execute("SELECT id FROM memories WHERE id = ?", (scope,)).fetchone()
     return row["id"] if row else None

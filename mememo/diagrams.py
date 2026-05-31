@@ -18,6 +18,21 @@ def _mmid(s: str) -> str:
     return clean
 
 
+def _esc(s: str | None) -> str:
+    """Escape a string for use inside a Mermaid double-quoted label.
+
+    A raw ``"`` or newline in a file/class/function name would break (or inject)
+    the surrounding ``["..."]`` node; Mermaid renders the HTML entity ``#quot;``.
+    """
+    return (s or "").replace("\\", "/").replace('"', "#quot;").replace("\n", " ").strip()
+
+
+def _method(name: str | None) -> str:
+    """Sanitize a method name for a Mermaid class body (drops chars that would
+    break the ``{ ... }`` block, keeps Ruby-style ``?!=`` suffixes)."""
+    return re.sub(r"[^A-Za-z0-9_?!=]", "", name or "")
+
+
 def _label(file_path: str | None, class_name: str | None, fn_name: str | None) -> str:
     """Compact label: file:Class.fn or fallbacks."""
     parts = []
@@ -94,7 +109,8 @@ def class_diagram(
             "LIMIT 25",
             (repo_id, branch, class_name),
         ).fetchall()
-        methods = [r["function_name"] for r in method_rows if r["function_name"]]
+        methods = [_method(r["function_name"]) for r in method_rows if r["function_name"]]
+        methods = [m for m in methods if m]
         if methods:
             method_lines = "\n".join(f"    +{m}()" for m in methods)
             lines.append(f"class {mmid} {{\n{method_lines}\n}}")
@@ -145,14 +161,24 @@ def call_graph(
     depth: int = 2,
     max_nodes: int = 60,
 ) -> str:
-    """Mermaid flowchart LR BFS over CALLS edges from root_memory_id."""
+    """Mermaid flowchart LR BFS over CALLS edges from root_memory_id.
+
+    Resolved callees (target_memory_id) are expanded up to ``depth``; unresolved
+    callees (external/stdlib symbols, target_memory_id NULL) are rendered as leaf
+    nodes keyed by their ``target_symbol`` so the graph still shows what a
+    function calls. ``max_nodes`` caps the node count (BFS halts, not just the
+    inner batch).
+    """
     visited: set[str] = {root_memory_id}
     frontier: set[str] = {root_memory_id}
-    edges_out: list[tuple[str, str]] = []
+    # edge = (src_id, tgt_key, label_for_tgt); tgt_key is the memory id when
+    # resolved, else "sym:<symbol>" so external calls become distinct leaves.
+    edges_out: list[tuple[str, str, str]] = []
+    node_labels: dict[str, str] = {}
     truncated = False
 
     for _ in range(depth):
-        if not frontier:
+        if not frontier or truncated:
             break
         next_frontier: set[str] = set()
         placeholders = ",".join("?" * len(frontier))
@@ -170,59 +196,48 @@ def call_graph(
         for row in rows:
             src_id = row["source_memory_id"]
             tgt_id = row["target_memory_id"]
-            if len(visited) >= max_nodes:
+            tgt_sym = row["target_symbol"]
+            if tgt_id:
+                tgt_key = tgt_id
+                tgt_label = _label(row["tgt_file"], row["tgt_class"], row["tgt_fn"])
+            elif tgt_sym:
+                tgt_key = f"sym:{tgt_sym}"
+                tgt_label = tgt_sym
+            else:
+                continue  # nothing to point at
+
+            if tgt_key not in visited and len(visited) >= max_nodes:
                 truncated = True
                 break
-            edges_out.append((src_id, tgt_id, row))
-            if tgt_id and tgt_id not in visited:
-                next_frontier.add(tgt_id)
-                visited.add(tgt_id)
 
-        visited |= next_frontier
+            node_labels.setdefault(src_id, _label(row["src_file"], row["src_class"], row["src_fn"]))
+            node_labels.setdefault(tgt_key, tgt_label)
+            edges_out.append((src_id, tgt_key, tgt_label))
+
+            # Only resolved targets are traversable.
+            if tgt_id and tgt_id not in visited:
+                visited.add(tgt_id)
+                next_frontier.add(tgt_id)
+
         frontier = next_frontier
 
     if not edges_out:
         return "flowchart LR\n%% no data"
-
-    # Build node labels.
-    all_ids = set()
-    for src_id, tgt_id, _ in edges_out:
-        all_ids.add(src_id)
-        if tgt_id:
-            all_ids.add(tgt_id)
-
-    node_labels: dict[str, str] = {}
-
-    def _node_label(row, is_src: bool) -> str:
-        if is_src:
-            return _label(row["src_file"], row["src_class"], row["src_fn"])
-        tgt_sym = row["target_symbol"]
-        if row["tgt_file"] or row["tgt_class"] or row["tgt_fn"]:
-            return _label(row["tgt_file"], row["tgt_class"], row["tgt_fn"])
-        return tgt_sym or "unknown"
-
-    for src_id, tgt_id, row in edges_out:
-        if src_id not in node_labels:
-            node_labels[src_id] = _node_label(row, True)
-        if tgt_id and tgt_id not in node_labels:
-            node_labels[tgt_id] = _node_label(row, False)
 
     lines = ["flowchart LR"]
     if truncated:
         lines.append(f"%% truncated at {max_nodes} nodes")
 
     seen_edges: set[tuple[str, str]] = set()
-    for src_id, tgt_id, _ in edges_out:
-        if tgt_id is None:
-            continue
-        key = (src_id, tgt_id)
+    for src_id, tgt_key, _lbl in edges_out:
+        key = (src_id, tgt_key)
         if key in seen_edges:
             continue
         seen_edges.add(key)
         s_mmid = _mmid(src_id)
-        t_mmid = _mmid(tgt_id)
-        s_lbl = node_labels.get(src_id, src_id[:8])
-        t_lbl = node_labels.get(tgt_id, tgt_id[:8])
+        t_mmid = _mmid(tgt_key)
+        s_lbl = _esc(node_labels.get(src_id) or src_id[:8])
+        t_lbl = _esc(node_labels.get(tgt_key) or tgt_key[:8])
         lines.append(f'    {s_mmid}["{s_lbl}"] --> {t_mmid}["{t_lbl}"]')
 
     return "\n".join(lines)
@@ -287,8 +302,8 @@ def module_dependency(
     for src_file, tgt_file in sorted(seen_edges):
         s_mmid = _mmid(src_file)
         t_mmid = _mmid(tgt_file)
-        s_lbl = _basename(src_file)
-        t_lbl = _basename(tgt_file)
+        s_lbl = _esc(_basename(src_file))
+        t_lbl = _esc(_basename(tgt_file))
         lines.append(f'    {s_mmid}["{s_lbl}"] --> {t_mmid}["{t_lbl}"]')
 
     return "\n".join(lines)
