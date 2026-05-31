@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.12.0] - 2026-05-31
+
+### Changed
+- **`import-md` now creates one memory per markdown heading-section** instead of
+  one big memory per file. Whole-file embeddings averaged a multi-topic note into
+  a blurry vector that no specific query matched well (recall scored only
+  0.15–0.32); per-section memories let a query match the exact section. Reuses
+  `MarkdownChunker` (every heading is its own section; subsections excluded).
+  `file_path` stays clean (heading goes in `function_name`, `line_range` carries
+  the section span); idempotency is per-section via the existing
+  `(file_path, checksum)` skip; URL/wikilink REFERENCES edges attach to the
+  section they appear in, not the file. Heading-only sections (no body) are
+  dropped as recall noise. New `--whole-file` flag keeps the legacy
+  one-memory-per-file behaviour. Existing stores should re-import to get
+  section-granular memories.
+
 ## [0.11.1] - 2026-05-30
 
 ### Fixed
