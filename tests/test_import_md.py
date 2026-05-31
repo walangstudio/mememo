@@ -524,3 +524,105 @@ class TestForceGlobalLane:
     async def test_invalid_dir_raises(self, tmp_path, memory_manager):
         with pytest.raises(ValueError, match="not a directory"):
             await import_markdown_dir(tmp_path / "nonexistent", memory_manager)
+
+
+# ---------------------------------------------------------------------------
+# Per-section import (default): one memory per markdown heading section
+# ---------------------------------------------------------------------------
+
+_MULTI = (
+    "---\ntype: project\n---\n"
+    "Intro preamble paragraph.\n\n"
+    "## Alpha\n"
+    "Alpha body about authentication.\n\n"
+    "## Beta\n"
+    "Beta body, see https://beta.example.com for details.\n"
+)
+
+
+class TestPerSection:
+    async def test_one_memory_per_heading_section(self, tmp_path, memory_manager, store):
+        md_dir = tmp_path / "m"
+        md_dir.mkdir()
+        _write_md(md_dir, "doc.md", _MULTI)
+
+        result = await import_markdown_dir(md_dir, memory_manager)  # per_section default
+        # preamble + Alpha + Beta = 3
+        assert result["imported"] == 3
+
+        headings = {
+            r[0]
+            for r in store.conn.execute(
+                "SELECT function_name FROM memories WHERE file_path = 'doc.md'"
+            ).fetchall()
+        }
+        assert "Alpha" in headings and "Beta" in headings  # heading -> function_name
+        # all sections share the clean file_path (no #anchor stuffed in)
+        paths = {
+            r[0] for r in store.conn.execute("SELECT DISTINCT file_path FROM memories").fetchall()
+        }
+        assert paths == {"doc.md"}
+
+    async def test_url_attaches_to_its_section(self, tmp_path, memory_manager, store):
+        md_dir = tmp_path / "m"
+        md_dir.mkdir()
+        _write_md(md_dir, "doc.md", _MULTI)
+        await import_markdown_dir(md_dir, memory_manager)
+
+        # The Beta section owns the URL; the REFERENCES edge's source must be Beta.
+        beta_id = store.conn.execute(
+            "SELECT id FROM memories WHERE function_name = 'Beta'"
+        ).fetchone()[0]
+        rows = store.conn.execute(
+            "SELECT source_memory_id, target_symbol FROM relations WHERE type = 'REFERENCES'"
+        ).fetchall()
+        assert rows, "expected a REFERENCES edge for the Beta URL"
+        assert any(
+            r[0] == beta_id and "beta.example.com" in (r[1] or "") for r in rows
+        ), "URL edge must attach to the Beta section memory, not the file/other section"
+
+    async def test_section_idempotent_and_change_one(self, tmp_path, memory_manager, store):
+        md_dir = tmp_path / "m"
+        md_dir.mkdir()
+        f = _write_md(md_dir, "doc.md", _MULTI)
+
+        r1 = await import_markdown_dir(md_dir, memory_manager)
+        assert r1["imported"] == 3
+
+        # Re-import unchanged -> every section skipped, no new memories.
+        r2 = await import_markdown_dir(md_dir, memory_manager)
+        assert r2["imported"] == 0 and r2["skipped"] == 3
+        total = store.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        assert total == 3
+
+        # Change only the Beta section -> only Beta re-imports.
+        f.write_text(_MULTI.replace("Beta body", "Beta body EDITED"), encoding="utf-8")
+        r3 = await import_markdown_dir(md_dir, memory_manager)
+        assert r3["imported"] == 1
+        assert r3["skipped"] == 2
+
+    async def test_heading_only_section_skipped(self, tmp_path, memory_manager, store):
+        md_dir = tmp_path / "m"
+        md_dir.mkdir()
+        _write_md(md_dir, "doc.md", "---\ntype: context\n---\n## Empty\n\n## Real\nHas body.\n")
+        result = await import_markdown_dir(md_dir, memory_manager)
+        # 'Empty' has no body -> skipped; only 'Real' becomes a memory.
+        assert result["imported"] == 1
+        headings = {
+            r[0]
+            for r in store.conn.execute(
+                "SELECT function_name FROM memories WHERE file_path = 'doc.md'"
+            ).fetchall()
+        }
+        assert headings == {"Real"}
+
+    async def test_whole_file_mode_one_memory(self, tmp_path, memory_manager, store):
+        md_dir = tmp_path / "m"
+        md_dir.mkdir()
+        _write_md(md_dir, "doc.md", _MULTI)
+        result = await import_markdown_dir(md_dir, memory_manager, per_section=False)
+        assert result["imported"] == 1
+        total = store.conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE file_path = 'doc.md'"
+        ).fetchone()[0]
+        assert total == 1

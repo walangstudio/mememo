@@ -505,6 +505,11 @@ def cmd_import_md(args: list[str]) -> int:
         action="store_true",
         help="Bypass secret detection (for trusted local md with placeholder creds)",
     )
+    ap.add_argument(
+        "--whole-file",
+        action="store_true",
+        help="One memory per file (legacy) instead of one per heading section",
+    )
     ns = ap.parse_args(args)
 
     async def _run() -> int:
@@ -520,6 +525,7 @@ def cmd_import_md(args: list[str]) -> int:
             repo=ns.repo,
             dry_run=ns.dry_run,
             allow_secrets=ns.allow_secrets,
+            per_section=not ns.whole_file,
         )
         label = "(dry run) " if ns.dry_run else ""
         print(
