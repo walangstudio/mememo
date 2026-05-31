@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.11.1] - 2026-05-30
+
+### Fixed
+- **Semantic search now actually persists embeddings.** `VectorIndex.add` added
+  vectors to the in-memory faiss shard and wrote `mappings.db`, but only flushed
+  the shard to disk on shard-full (50k) or 5-minute idle eviction. Any
+  short-lived process — `import-md`, hooks, a quickly restarted server — exited
+  with the vectors in memory only: `mappings.db` kept the rows but the
+  `shard_*.faiss` file was never written, so the next process loaded an empty
+  index and `search_similar` / `recall_context` returned nothing. `add` now
+  writes each modified shard to disk immediately, making embeddings durable
+  regardless of process lifetime. Found by an end-to-end recall-effectiveness
+  probe (unit tests passed because they add+search within one process). Existing
+  stores must re-index/re-import to materialise the missing shards.
+
 ## [0.11.0] - 2026-05-30
 
 ### Added
