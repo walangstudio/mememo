@@ -6,6 +6,7 @@ are deferred to Phase 2 and return a descriptive error.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
@@ -13,6 +14,8 @@ from pydantic import BaseModel, Field
 if TYPE_CHECKING:
     from ..core.llm_adapter import LLMAdapter
     from ..core.memory_manager import MemoryManager
+
+logger = logging.getLogger(__name__)
 
 
 DiagramType = Literal["class", "call", "module"]
@@ -76,10 +79,11 @@ async def generate_diagram(
     branch = params.branch
     if not repo_id or not branch:
         try:
-            ctx = await memory_manager.git_manager.get_context(params.repo_path or ".")
-            repo_id = repo_id or ctx.repo_id
-            branch = branch or ctx.branch
-        except Exception:
+            ctx = await memory_manager.git_manager.detect_context(params.repo_path or ".")
+            repo_id = repo_id or ctx.repo.id
+            branch = branch or ctx.branch.name
+        except Exception as exc:
+            logger.warning("generate_diagram: git context detection failed: %s", exc)
             repo_id = repo_id or ""
             branch = branch or ""
 
