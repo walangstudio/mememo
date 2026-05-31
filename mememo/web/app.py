@@ -281,6 +281,94 @@ def create_app(storage_getter=None) -> FastAPI:
             "alive_memory_ids": sorted(alive),
         }
 
+    _diagram_types = {"class", "call", "module"}
+
+    @app.get("/diagram")
+    def get_diagram(
+        type: str,
+        scope: str | None = None,
+        repo_id: str | None = None,
+        branch: str | None = None,
+        depth: int = Query(default=2, ge=1, le=6),
+        max_nodes: int = Query(default=60, ge=1, le=500),
+    ) -> dict[str, Any]:
+        if type not in _diagram_types:
+            raise HTTPException(
+                400,
+                f"type must be one of {sorted(_diagram_types)}; got {type!r}. "
+                "erd/sequence/state/usecase are Phase 2.",
+            )
+        storage = _storage()
+        conn = storage.conn
+        from ..diagrams import call_graph, class_diagram, module_dependency
+
+        resolved_repo = repo_id or ""
+        resolved_branch = branch or ""
+
+        if type == "class":
+            mermaid = class_diagram(conn, resolved_repo, resolved_branch, scope=scope)
+            truncated = False
+        elif type == "module":
+            mermaid = module_dependency(conn, resolved_repo, resolved_branch, max_nodes=max_nodes)
+            truncated = "%% truncated" in mermaid
+        else:  # call
+            if not scope:
+                raise HTTPException(
+                    400, "scope (memory_id or function_name) required for call graph"
+                )
+            import re
+
+            if "-" in scope or re.fullmatch(r"[0-9a-f]{32,}", scope):
+                root_id = scope
+            else:
+                row = conn.execute(
+                    "SELECT id FROM memories WHERE repo_id = ? AND branch_name = ? "
+                    "AND function_name = ? AND stale = 0 LIMIT 1",
+                    (resolved_repo, resolved_branch, scope),
+                ).fetchone()
+                if row is None:
+                    raise HTTPException(
+                        404,
+                        f"function {scope!r} not found in repo={resolved_repo!r} branch={resolved_branch!r}",
+                    )
+                root_id = row["id"]
+            mermaid = call_graph(conn, root_id, depth=depth, max_nodes=max_nodes)
+            truncated = "%% truncated" in mermaid
+
+        return {"type": type, "mermaid": mermaid, "truncated": truncated}
+
+    @app.get("/scopes")
+    def list_scopes(
+        repo_id: str | None = None,
+        branch: str | None = None,
+    ) -> dict[str, Any]:
+        """Return distinct file_path and class_name values to populate UI dropdowns."""
+        storage = _storage()
+        conditions: list[str] = []
+        params: list = []
+        if repo_id:
+            conditions.append("repo_id = ?")
+            params.append(repo_id)
+        if branch:
+            conditions.append("branch_name = ?")
+            params.append(branch)
+        file_conditions = list(conditions) + ["file_path IS NOT NULL"]
+        class_conditions = list(conditions) + ["class_name IS NOT NULL"]
+        file_where = " WHERE " + " AND ".join(file_conditions)
+        class_where = " WHERE " + " AND ".join(class_conditions)
+        file_rows = storage.conn.execute(
+            f"SELECT DISTINCT file_path FROM memories{file_where} ORDER BY file_path LIMIT 200",
+            params,
+        ).fetchall()
+        class_rows = storage.conn.execute(
+            f"SELECT DISTINCT class_name FROM memories{class_where} ORDER BY class_name LIMIT 200",
+            params,
+        ).fetchall()
+        return {
+            "files": [r["file_path"] for r in file_rows],
+            "classes": [r["class_name"] for r in class_rows],
+        }
+
     # Static frontend assets — mounted at root so / serves index.html.
     if _STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

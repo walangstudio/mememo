@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0] - 2026-05-31
+
+### Added
+- **Codebase diagrams (Mermaid) — Phase 1, deterministic.** Generate diagrams
+  straight from the indexed code graph (no LLM): **class diagram** (classes +
+  methods + EXTENDS/IMPLEMENTS), **call graph** (CALLS subgraph from a function),
+  **module dependency** (cross-file IMPORTS). New `mememo/diagrams.py`
+  (`class_diagram`/`call_graph`/`module_dependency`), a `generate_diagram` MCP
+  tool, a web `GET /diagram` (+ `/scopes`) route, and a Diagrams panel in the web
+  UI that renders Mermaid (mermaid.js via CDN). Verified on real indexed code
+  (`BaseChunker <|-- MarkdownChunker` etc). LLM-synthesized diagrams (ERD,
+  sequence, state, use-case) are Phase 2 — they'll run through the same
+  `generate_diagram` tool in chat (passthrough), shown disabled in the web UI.
+
 ## [0.12.0] - 2026-05-31
 
 ### Changed

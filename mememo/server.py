@@ -100,6 +100,15 @@ from .tools.detect_changes import (
 from .tools.detect_changes import (
     detect_changes as detect_changes_impl,
 )
+
+# Phase 1 codebase diagram tool
+from .tools.generate_diagram import (
+    GenerateDiagramParams,
+    GenerateDiagramResponse,
+)
+from .tools.generate_diagram import (
+    generate_diagram as generate_diagram_impl,
+)
 from .tools.graph_impact import (
     GraphImpactParams,
     GraphImpactResponse,
@@ -1055,6 +1064,25 @@ async def cleanup_memory(params: CleanupMemoryParams) -> CleanupMemoryResponse:
     await ensure_initialized()
     _audit_log("cleanup_memory")
     return await cleanup_memory_impl(params, memory_manager)
+
+
+@mcp.tool()
+async def generate_diagram(params: GenerateDiagramParams) -> GenerateDiagramResponse:
+    """
+    Generate a Mermaid diagram from the indexed code graph (Phase 1).
+
+    Deterministic generators — no LLM required:
+    - type="class"  : classDiagram with methods + EXTENDS/IMPLEMENTS edges.
+                      scope=file_path or class_name to narrow the view.
+    - type="call"   : flowchart LR BFS over CALLS edges.
+                      scope=memory_id or function_name sets the root.
+    - type="module" : flowchart LR of cross-file IMPORTS grouped by file.
+
+    Phase 2 (erd/sequence/state/usecase) will be available via the LLM path.
+    """
+    await ensure_initialized()
+    _audit_log("generate_diagram")
+    return await generate_diagram_impl(params, memory_manager, llm_adapter)
 
 
 def run():

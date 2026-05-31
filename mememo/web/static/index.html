@@ -5,6 +5,8 @@
   <title>mememo — memory graph</title>
   <link rel="stylesheet" href="/static/style.css" />
   <script src="https://d3js.org/d3.v7.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js" integrity="sha384-yQ4mmBBT+vhTAwjFH0toJXNYJ6O4usWnt6EPIdWwrRvx2V/n5lXuDZQwQFeSFydF" crossorigin="anonymous"></script>
+  <script>mermaid.initialize({startOnLoad:false,theme:'dark'});</script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -44,6 +46,26 @@
       <svg id="graph" width="100%" height="600"></svg>
       <div id="graph-legend"></div>
       <div id="node-detail" class="hidden"></div>
+    </section>
+
+    <section id="diagram-section">
+      <h2>diagrams</h2>
+      <div class="diagram-controls">
+        <select id="diagram-type">
+          <option value="class">class</option>
+          <option value="call">call</option>
+          <option value="module">module</option>
+          <option value="" disabled>──────────</option>
+          <option value="erd" disabled>erd (Phase 2)</option>
+          <option value="sequence" disabled>sequence (Phase 2)</option>
+          <option value="state" disabled>state (Phase 2)</option>
+          <option value="usecase" disabled>use-case (Phase 2)</option>
+        </select>
+        <input id="diagram-scope" placeholder="scope: file, class, or fn" />
+        <button id="diagram-generate">generate</button>
+      </div>
+      <div id="diagram-status" class="diagram-status hidden"></div>
+      <div id="diagram-output"></div>
     </section>
 
     <section id="table-section">
