@@ -87,12 +87,16 @@ async def index_repository(
 
         logger.info(f"Found {len(files_to_index)} files matching patterns")
 
-        # Incremental indexing with Merkle DAG
+        # Incremental indexing with Merkle DAG. Stage the new hashes (persist=
+        # False) and commit them only after the index fully succeeds, so an
+        # interrupted/crashed run never marks files indexed without their
+        # memories — which would make every later incremental run skip them.
+        merkle = None
         if params.incremental:
             from ..indexing.merkle_dag import MerkleDAG
 
             merkle = MerkleDAG(memory_manager.storage_manager.base_dir / "merkle")
-            files_to_index = merkle.get_changed_files(files_to_index)
+            files_to_index = merkle.get_changed_files(files_to_index, persist=False)
             logger.info(f"Incremental: {len(files_to_index)} files changed since last index")
 
         # Initialize chunker factory
@@ -128,8 +132,19 @@ async def index_repository(
             nonlocal chunks_created
             if not pending_params:
                 return
+            # Snapshot and clear *before* the await: if create_memories_batch
+            # raises, the buffers are already empty, so a later flush can't
+            # re-submit these chunks and create duplicates.
+            batch_params = list(pending_params)
+            batch_meta = list(pending_meta)
+            pending_params.clear()
+            pending_meta.clear()
+            # Source code legitimately contains secret-like patterns (test
+            # fixtures, examples). Indexing is the same trust level as the code
+            # itself, so bypass secret rejection — a single hit must never abort
+            # the batch and crash the whole index.
             memories = await memory_manager.create_memories_batch(
-                pending_params, cwd=str(repo_path)
+                batch_params, cwd=str(repo_path), skip_secret_scan=True
             )
             # Track the first memory_id seen per module so we can register a
             # module-level symbol entry after processing all chunks.  IMPORTS
@@ -140,7 +155,7 @@ async def index_repository(
             module_first_memory: dict[str, str] = {}
             module_already_registered: set[str] = set()
 
-            for memory, (module, chunk) in zip(memories, pending_meta):
+            for memory, (module, chunk) in zip(memories, batch_meta):
                 if chunk.qualname:
                     qualname = chunk.qualname
                 else:
@@ -207,19 +222,27 @@ async def index_repository(
                     edge_inputs.append((rel_path, content, file_lang))
 
                 files_indexed += 1
-                if len(pending_params) >= _INDEX_BATCH:
-                    await _flush()
-                if (i + 1) % 100 == 0:
-                    logger.info(
-                        f"Indexing progress: {i + 1}/{total} files, "
-                        f"{chunks_created + len(pending_params)} chunks"
-                    )
 
             except UnicodeDecodeError:
                 _skip("binary")
+                continue
             except Exception as e:
                 _skip("error")
                 logger.warning(f"Error indexing {file_path}: {e}")
+                continue
+
+            # Flush outside the per-file try: a batch-write failure is a real
+            # storage error, not a skippable per-file problem. Letting it
+            # propagate aborts the index via the outer handler, so merkle.commit()
+            # never runs and the next incremental run re-detects everything —
+            # instead of silently swallowing it and leaving stale Merkle state.
+            if len(pending_params) >= _INDEX_BATCH:
+                await _flush()
+            if (i + 1) % 100 == 0:
+                logger.info(
+                    f"Indexing progress: {i + 1}/{total} files, "
+                    f"{chunks_created + len(pending_params)} chunks"
+                )
 
         await _flush()
 
@@ -268,6 +291,10 @@ async def index_repository(
             )
         except Exception as e:
             logger.warning(f"Could not record indexed commit (non-git repo?): {e}")
+
+        # Index succeeded — now it's safe to persist change-detection state.
+        if merkle is not None:
+            merkle.commit()
 
         msg = f"Indexed {files_indexed} files ({chunks_created} chunks) in {duration:.2f}s"
         if skip_reasons:

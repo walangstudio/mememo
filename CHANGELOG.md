@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.13.6] - 2026-06-01
+
+### Fixed
+- **Secret scanner crashed the whole repository index.** `index_repository`
+  batches chunks and `create_memories_batch` ran secret detection on each; one
+  secret-like chunk (a Rust/JS test fixture, an example credential) raised
+  `ValueError` and aborted the entire index — per-file flushes were swallowed but
+  the final flush propagated, so `index_repository` returned "Error indexing
+  repository: Secrets detected" even after rows had committed. Source code is the
+  same trust level as the store it's indexed into and legitimately contains
+  secret-like patterns, so code indexing now passes `skip_secret_scan=True`
+  (threaded through `create_memories_batch`); a fixture can never crash the index.
+- **Interrupted index left stale Merkle state → later incremental runs skipped
+  everything.** `MerkleDAG.get_changed_files` persisted file hashes at
+  detection time, before any memory was written. A crash/interrupt (or the secret
+  crash above) then left files marked indexed with zero memories committed, so
+  every later `incremental=True` run reported "0 changed" and indexed nothing.
+  Detection now stages hashes (`persist=False`) and `index_repository` calls
+  `merkle.commit()` only after the index fully succeeds — an interrupted run
+  leaves change-detection state untouched and re-detects on the next run.
+
 ## [0.13.5] - 2026-06-01
 
 ### Fixed

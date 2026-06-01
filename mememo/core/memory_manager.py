@@ -233,12 +233,20 @@ class MemoryManager:
         return memory
 
     async def create_memories_batch(
-        self, params_list: list[CreateMemoryParams], cwd: str | None = None
+        self,
+        params_list: list[CreateMemoryParams],
+        cwd: str | None = None,
+        skip_secret_scan: bool = False,
     ) -> list[Memory]:
         """
         Create multiple memories in a single batch.
 
         Optimizes: single git detect, batch embedding, batch vector add.
+
+        Args:
+            skip_secret_scan: Bypass secret detection for the whole batch. Set by
+                code indexing — source legitimately contains secret-like fixtures
+                (test creds, examples), and a single hit must not abort the batch.
         """
         if not params_list:
             return []
@@ -252,7 +260,7 @@ class MemoryManager:
 
         now = datetime.now()
         for params in params_list:
-            validated_content = self._validate_content(params.content)
+            validated_content = self._validate_content(params.content, skip_scan=skip_secret_scan)
             memory_id = str(uuid4())
             checksum = calculate_checksum(validated_content)
             token_count = count_tokens(validated_content)

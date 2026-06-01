@@ -323,6 +323,65 @@ async def test_incremental_indexing():
 
 
 @pytest.mark.asyncio
+async def test_merkle_staged_commit():
+    """persist=False must not record state until commit() runs.
+
+    Guards the stale-state bug: an interrupted index marked files indexed
+    without their memories, so later incremental runs skipped them forever.
+    """
+    from mememo.indexing import MerkleDAG
+
+    temp_dir = Path(tempfile.mkdtemp())
+    try:
+        f = temp_dir / "f.py"
+        f.write_text("print('x')")
+        files = [f]
+
+        merkle = MerkleDAG(temp_dir)
+        changed = merkle.get_changed_files(files, persist=False)
+        assert changed == {f}
+        # Nothing persisted: a fresh DAG (simulating a crash + restart) still
+        # sees the file as changed.
+        assert MerkleDAG(temp_dir).get_changed_files(files, persist=False) == {f}
+
+        # After a successful index commits, a fresh DAG sees no change.
+        merkle.commit()
+        assert MerkleDAG(temp_dir).get_changed_files(files, persist=False) == set()
+
+        # commit() with nothing staged is a no-op.
+        MerkleDAG(temp_dir).commit()
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_index_batch_failure_aborts_without_merkle_commit(test_env):
+    """A batch-write failure must abort the index and leave Merkle state empty.
+
+    Otherwise the staged hashes would be committed for files whose memories
+    never persisted, and the next incremental run would skip them.
+    """
+    from mememo.tools.index_repository import index_repository
+    from mememo.tools.schemas import IndexRepositoryParams
+
+    memory_manager = test_env
+    repo_path = Path(memory_manager.storage_manager.base_dir)
+    (repo_path / "a.py").write_text("def f():\n    return 1\n")
+
+    async def _boom(*a, **k):
+        raise RuntimeError("storage exploded")
+
+    memory_manager.create_memories_batch = _boom
+
+    params = IndexRepositoryParams(repo_path=str(repo_path), incremental=True)
+    resp = await index_repository(params, memory_manager)
+
+    assert resp.success is False
+    # No Merkle hashes file written → next run re-detects a.py.
+    assert not (repo_path / "merkle" / "file_hashes.json").exists()
+
+
+@pytest.mark.asyncio
 async def test_persistent_memory_types(test_env):
     """decision, analysis, conversation memories are never marked stale."""
     memory_manager = test_env
