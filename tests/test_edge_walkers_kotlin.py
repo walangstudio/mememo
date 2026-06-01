@@ -145,3 +145,24 @@ def test_kotlin_top_level_function(chunker: TreeSitterChunker) -> None:
     chunks, _ = chunker.chunk_with_edges(KOTLIN_SAMPLE, "src/animals.kt", "kotlin")
     funcs = [c for c in chunks if c.chunk_type == "function"]
     assert any(f.function_name == "topLevel" for f in funcs)
+
+
+# Regression: _flatten_navigation used child_by_field_name("target") and
+# ("suffix"), but tree-sitter-kotlin exposes navigation_expression children
+# positionally (no named fields).  Both lookups returned None -> "" -> every
+# obj.method() CALLS edge was dropped.
+def test_kotlin_dotted_call_emits_calls_edge(chunker: TreeSitterChunker) -> None:
+    code = """\
+fun f() {
+    obj.doSomething()
+    this.helper()
+}
+"""
+    _, edges = chunker.chunk_with_edges(code, "src/test.kt", "kotlin")
+    calls = [e.target_label for e in edges if e.edge_type == "CALLS"]
+    assert any(
+        "doSomething" in t for t in calls
+    ), f"Expected CALLS edge containing 'doSomething', got: {calls}"
+    assert any(
+        "helper" in t for t in calls
+    ), f"Expected CALLS edge containing 'helper' (this.helper), got: {calls}"

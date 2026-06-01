@@ -144,3 +144,26 @@ def test_php_top_level_function(chunker: TreeSitterChunker) -> None:
     chunks, _ = chunker.chunk_with_edges(PHP_SAMPLE, "src/UserController.php", "php")
     funcs = [c for c in chunks if c.chunk_type == "function"]
     assert any(f.function_name == "helper_func" for f in funcs)
+
+
+# Regression: grouped use `use App\Http\{HomeController, UserController}` lost
+# the common namespace prefix — _gather_use_targets returned bare names.
+# Simple `use App\Foo` form must keep working too.
+def test_php_grouped_use_preserves_namespace_prefix(chunker: TreeSitterChunker) -> None:
+    code = r"""<?php
+use App\Http\{HomeController, UserController};
+use App\Foo;
+
+class Stub {}
+"""
+    _, edges = chunker.chunk_with_edges(code, "src/stub.php", "php")
+    imports = [e.target_label for e in edges if e.edge_type == "IMPORTS"]
+    # Grouped form must include the full path with prefix
+    assert any(
+        "HomeController" in t and "App" in t for t in imports
+    ), f"Grouped-use prefix missing; imports: {imports}"
+    assert any(
+        "UserController" in t and "App" in t for t in imports
+    ), f"Grouped-use prefix missing; imports: {imports}"
+    # Simple form must still work
+    assert any("App" in t and "Foo" in t for t in imports), f"Simple use broken; imports: {imports}"

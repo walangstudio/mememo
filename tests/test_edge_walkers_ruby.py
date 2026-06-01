@@ -143,3 +143,25 @@ def test_ruby_top_level_function(chunker: TreeSitterChunker) -> None:
     chunks, _ = chunker.chunk_with_edges(RUBY_SAMPLE, "lib/dog.rb", "ruby")
     funcs = [c for c in chunks if c.chunk_type == "function"]
     assert any(f.function_name == "top_level_func" for f in funcs)
+
+
+# Regression: IMPLEMENTS source_qualname was doubled ("mod.Dog.Dog") because
+# cur() already contains the class segment after the class push.  Fix: use
+# cur() directly instead of f"{cur()}.{enclosing_class()}".
+def test_ruby_implements_source_qualname_not_doubled(chunker: TreeSitterChunker) -> None:
+    code = """\
+module Animals
+  class Dog
+    include Walkable
+  end
+end
+"""
+    _, edges = chunker.chunk_with_edges(code, "lib/dog.rb", "ruby")
+    impls = [e for e in edges if e.edge_type == "IMPLEMENTS" and e.target_label == "Walkable"]
+    assert impls, "Expected an IMPLEMENTS edge for Walkable"
+    src = impls[0].source_qualname
+    # Must match the registered class chunk qualname: module.Animals.Dog
+    # NOT the doubled form: module.Animals.Dog.Dog
+    assert (
+        src == "lib.dog.Animals.Dog"
+    ), f"source_qualname doubled: got {src!r}, expected 'lib.dog.Animals.Dog'"

@@ -131,11 +131,17 @@ async def index_repository(
             memories = await memory_manager.create_memories_batch(
                 pending_params, cwd=str(repo_path)
             )
+            # Track the first memory_id seen per module so we can register a
+            # module-level symbol entry after processing all chunks.  IMPORTS
+            # edges have source_qualname = module (e.g. "pkg.a"), but the
+            # chunkers only emit class/function chunks — never a bare-module
+            # chunk — so "pkg.a" would be absent from the symbol table and
+            # every IMPORTS edge would be silently dropped by the resolver.
+            module_first_memory: dict[str, str] = {}
+            module_already_registered: set[str] = set()
+
             for memory, (module, chunk) in zip(memories, pending_meta):
                 if chunk.qualname:
-                    # Chunker supplied an explicit qualname (e.g. Markdown
-                    # slug-path); register it verbatim so edges emitted with the
-                    # same source_qualname resolve.
                     qualname = chunk.qualname
                 else:
                     parts = [module]
@@ -145,6 +151,20 @@ async def index_repository(
                         parts.append(chunk.function_name)
                     qualname = ".".join(parts)
                 symbols.append(SymbolEntry(memory_id=memory.id, qualname=qualname))
+
+                # Record first chunk per module; detect if module itself is covered.
+                if module not in module_first_memory:
+                    module_first_memory[module] = memory.id
+                if qualname == module:
+                    module_already_registered.add(module)
+
+            # Register a module-level symbol for every module that only has
+            # class/function children but no bare-module chunk — this allows the
+            # resolver to find the source of IMPORTS edges.
+            for mod, first_id in module_first_memory.items():
+                if mod not in module_already_registered:
+                    symbols.append(SymbolEntry(memory_id=first_id, qualname=mod))
+
             chunks_created += len(memories)
             pending_params.clear()
             pending_meta.clear()

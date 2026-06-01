@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.13.3] - 2026-06-01
+
+### Fixed
+- **Edge walkers + IMPORTS resolution (code review).** Five AST-verified graph
+  bugs where emitted edges were silently dropped at resolve time:
+  - **Kotlin** — `_flatten_navigation` used named fields that don't exist on
+    `navigation_expression` (the grammar is positional), so *every* `obj.method()`
+    CALLS edge was lost. Now walks named children positionally.
+  - **Ruby** — mixin `IMPLEMENTS` source qualname was doubled (`module.Dog.Dog`)
+    so it never matched the class chunk → dropped. Now uses the scope qualname.
+  - **PHP** — grouped `use App\Http\{A, B}` lost the shared namespace prefix.
+    Now prepends the `namespace_name` prefix to each clause.
+  - **Scala** — expression-body `def f() = expr` visited the call's sub-nodes
+    instead of the call itself → CALLS dropped. Now dispatches on body type.
+  - **IMPORTS edges were dropped for every language** — the source qualname is
+    the bare module, which was never registered as a symbol, so the resolver
+    discarded all of them (IMPORTS count was 0). `index_repository._flush` now
+    registers a module-level `SymbolEntry` per file, so IMPORTS resolve and
+    `module_dependency` diagrams render (verified: 0 → 140 on `mememo/core`).
+  +5 regression tests.
+
 ## [0.13.2] - 2026-06-01
 
 ### Fixed
