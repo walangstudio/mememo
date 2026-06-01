@@ -338,3 +338,78 @@ async def test_tool_resolves_context_when_repo_id_omitted(store: StorageManager)
     assert resp.success
     assert "Base <|-- Derived" in resp.mermaid
     assert "%% no data" not in resp.mermaid
+
+
+# ---------- review-fix regressions ------------------------------------------
+
+
+def test_esc_escapes_double_quote() -> None:
+    from mememo.diagrams import _esc
+
+    assert _esc('a"b') == "a#quot;b"
+    assert "\n" not in _esc("a\nb")
+
+
+def test_call_graph_renders_unresolved_external_call(store: StorageManager) -> None:
+    # A CALLS edge to an unresolved symbol (target_memory_id NULL) must render as
+    # a leaf labeled by target_symbol, not collapse to "%% no data".
+    store.conn.execute(
+        "INSERT INTO relations (id, repo_id, branch, source_memory_id, target_memory_id, "
+        "target_symbol, type, confidence, created_at_sha, stale) "
+        "VALUES ('rel-ext-call', ?, ?, 'a-main', NULL, 'external_lib_fn', 'CALLS', 'INFERRED', ?, 0)",
+        (REPO, BRANCH, SHA),
+    )
+    store.conn.commit()
+    result = call_graph(store.conn, "a-main", depth=2)
+    assert "%% no data" not in result
+    assert "external_lib_fn" in result
+
+
+def test_call_graph_max_nodes_halts_bfs(store: StorageManager) -> None:
+    # Chain a-main -> b-bar -> derived-foo via CALLS; max_nodes=1 must not expand
+    # past the cap (BFS halts, not just the inner batch).
+    store.conn.execute(
+        "INSERT INTO relations (id, repo_id, branch, source_memory_id, target_memory_id, "
+        "target_symbol, type, confidence, created_at_sha, stale) "
+        "VALUES ('rel-chain', ?, ?, 'b-bar', 'derived-foo', NULL, 'CALLS', 'EXTRACTED', ?, 0)",
+        (REPO, BRANCH, SHA),
+    )
+    store.conn.execute(
+        "INSERT INTO relations (id, repo_id, branch, source_memory_id, target_memory_id, "
+        "target_symbol, type, confidence, created_at_sha, stale) "
+        "VALUES ('rel-am-bb', ?, ?, 'a-main', 'b-bar', NULL, 'CALLS', 'EXTRACTED', ?, 0)",
+        (REPO, BRANCH, SHA),
+    )
+    store.conn.commit()
+    # max_nodes=2: root + b-bar fit; expanding b-bar -> derived-foo exceeds -> halt.
+    result = call_graph(store.conn, "a-main", depth=3, max_nodes=2)
+    assert "%% truncated" in result
+    assert "derived" not in result  # BFS halted before expanding into derived-foo
+
+
+def test_diagram_route_call_by_kebab_function_name(store: StorageManager) -> None:
+    # Regression: scope="get-user" (kebab) was misread as a UUID (any "-") and
+    # the function lookup was skipped -> "not found". It must resolve.
+    store.conn.execute(
+        "INSERT INTO memories (id, repo_id, branch_name, content_type, file_path, "
+        "function_name, class_name, language, chunk_type, checksum, content_ref, "
+        "token_count, created_at, updated_at, stale) "
+        "VALUES ('gu', ?, ?, 'code_snippet', 'u.py', 'get-user', NULL, 'clojure', "
+        "'function', 'cg', 'rg', 5, 1, 1, 0)",
+        (REPO, BRANCH),
+    )
+    store.conn.execute(
+        "INSERT INTO relations (id, repo_id, branch, source_memory_id, target_memory_id, "
+        "target_symbol, type, confidence, created_at_sha, stale) "
+        "VALUES ('rel-gu', ?, ?, 'gu', 'b-bar', NULL, 'CALLS', 'EXTRACTED', ?, 0)",
+        (REPO, BRANCH, SHA),
+    )
+    store.conn.commit()
+    app = create_app(storage_getter=lambda: store)
+    client = TestClient(app)
+    r = client.get(
+        "/diagram", params={"type": "call", "scope": "get-user", "repo_id": REPO, "branch": BRANCH}
+    )
+    assert r.status_code == 200
+    assert "flowchart" in r.json()["mermaid"]
+    assert "%% no data" not in r.json()["mermaid"]

@@ -328,7 +328,11 @@ def create_app(storage_getter=None) -> FastAPI:
                 )
             import re
 
-            if "-" in scope or re.fullmatch(r"[0-9a-f]{32,}", scope):
+            _uuid = re.fullmatch(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-" r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                scope,
+            )
+            if _uuid:
                 root_id = scope
             else:
                 row = conn.execute(
@@ -336,6 +340,9 @@ def create_app(storage_getter=None) -> FastAPI:
                     "AND function_name = ? AND stale = 0 LIMIT 1",
                     (resolved_repo, resolved_branch, scope),
                 ).fetchone()
+                if row is None:
+                    # Last resort: scope as a literal memory id.
+                    row = conn.execute("SELECT id FROM memories WHERE id = ?", (scope,)).fetchone()
                 if row is None:
                     raise HTTPException(
                         404,

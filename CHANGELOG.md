@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.2] - 2026-06-01
+
+### Fixed
+- **Diagram bugs from a code review.** (1) Call-graph scope detection treated any
+  string containing `-` as a UUID, so a kebab-case function name (`get-user`) was
+  never looked up → "not found"; now only a real UUID is treated as an id, with a
+  literal-id fallback. (2) `call_graph` now renders unresolved/external calls
+  (target_memory_id NULL) as leaf nodes labeled by `target_symbol` instead of
+  dropping them — and the "%% no data" sentinel only fires when there are truly
+  no CALLS. (3) `max_nodes` now halts the BFS instead of only the current batch
+  (it could overshoot by a full frontier). (4) Mermaid labels (file/class/function
+  names) are escaped so a `"` in a name can't break or inject the diagram; class
+  method names are sanitized for the `{ }` block.
+
 ## [0.13.1] - 2026-05-31
 
 ### Fixed
