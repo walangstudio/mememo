@@ -206,13 +206,15 @@ async def recall_workspace(
             seen.add(r.memory.id)
             merged.append(r)
 
-    # Trim to token_budget.
+    # Trim to token_budget. `merged` is sorted by similarity desc, so stop at the
+    # first item that doesn't fit rather than skipping it to admit lower-ranked
+    # (but smaller) ones — that would displace more-relevant results.
     trimmed: list = []
     used = 0
     for r in merged:
         tok = count_tokens(r.memory.content.text)
         if used + tok > token_budget:
-            continue
+            break
         trimmed.append(r)
         used += tok
 

@@ -1340,8 +1340,14 @@ class StorageManager:
         returned manifest.
         """
         cursor = self.conn.cursor()
+        # One row per (repo_id, repo_path). DISTINCT including remote_url would
+        # emit two rows when a repo has both NULL (pre-migration) and a real
+        # remote_url, causing reassign_repo_id to run twice for the same old_id
+        # (the second call could re-key rows already moved). MAX prefers the
+        # non-NULL remote_url.
         rows = cursor.execute(
-            "SELECT DISTINCT repo_id, repo_path, remote_url FROM memories"
+            "SELECT repo_id, repo_path, MAX(remote_url) AS remote_url "
+            "FROM memories GROUP BY repo_id, repo_path"
         ).fetchall()
 
         manifest = []

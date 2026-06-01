@@ -253,13 +253,19 @@ def _maybe_start_identity_migration(storage_manager) -> None:
         logger.debug("identity migration guard check failed: %s", exc)
         return
 
+    base_dir = storage_manager.base_dir
+
     def _run():
+        # Use a SEPARATE StorageManager (its own sqlite connection) so this
+        # background thread never shares a connection/cursor with the live MCP
+        # handler threads. WAL serialises the cross-connection writes safely.
         try:
             import asyncio
 
             from .core.git_manager import GitManager
             from .core.identity import resolve_project_id
             from .core.project_config import load_project_config
+            from .core.storage_manager import StorageManager
 
             _git = GitManager()
 
@@ -275,31 +281,40 @@ def _maybe_start_identity_migration(storage_manager) -> None:
                     project_config=load_project_config(repo_path),
                 )
 
-            manifest = storage_manager._backfill_reindex_identity(_resolver, dry_run=False)
-
-            # Attach conn so move_faiss_dirs can clear embedding pointers on conflict.
-            for entry in manifest:
-                entry["conn"] = storage_manager.conn
-
-            # Attempt FAISS dir moves via Wave 1C helper (lazy import — may not exist yet).
+            mig_storage = StorageManager(base_dir=base_dir)
             try:
-                from .commands.reindex import move_faiss_dirs
+                manifest = mig_storage._backfill_reindex_identity(_resolver, dry_run=False)
 
-                move_faiss_dirs(
-                    base_path=storage_manager.base_dir / "vector_index",
-                    manifest=manifest,
+                # Attach this thread's conn so move_faiss_dirs can clear embedding
+                # pointers on conflict — NOT the live server's connection.
+                for entry in manifest:
+                    entry["conn"] = mig_storage.conn
+
+                try:
+                    from .commands.reindex import move_faiss_dirs
+
+                    move_faiss_dirs(
+                        base_path=mig_storage.base_dir / "vector_index",
+                        manifest=manifest,
+                    )
+                except ImportError:
+                    logger.debug(
+                        "identity migration: reindex helper unavailable, skipping FAISS moves"
+                    )
+                except Exception as exc:
+                    logger.warning("identity migration: FAISS dir move failed: %s", exc)
+
+                moves = sum(1 for e in manifest if not e["skipped"] and e["old_id"] != e["new_id"])
+                mig_storage.conn.execute(
+                    "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('identity_migrated', '1')"
                 )
-            except ImportError:
-                logger.debug("identity migration: reindex helper unavailable, skipping FAISS moves")
-            except Exception as exc:
-                logger.warning("identity migration: FAISS dir move failed: %s", exc)
-
-            moves = sum(1 for e in manifest if not e["skipped"] and e["old_id"] != e["new_id"])
-            storage_manager.conn.execute(
-                "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('identity_migrated', '1')"
-            )
-            storage_manager.conn.commit()
-            logger.info("identity migration: %d repo(s) re-keyed", moves)
+                mig_storage.conn.commit()
+                logger.info("identity migration: %d repo(s) re-keyed", moves)
+            finally:
+                try:
+                    mig_storage.conn.close()
+                except Exception:
+                    pass
         except Exception as exc:
             logger.warning("identity migration: background thread failed: %s", exc)
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.13.4] - 2026-06-01
+
+### Fixed
+- **Identity-migration safety (code review).** (1) `_backfill_reindex_identity`
+  selected `DISTINCT repo_id, repo_path, remote_url`, which emits two rows for a
+  repo that has both pre-migration (NULL `remote_url`) and post-save rows — so
+  `reassign_repo_id` ran twice for the same id and the second pass could re-key
+  rows already moved. Now `GROUP BY repo_id, repo_path` (one row per repo,
+  `MAX(remote_url)`). (2) The background migration thread shared the live
+  server's sqlite connection with the MCP handler threads; it now opens its own
+  `StorageManager`/connection (WAL serialises the writes), so concurrent cursor
+  use can't corrupt state. (3) `recall_workspace` token-budget trimming used
+  `continue`, admitting smaller lower-ranked memories after skipping a larger
+  higher-ranked one; now `break` to preserve similarity ranking.
+
 ## [0.13.3] - 2026-06-01
 
 ### Fixed
