@@ -181,8 +181,6 @@ async def index_repository(
                     symbols.append(SymbolEntry(memory_id=first_id, qualname=mod))
 
             chunks_created += len(memories)
-            pending_params.clear()
-            pending_meta.clear()
 
         total = len(files_to_index)
         for i, file_path in enumerate(files_to_index):

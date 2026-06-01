@@ -111,6 +111,14 @@ class MerkleDAG:
             current_hash = self.compute_file_hash(file_path)
             file_key = str(file_path)
 
+            # An empty hash is compute_file_hash's read-error sentinel, not a real
+            # content hash. Treat the file as changed but never record the sentinel
+            # — otherwise a transiently-unreadable file would be stored with hash
+            # "" and then skipped forever once it becomes readable again.
+            if not current_hash:
+                changed.add(file_path)
+                continue
+
             # Check if file is new or changed
             if file_key not in self.hashes or self.hashes[file_key] != current_hash:
                 changed.add(file_path)

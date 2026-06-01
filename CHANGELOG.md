@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.13.7] - 2026-06-01
+
+### Fixed
+- **sync_commits had the same secret-scan crash v0.13.6 fixed in index_repository.**
+  The v0.13.6 fix was special-cased to one indexing path; the commit-sync
+  re-index (`sync_commits`) still called `create_memory` without
+  `skip_secret_scan`. A changed file containing a secret-like fixture raised,
+  was swallowed as a warning, and — because its old memories were already staled
+  and `set_last_indexed_commit` then advanced HEAD — was dropped and never
+  retried. `sync_commits` now passes `skip_secret_scan=True` too.
+- **Merkle read-error sentinel could permanently skip a file.**
+  `compute_file_hash` returns `""` on a read error; `get_changed_files` stored
+  and committed that empty string as the file's hash, so once the file became
+  readable again it matched the sentinel and was treated as unchanged forever.
+  An empty hash is now reported as changed but never recorded.
+
+### Removed
+- Dead double-`clear()` in `index_repository._flush` left over from the
+  v0.13.6 snapshot-and-clear refactor (the buffers are already empty there).
+
 ## [0.13.6] - 2026-06-01
 
 ### Fixed
