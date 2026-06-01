@@ -430,3 +430,30 @@ class TestReassignRepoIdRollback:
             ).fetchone()[0]
             == 0
         )
+
+
+# ---------------------------------------------------------------------------
+# migration dedup (review fix): mixed remote_url must not produce duplicate
+# manifest entries / double reassign for one repo
+# ---------------------------------------------------------------------------
+
+
+class TestBackfillDedup:
+    def test_mixed_remote_url_collapses_to_one_entry(self, store, tmp_path):
+        import asyncio
+
+        rp = str(tmp_path)
+        rid = "repo_mixed_remote"
+        # Two rows, same repo_id + repo_path: one pre-migration (NULL remote_url),
+        # one with a real URL. DISTINCT(...remote_url) used to yield TWO rows ->
+        # reassign_repo_id ran twice for the same old_id.
+        m1 = _mem(rid, rp, remote_url=None)
+        m2 = _mem(rid, rp, remote_url="https://github.com/o/r.git")
+        m2.content.text = m1.content.text + " v2"  # distinct checksum so both persist
+        m2.metadata.checksum = calculate_checksum(m2.content.text)
+        asyncio.run(store.save_memory(m1))
+        asyncio.run(store.save_memory(m2))
+
+        manifest = store._backfill_reindex_identity(lambda p, u: "new_collapsed_id", dry_run=True)
+        entries = [e for e in manifest if e["old_id"] == rid]
+        assert len(entries) == 1  # was 2 before the GROUP BY fix
