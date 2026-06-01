@@ -152,3 +152,13 @@ def test_scala_top_level_function(chunker: TreeSitterChunker) -> None:
     chunks, _ = chunker.chunk_with_edges(SCALA_SAMPLE, "src/geo.scala", "scala")
     funcs = [c for c in chunks if c.chunk_type == "function"]
     assert any(f.function_name == "topLevel" for f in funcs)
+
+
+# Regression: expression-body functions (def f() = expr) dropped CALLS because
+# the body field IS the call_expression itself; the old code iterated
+# body.children and visited sub-nodes of the call rather than the call itself.
+def test_scala_expression_body_function_emits_calls(chunker: TreeSitterChunker) -> None:
+    code = 'def f() = println("hi")\n'
+    _, edges = chunker.chunk_with_edges(code, "src/utils.scala", "scala")
+    calls = [e.target_label for e in edges if e.edge_type == "CALLS"]
+    assert any("println" in t for t in calls), f"Expression-body CALLS dropped; got calls: {calls}"

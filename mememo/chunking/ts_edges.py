@@ -960,19 +960,22 @@ def walk_kotlin(
         return None
 
     def _flatten_navigation(node) -> str:
-        """Flatten a Kotlin navigation_expression (a.b.c) to dotted string."""
+        """Flatten a Kotlin navigation_expression (a.b.c) to dotted string.
+
+        tree-sitter-kotlin uses positional children [LHS, '.', RHS] — there
+        are no named fields 'target' / 'suffix' on navigation_expression.
+        """
         if node.type in ("identifier", "simple_identifier", "this_expression"):
             return _text(node, code_bytes)
         if node.type == "navigation_expression":
-            target = node.child_by_field_name("target")
-            suffix = node.child_by_field_name("suffix")
-            left = _flatten_navigation(target) if target is not None else ""
-            if suffix is not None:
-                for ch in suffix.children:
-                    if ch.type in ("identifier", "simple_identifier"):
-                        right = _text(ch, code_bytes)
-                        return f"{left}.{right}" if left else right
-            return left
+            named = [c for c in node.children if c.is_named]
+            if len(named) >= 2:
+                left = _flatten_navigation(named[0])
+                right = _text(named[-1], code_bytes)
+                return f"{left}.{right}" if left else right
+            if named:
+                return _flatten_navigation(named[0])
+            return _text(node, code_bytes)
         return _text(node, code_bytes)
 
     def _emit_delegation_edges(class_qual: str, node) -> None:
@@ -1163,7 +1166,7 @@ def walk_ruby(
             if method_name in ("include", "prepend") and receiver is None:
                 args = node.child_by_field_name("arguments")
                 if args is not None:
-                    cls_qual = f"{cur()}.{enclosing_class()}" if enclosing_class() else cur()
+                    cls_qual = cur()
                     for ch in args.children:
                         if ch.type == "constant":
                             edges.append(RawEdge(cls_qual, _text(ch, code_bytes), "IMPLEMENTS"))
@@ -1272,19 +1275,39 @@ def walk_php(
         return None
 
     def _gather_use_targets(node) -> list[str]:
-        """Extract import targets from a namespace_use_declaration."""
+        """Extract import targets from a namespace_use_declaration.
+
+        Handles both simple form:  use App\\Foo;
+        and grouped form:          use App\\Http\\{HomeController, UserController};
+
+        For grouped form, tree-sitter-php emits a sibling namespace_name node
+        (the common prefix) followed by a namespace_use_group containing the
+        individual namespace_use_clause nodes — each clause text is the bare
+        name only, so we must prepend the prefix ourselves.
+        """
         targets: list[str] = []
 
-        # Walk children collecting qualified_name and name nodes (avoiding keywords)
-        def _collect(n) -> None:
-            if n.type == "namespace_use_clause":
-                # text of this clause is the full qualified name
-                targets.append(_text(n, code_bytes).strip("\\"))
-                return
-            for ch in n.children:
-                _collect(ch)
+        # Detect grouped form: a namespace_use_group sibling is present.
+        prefix_node = next((c for c in node.children if c.type == "namespace_name"), None)
+        group_node = next((c for c in node.children if c.type == "namespace_use_group"), None)
 
-        _collect(node)
+        if group_node is not None:
+            prefix = _text(prefix_node, code_bytes).strip("\\") if prefix_node else ""
+            for ch in group_node.children:
+                if ch.type == "namespace_use_clause":
+                    clause_text = _text(ch, code_bytes).strip("\\")
+                    targets.append(f"{prefix}\\{clause_text}" if prefix else clause_text)
+        else:
+            # Simple form: each namespace_use_clause text is already the full path.
+            def _collect(n) -> None:
+                if n.type == "namespace_use_clause":
+                    targets.append(_text(n, code_bytes).strip("\\"))
+                    return
+                for ch in n.children:
+                    _collect(ch)
+
+            _collect(node)
+
         return targets
 
     def visit(node) -> None:
@@ -1692,8 +1715,12 @@ def walk_scala(
             scope_stack.append(("function", name))
             body = node.child_by_field_name("body")
             if body is not None:
-                for child in body.children:
-                    visit(child)
+                if body.type == "block":
+                    for child in body.children:
+                        visit(child)
+                else:
+                    # Expression-body: def f() = expr  — body IS the expression node.
+                    visit(body)
             scope_stack.pop()
             return
 

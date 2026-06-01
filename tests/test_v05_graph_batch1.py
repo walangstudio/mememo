@@ -160,6 +160,37 @@ def test_t019_skips_when_source_qualname_unknown() -> None:
     assert relations == []
 
 
+# Regression: IMPORTS edges have source_qualname = module (e.g. "pkg.a") but
+# the indexer only registered class/function qualnames like "pkg.a.foo".
+# "pkg.a" was absent from the symbol table so resolve_edges silently dropped
+# every IMPORTS edge.  Fix: _flush now registers a module-level SymbolEntry
+# pointing to the first chunk of the file when no bare-module chunk exists.
+def test_t019_imports_edge_resolves_when_module_symbol_registered() -> None:
+    from mememo.chunking.base_chunker import RawEdge
+
+    # Simulate what _flush now emits: one function-chunk symbol + a module symbol
+    # pointing to the same memory (the first chunk of the file).
+    symbols = [
+        SymbolEntry(memory_id="m-func", qualname="pkg.a.foo"),
+        SymbolEntry(memory_id="m-func", qualname="pkg.a"),  # module-level entry
+        SymbolEntry(memory_id="m-bar", qualname="pkg.b.bar"),
+    ]
+    raw = [
+        RawEdge("pkg.a", "os", "IMPORTS"),  # source = module
+        RawEdge("pkg.a", "pathlib", "IMPORTS"),
+        RawEdge("pkg.a.foo", "bar", "CALLS"),  # source = function qualname
+    ]
+    relations = resolve_edges(raw, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols)
+    imports = [r for r in relations if r.type == "IMPORTS"]
+    calls = [r for r in relations if r.type == "CALLS"]
+    assert len(imports) == 2, (
+        f"Expected 2 IMPORTS relations, got {len(imports)}. "
+        "Module symbol entry missing from symbol table?"
+    )
+    assert len(calls) == 1
+    assert all(r.source_memory_id == "m-func" for r in imports)
+
+
 # ---------- T020: relations storage CRUD -----------------------------------
 
 
