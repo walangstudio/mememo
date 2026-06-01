@@ -355,6 +355,38 @@ async def test_merkle_staged_commit():
 
 
 @pytest.mark.asyncio
+async def test_merkle_unreadable_file_not_skipped_forever():
+    """An empty hash (read-error sentinel) must not be recorded as the file's hash.
+
+    Otherwise a transiently-unreadable file is stored with hash "" and then
+    treated as unchanged forever once it becomes readable again.
+    """
+    from mememo.indexing import MerkleDAG
+
+    temp_dir = Path(tempfile.mkdtemp())
+    try:
+        f = temp_dir / "f.py"
+        f.write_text("print('x')")
+        files = [f]
+
+        merkle = MerkleDAG(temp_dir)
+        merkle.compute_file_hash = lambda _p: ""  # simulate an unreadable file
+
+        # Reported changed, but the sentinel is never persisted.
+        assert merkle.get_changed_files(files) == {f}
+        assert str(f) not in merkle.hashes
+
+        # Staged path: still not persisted by commit().
+        merkle2 = MerkleDAG(temp_dir)
+        merkle2.compute_file_hash = lambda _p: ""
+        assert merkle2.get_changed_files(files, persist=False) == {f}
+        merkle2.commit()
+        assert str(f) not in MerkleDAG(temp_dir).hashes
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
 async def test_index_batch_failure_aborts_without_merkle_commit(test_env):
     """A batch-write failure must abort the index and leave Merkle state empty.
 
@@ -550,6 +582,47 @@ async def test_sync_commits_up_to_date(test_env):
 
     assert response.success
     assert "up to date" in response.message
+
+
+@pytest.mark.asyncio
+async def test_sync_commits_indexes_secret_bearing_file(test_env):
+    """A changed file with a secret-like fixture must still be re-indexed.
+
+    Regression for the bug where sync_commits called create_memory without
+    skip_secret_scan: the secret raised, the file's memories were staled but
+    never recreated, and HEAD advanced so it was never retried.
+    """
+    import os
+    import subprocess
+
+    from mememo.utils import SecretsDetector
+
+    memory_manager = test_env
+    repo_path = os.getcwd()
+
+    context = await memory_manager.git_manager.detect_context()
+    memory_manager.storage_manager.set_last_indexed_commit(
+        context.repo.id, context.branch.name, context.branch.commit_hash
+    )
+
+    # New commit adds a source file containing a secret-like connection string.
+    src = Path(repo_path) / "db.py"
+    src.write_text('def get_db():\n    return "postgres://user:pass@host:5432/db"\n')
+    subprocess.run(["git", "add", "db.py"], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "add db"], cwd=repo_path, check=True, capture_output=True
+    )
+
+    memory_manager.secrets_detection = True
+    memory_manager.secrets_detector = SecretsDetector()
+
+    from mememo.tools.schemas import SyncCommitsParams
+    from mememo.tools.sync_commits import sync_commits
+
+    response = await sync_commits(SyncCommitsParams(repo_path=repo_path), memory_manager)
+
+    assert response.success
+    assert response.chunks_created >= 1  # not dropped by the secret scan
 
 
 if __name__ == "__main__":

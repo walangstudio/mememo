@@ -144,7 +144,13 @@ async def sync_commits(
                     tags=["indexed", "repository", "synced"],
                     relationships=MemoryRelationships(),
                 )
-                await memory_manager.create_memory(create_params, cwd=str(repo_path))
+                # Same trust level as index_repository: source code legitimately
+                # contains secret-like fixtures, and the old memories were already
+                # staled above — a secret-scan ValueError here would drop the file
+                # permanently (HEAD advances below, so sync never retries it).
+                await memory_manager.create_memory(
+                    create_params, cwd=str(repo_path), skip_secret_scan=True
+                )
                 chunks_created += 1
 
             merkle.mark_file_indexed(file_path)
