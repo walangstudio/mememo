@@ -35,6 +35,10 @@ class MerkleDAG:
         self.storage_path.mkdir(parents=True, exist_ok=True)
         self.hashes_file = self.storage_path / "file_hashes.json"
         self.hashes: dict[str, str] = self._load_hashes()
+        # Hashes computed by the most recent get_changed_files(persist=False)
+        # call, held back from disk until commit() runs. Lets a caller persist
+        # change-detection state only after the index actually succeeds.
+        self._pending: dict[str, str] = {}
 
     def _load_hashes(self) -> dict[str, str]:
         """
@@ -83,17 +87,24 @@ class MerkleDAG:
             # Return empty hash on error (will be treated as changed)
             return ""
 
-    def get_changed_files(self, file_paths: list[Path]) -> set[Path]:
+    def get_changed_files(self, file_paths: list[Path], persist: bool = True) -> set[Path]:
         """
         Detect which files have changed since last indexing.
 
         Args:
             file_paths: List of file paths to check
+            persist: Save updated hashes immediately (default, legacy behavior).
+                Pass ``False`` to stage the new hashes without touching disk —
+                the caller then runs :meth:`commit` only after the index
+                succeeds, so a crash mid-index can't mark files indexed while
+                their memories were never written (the stale-state bug that made
+                later incremental runs skip everything).
 
         Returns:
             Set of changed file paths (new or modified)
         """
         changed = set()
+        new_hashes: dict[str, str] = {}
 
         for file_path in file_paths:
             # Compute current hash
@@ -103,16 +114,31 @@ class MerkleDAG:
             # Check if file is new or changed
             if file_key not in self.hashes or self.hashes[file_key] != current_hash:
                 changed.add(file_path)
-                # Update hash
-                self.hashes[file_key] = current_hash
+            new_hashes[file_key] = current_hash
 
-        # Save updated hashes
-        self._save_hashes()
+        if persist:
+            self.hashes.update(new_hashes)
+            self._save_hashes()
+            self._pending = {}
+        else:
+            self._pending = new_hashes
 
         logger.info(
             f"Change detection: {len(changed)} changed, {len(file_paths) - len(changed)} unchanged"
         )
         return changed
+
+    def commit(self) -> None:
+        """Persist hashes staged by ``get_changed_files(persist=False)``.
+
+        No-op if nothing is staged. Call this only after the index has fully
+        succeeded so an interrupted run leaves change-detection state untouched.
+        """
+        if not self._pending:
+            return
+        self.hashes.update(self._pending)
+        self._save_hashes()
+        self._pending = {}
 
     def mark_file_indexed(self, file_path: Path):
         """

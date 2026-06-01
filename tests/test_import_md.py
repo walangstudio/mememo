@@ -443,6 +443,21 @@ class TestAllowSecrets:
         assert result["imported"] == 1
         assert result["errors"] == 0
 
+    async def test_batch_skip_secret_scan(self, memory_manager):
+        # Code indexing passes skip_secret_scan=True: a secret-bearing chunk
+        # (e.g. a Rust test fixture) must be stored, not raise and abort the
+        # whole batch. Without the flag the batch raises ValueError.
+        from mememo.types.memory import CreateMemoryParams
+
+        self._enable_secrets(memory_manager)
+        params = [CreateMemoryParams(content=self._CONN_MD, type="code_snippet")]
+
+        with pytest.raises(ValueError):
+            await memory_manager.create_memories_batch(params)
+
+        created = await memory_manager.create_memories_batch(params, skip_secret_scan=True)
+        assert len(created) == 1
+
 
 # ---------------------------------------------------------------------------
 # Global lane stamping: import without --repo must NOT inherit the ambient repo
