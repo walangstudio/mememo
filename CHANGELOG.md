@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.14.0] - 2026-06-01
+
+### Added
+- **Diagram Phase 2 — LLM/passthrough-synthesized Mermaid** in `generate_diagram`:
+  `sequence`, `usecase`, `state`, `erd`. Each assembles grounding from the
+  deterministic subgraph (Phase 1 class/call/module output) plus the scope's
+  indexed source, then either returns `passthrough=True` + `passthrough_prompt`
+  for the host model to synthesize the Mermaid in chat (default, no API key), or
+  completes directly when an LLM provider is configured (falling back to
+  passthrough if the call fails). Mirrors the `capture` passthrough contract.
+  - `sequence` (scope = a function/method) also pulls the entry point's sibling
+    methods so `self.method()` dispatch that isn't a resolved CALLS edge is still
+    traceable.
+  - Web UI stays deterministic-only (a passive page can't call the host model);
+    the LLM types live in the chat MCP tool.
+
+### Notes
+- Phase-1 logic refactored into `_phase1` (behavior unchanged). LLM types with no
+  indexed data return a clear "index the repo first" error instead of prompting
+  the model with an empty graph.
+
 ## [0.13.7] - 2026-06-01
 
 ### Fixed

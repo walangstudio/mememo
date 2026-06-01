@@ -1084,7 +1084,7 @@ async def cleanup_memory(params: CleanupMemoryParams) -> CleanupMemoryResponse:
 @mcp.tool()
 async def generate_diagram(params: GenerateDiagramParams) -> GenerateDiagramResponse:
     """
-    Generate a Mermaid diagram from the indexed code graph (Phase 1).
+    Generate a Mermaid diagram from the indexed code graph.
 
     Deterministic generators — no LLM required:
     - type="class"  : classDiagram with methods + EXTENDS/IMPLEMENTS edges.
@@ -1093,7 +1093,16 @@ async def generate_diagram(params: GenerateDiagramParams) -> GenerateDiagramResp
                       scope=memory_id or function_name sets the root.
     - type="module" : flowchart LR of cross-file IMPORTS grouped by file.
 
-    Phase 2 (erd/sequence/state/usecase) will be available via the LLM path.
+    LLM-synthesized (passthrough-aware) — grounded in the deterministic subgraph
+    plus the scope's source:
+    - type="sequence" : sequenceDiagram of the call flow from a function entry.
+    - type="usecase"  : flowchart of user-facing workflows from public entry points.
+    - type="state"    : stateDiagram-v2 of a class's lifecycle (scope=class).
+    - type="erd"      : erDiagram of data models / entities.
+
+    For the LLM types with no provider configured, the response sets
+    passthrough=True and returns passthrough_prompt for the host model to
+    synthesize the Mermaid in chat.
     """
     await ensure_initialized()
     _audit_log("generate_diagram")

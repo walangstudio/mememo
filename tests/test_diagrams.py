@@ -413,3 +413,204 @@ def test_diagram_route_call_by_kebab_function_name(store: StorageManager) -> Non
     assert r.status_code == 200
     assert "flowchart" in r.json()["mermaid"]
     assert "%% no data" not in r.json()["mermaid"]
+
+
+# ---------- Phase 2: LLM / passthrough --------------------------------------
+
+
+def _write_blob(store: StorageManager, content_ref: str, text: str) -> None:
+    import json
+
+    p = store.base_dir / content_ref
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"text": text}), encoding="utf-8")
+
+
+class _PassthroughLLM:
+    def is_passthrough(self) -> bool:
+        return True
+
+    async def complete(self, system, user):
+        return None
+
+
+class _CompletingLLM:
+    def __init__(self, out: str) -> None:
+        self._out = out
+        self.system = None
+        self.user = None
+
+    def is_passthrough(self) -> bool:
+        return False
+
+    async def complete(self, system, user):
+        self.system, self.user = system, user
+        return self._out
+
+
+class _FailingLLM:
+    def is_passthrough(self) -> bool:
+        return False
+
+    async def complete(self, system, user):
+        return None
+
+
+async def test_sequence_passthrough_returns_grounded_prompt(store: StorageManager) -> None:
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="sequence", scope="foo", repo_id=REPO, branch=BRANCH),
+        _FakeMM(store),
+        _PassthroughLLM(),
+    )
+    assert resp.success
+    assert resp.passthrough is True
+    assert resp.mermaid == ""
+    # The prompt must carry the diagram instruction AND the deterministic subgraph.
+    assert "sequenceDiagram" in resp.passthrough_prompt
+    assert "Deterministic subgraph" in resp.passthrough_prompt
+    assert "flowchart" in resp.passthrough_prompt  # call_graph skeleton
+
+
+async def test_phase2_passthrough_includes_source(store: StorageManager) -> None:
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    _write_blob(store, "r3", "def foo(self):\n    return self.bar()  # SENTINEL_SRC")
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="sequence", scope="foo", repo_id=REPO, branch=BRANCH),
+        _FakeMM(store),
+        _PassthroughLLM(),
+    )
+    assert resp.success and resp.passthrough
+    assert "SENTINEL_SRC" in resp.passthrough_prompt
+
+
+async def test_sequence_pulls_sibling_methods(store: StorageManager) -> None:
+    # self.method() calls often aren't CALLS edges, so a sequence diagram must
+    # still see the entry point's sibling methods to trace into them.
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    store.conn.execute(
+        "INSERT INTO memories (id, repo_id, branch_name, content_type, file_path, "
+        "function_name, class_name, language, chunk_type, checksum, content_ref, "
+        "token_count, created_at, updated_at, stale) "
+        "VALUES ('derived-bar2', ?, ?, 'code_snippet', 'derived.py', 'bar2', 'Derived', "
+        "'python', 'method', 'cb', 'rbar2', 5, 1, 1, 0)",
+        (REPO, BRANCH),
+    )
+    store.conn.commit()
+    _write_blob(store, "rbar2", "def bar2(self):\n    return 'SIBLING_BODY'")
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="sequence", scope="foo", repo_id=REPO, branch=BRANCH),
+        _FakeMM(store),
+        _PassthroughLLM(),
+    )
+    assert resp.success and resp.passthrough
+    assert "SIBLING_BODY" in resp.passthrough_prompt
+
+
+async def test_phase2_llm_path_strips_fences(store: StorageManager) -> None:
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    llm = _CompletingLLM("```mermaid\nsequenceDiagram\n  A->>B: call\n```")
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="sequence", scope="foo", repo_id=REPO, branch=BRANCH),
+        _FakeMM(store),
+        llm,
+    )
+    assert resp.success
+    assert resp.passthrough is False
+    assert resp.mermaid == "sequenceDiagram\n  A->>B: call"
+    assert llm.user and "foo" in llm.user  # grounding reached the model
+
+
+async def test_phase2_llm_none_falls_back_to_passthrough(store: StorageManager) -> None:
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="usecase", repo_id=REPO, branch=BRANCH),
+        _FakeMM(store),
+        _FailingLLM(),
+    )
+    assert resp.success
+    assert resp.passthrough is True
+    assert resp.passthrough_prompt
+
+
+async def test_sequence_unresolved_scope_reports_no_data(store: StorageManager) -> None:
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="sequence", scope="does_not_exist", repo_id=REPO, branch=BRANCH),
+        _FakeMM(store),
+        _PassthroughLLM(),
+    )
+    assert resp.success is False
+    assert "index" in resp.message.lower()
+
+
+async def test_unknown_diagram_type_rejected(store: StorageManager) -> None:
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="bogus", repo_id=REPO, branch=BRANCH),
+        _FakeMM(store),
+        _PassthroughLLM(),
+    )
+    assert resp.success is False
+    assert "sequence" in resp.message  # lists the valid types
+
+
+def test_strip_fences_handles_plain_and_fenced() -> None:
+    from mememo.tools.generate_diagram import _strip_fences
+
+    assert _strip_fences("erDiagram\n  A ||--o{ B : has") == "erDiagram\n  A ||--o{ B : has"
+    assert _strip_fences("```mermaid\nstateDiagram-v2\n  [*] --> Idle\n```") == (
+        "stateDiagram-v2\n  [*] --> Idle"
+    )
+
+
+def test_strip_fences_truncates_trailing_prose() -> None:
+    from mememo.tools.generate_diagram import _strip_fences
+
+    out = _strip_fences(
+        "```mermaid\nsequenceDiagram\n  A->>B: x\n```\nThis diagram shows the flow."
+    )
+    assert out == "sequenceDiagram\n  A->>B: x"
+    assert "This diagram shows" not in out
+
+
+async def test_phase2_no_data_for_empty_repo(store: StorageManager) -> None:
+    # A "%% no data" skeleton must NOT count as grounding — the LLM must not be
+    # prompted with an empty graph; the caller gets a clear error instead.
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="usecase", repo_id="nonexistent-repo", branch=BRANCH),
+        _FakeMM(store),
+        _PassthroughLLM(),
+    )
+    assert resp.success is False
+    assert "index" in resp.message.lower()
+
+
+def test_scope_member_ids_escapes_like_wildcards(store: StorageManager) -> None:
+    # scope="util_" must match the literal file 'util_x.py', not 'utility.py'.
+    from mememo.tools.generate_diagram import _scope_member_ids
+
+    store.conn.executemany(
+        "INSERT INTO memories (id, repo_id, branch_name, content_type, file_path, "
+        "function_name, class_name, language, chunk_type, checksum, content_ref, "
+        "token_count, created_at, updated_at, stale) VALUES "
+        "(?, ?, ?, 'code_snippet', ?, 'f', NULL, 'python', 'function', ?, ?, 5, 1, 1, 0)",
+        [
+            ("u1", REPO, BRANCH, "utility.py", "cu1", "ru1"),
+            ("u2", REPO, BRANCH, "util_x.py", "cu2", "ru2"),
+        ],
+    )
+    store.conn.commit()
+    ids = _scope_member_ids(store.conn, REPO, BRANCH, "util_", only_classes=False)
+    assert "u2" in ids
+    assert "u1" not in ids
