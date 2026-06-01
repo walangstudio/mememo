@@ -57,14 +57,25 @@ class StorageManager:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.content_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize SQLite database
+        # Initialize SQLite database. `timeout` is the busy-handler wait: with one
+        # mememo server per Claude session (stdio MCP spawns a process per client)
+        # plus hooks, several processes write to this one DB. SQLite serialises
+        # writers, so a 30s busy wait lets a contended writer (e.g. an indexing
+        # batch) wait out the lock instead of failing at Python's 5s default.
         db_path = self.base_dir / "mememo.db"
-        self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self.conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=30.0)
         self.conn.row_factory = sqlite3.Row
 
-        # Enable WAL mode for better concurrency
+        # Enable WAL mode for better concurrency.
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
+        # busy_timeout backs up the connect timeout (covers paths that reopen the
+        # connection); synchronous=NORMAL is the safe + fast WAL setting (durable
+        # across app crashes, only a power-loss window) and shortens write-lock
+        # hold time; autocheckpoint keeps the WAL bounded.
+        self.conn.execute("PRAGMA busy_timeout=30000")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA wal_autocheckpoint=1000")
 
         # Optional encryption (requires sqlcipher)
         if encryption_key:

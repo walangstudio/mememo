@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.13.5] - 2026-06-01
+
+### Fixed
+- **SQLite write contention across concurrent mememo servers.** stdio MCP spawns
+  one mememo server per Claude session, and with hooks several processes write to
+  the one `~/.mememo` DB. The connection enabled WAL but set no busy timeout, so
+  a contended writer (e.g. an indexing batch) failed at Python's 5s default —
+  symptom seen as `index_repository` "taking forever" with nothing committed and
+  a bloated WAL. Now: `connect(timeout=30)` + `PRAGMA busy_timeout=30000` (wait
+  out the lock), `PRAGMA synchronous=NORMAL` (safe WAL setting, shorter write-lock
+  hold), `PRAGMA wal_autocheckpoint=1000` (bound WAL growth). Pairs with the
+  v0.13.4 fix that stopped the background migration thread from sharing the
+  connection. (All sessions must reload — `uv pip install -e .` + restart — to
+  pick up the new pragmas.)
+
 ## [0.13.4] - 2026-06-01
 
 ### Fixed

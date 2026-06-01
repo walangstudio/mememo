@@ -185,3 +185,10 @@ class TestBackfillReindexIdentity:
         manifest = store._backfill_reindex_identity(resolver, dry_run=True)
         # dry_run reports count from SELECT
         assert manifest[0]["row_count"] == 2
+
+
+def test_connection_concurrency_pragmas(tmp_path):
+    s = StorageManager(base_dir=tmp_path / "store")
+    assert s.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 30000
+    assert s.conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    assert s.conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL
