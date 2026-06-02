@@ -36,7 +36,15 @@ def test_render_html_multiple_tabs() -> None:
 def test_render_html_empty_falls_back() -> None:
     html = render_html([])
     assert "<!doctype html>" in html.lower()
-    assert "%% (empty)" in html
+    assert "No data for this diagram" in html
+
+
+def test_render_html_empty_diagram_shows_message_not_broken_mermaid() -> None:
+    # A header+comment-only diagram would throw a mermaid parse error; render a
+    # "no data" message instead of a <pre class="mermaid"> block.
+    html = render_html("classDiagram\n%% no data")
+    assert "No data for this diagram" in html
+    assert 'class="mermaid"' not in html
 
 
 def test_write_html_writes_file(tmp_path) -> None:

@@ -118,9 +118,10 @@ async def _resolve_repo_branch(
 async def _phase1(
     params: GenerateDiagramParams, memory_manager: MemoryManager, repo_id: str, branch: str
 ) -> GenerateDiagramResponse:
-    from ..diagrams import call_graph, class_diagram, module_dependency
+    from ..diagrams import call_graph, class_diagram, is_empty_diagram, module_dependency
 
     conn = memory_manager.storage_manager.conn
+    mermaid = ""
 
     if params.type == "class":
         mermaid = class_diagram(conn, repo_id, branch, scope=params.scope)
@@ -141,6 +142,18 @@ async def _phase1(
             )
         mermaid = call_graph(conn, root_id, depth=params.depth, max_nodes=params.max_nodes)
         truncated = "%% truncated" in mermaid
+
+    # An empty (header + "%% no data") diagram can't be rendered — mermaid raises
+    # a parse error. Surface it as a clear message instead.
+    if is_empty_diagram(mermaid):
+        return GenerateDiagramResponse(
+            success=False,
+            type=params.type,
+            message=(
+                f"No {params.type} data for scope={params.scope!r}. The repo may not be "
+                "indexed, the scope may not exist, or it has no classes/calls/imports."
+            ),
+        )
 
     return GenerateDiagramResponse(
         success=True, type=params.type, mermaid=mermaid, truncated=truncated

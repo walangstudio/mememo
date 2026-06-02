@@ -175,6 +175,18 @@ def test_class_diagram_empty_repo(store: StorageManager) -> None:
     assert "%% no data" in result
 
 
+def test_is_empty_diagram() -> None:
+    from mememo.diagrams import is_empty_diagram
+
+    assert is_empty_diagram("classDiagram\n%% no data") is True
+    assert is_empty_diagram("flowchart LR") is True  # header only
+    assert is_empty_diagram("") is True
+    assert is_empty_diagram("classDiagram\nclass A") is False
+    assert is_empty_diagram("flowchart LR\n  A --> B") is False
+    # A real diagram with a trailing "%% truncated" note must NOT read as empty.
+    assert is_empty_diagram("flowchart LR\n  A --> B\n%% truncated") is False
+
+
 # ---------- call_graph ------------------------------------------------------
 
 
@@ -295,6 +307,44 @@ def test_diagram_route_llm_type_passthrough(web_client: TestClient) -> None:
 def test_diagram_route_unknown_type(web_client: TestClient) -> None:
     r = web_client.get("/diagram", params={"type": "bogus"})
     assert r.status_code == 400
+
+
+def test_diagram_route_empty_flag_for_no_data(web_client: TestClient) -> None:
+    # A class diagram for a repo with no classes returns success+empty, not a
+    # "%% no data" diagram the browser would fail to parse.
+    r = web_client.get("/diagram", params={"type": "class", "repo_id": "nonexistent-repo"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is True
+    assert body["empty"] is True
+
+
+async def test_tool_empty_diagram_returns_error(store: StorageManager) -> None:
+    # MCP tool: an empty deterministic diagram is surfaced as success=False so the
+    # chat renderer never tries to draw "%% no data".
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="class", repo_id="nonexistent-repo", branch=BRANCH),
+        _FakeMM(store),
+        None,
+    )
+    assert resp.success is False
+    assert "no class data" in resp.message.lower()
+
+
+async def test_tool_empty_call_graph_isolated_node(store: StorageManager) -> None:
+    # 'main' (a-main) has an IMPORTS edge but no outgoing CALLS -> call_graph is
+    # "%% no data" -> the tool must report no-data, not return an empty diagram.
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="call", scope="main", repo_id=REPO, branch=BRANCH),
+        _FakeMM(store),
+        None,
+    )
+    assert resp.success is False
+    assert "no call data" in resp.message.lower()
 
 
 def test_diagram_route_call_missing_scope(web_client: TestClient) -> None:

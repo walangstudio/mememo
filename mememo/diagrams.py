@@ -18,6 +18,21 @@ def _mmid(s: str) -> str:
     return clean
 
 
+def is_empty_diagram(mermaid: str) -> bool:
+    """True if the diagram has only a header + comments (e.g. ``%% no data``).
+
+    Mermaid raises a parse error ("Expecting ..., got 'EOF'") on a diagram whose
+    body is only a comment, so callers must surface "no data" instead of trying
+    to render it.
+    """
+    lines = (mermaid or "").splitlines()
+    for line in lines[1:]:  # skip the header (classDiagram / flowchart ...)
+        s = line.strip()
+        if s and not s.startswith("%%"):
+            return False
+    return True
+
+
 def _esc(s: str | None) -> str:
     """Escape a string for use inside a Mermaid double-quoted label.
 

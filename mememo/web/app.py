@@ -345,6 +345,8 @@ def create_app(storage_getter=None) -> FastAPI:
                     LLMAdapter(),
                 )
             )
+            from ..diagrams import is_empty_diagram
+
             return {
                 "type": type,
                 "mermaid": resp.mermaid,
@@ -353,6 +355,7 @@ def create_app(storage_getter=None) -> FastAPI:
                 "passthrough_prompt": resp.passthrough_prompt,
                 "success": resp.success,
                 "message": resp.message,
+                "empty": bool(resp.mermaid) and is_empty_diagram(resp.mermaid),
             }
 
         if type == "class":
@@ -392,6 +395,8 @@ def create_app(storage_getter=None) -> FastAPI:
             mermaid = call_graph(conn, root_id, depth=depth, max_nodes=max_nodes)
             truncated = "%% truncated" in mermaid
 
+        from ..diagrams import is_empty_diagram
+
         return {
             "type": type,
             "mermaid": mermaid,
@@ -400,6 +405,7 @@ def create_app(storage_getter=None) -> FastAPI:
             "passthrough_prompt": "",
             "success": True,
             "message": "",
+            "empty": is_empty_diagram(mermaid),
         }
 
     @app.get("/scopes")

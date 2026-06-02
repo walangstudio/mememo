@@ -13,6 +13,19 @@ _MERMAID_SRC = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"
 _MERMAID_SRI = "sha384-yQ4mmBBT+vhTAwjFH0toJXNYJ6O4usWnt6EPIdWwrRvx2V/n5lXuDZQwQFeSFydF"
 
 
+def _panel_body(src: str) -> str:
+    """A renderable <pre class=mermaid>, or a 'no data' note for empty diagrams.
+
+    Mermaid throws a parse error on a header-plus-comment-only diagram, so an
+    empty one is shown as a message rather than a broken render.
+    """
+    from .diagrams import is_empty_diagram
+
+    if not src or not src.strip() or is_empty_diagram(src):
+        return '<p class="empty">No data for this diagram — nothing indexed for this scope.</p>'
+    return f'<pre class="mermaid">{_esc(src)}</pre>'
+
+
 def _esc(s: str) -> str:
     """Escape so the browser hands mermaid back the exact source via textContent.
 
@@ -40,8 +53,7 @@ def render_html(diagrams: str | list[tuple[str, str]], title: str = "mememo diag
         for i, (name, _) in enumerate(items)
     )
     panels = "".join(
-        f'<div class="panel{" active" if i == 0 else ""}" id="panel-{i}">'
-        f'<pre class="mermaid">{_esc(src or "%% (empty)")}</pre></div>'
+        f'<div class="panel{" active" if i == 0 else ""}" id="panel-{i}">{_panel_body(src)}</div>'
         for i, (_, src) in enumerate(items)
     )
 
@@ -63,6 +75,7 @@ def render_html(diagrams: str | list[tuple[str, str]], title: str = "mememo diag
   .panel {{ display: none; padding: 24px 16px; overflow: auto; }}
   .panel.active {{ display: block; }}
   .mermaid {{ background: transparent; }}
+  .empty {{ color: #8a93a0; font-style: italic; padding: 24px 0; }}
   #err {{ display: none; margin: 16px; padding: 12px; background: #3a1d1d; border: 1px solid #a33;
           border-radius: 6px; white-space: pre-wrap; }}
 </style>
