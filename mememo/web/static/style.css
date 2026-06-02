@@ -236,3 +236,17 @@ td.risk-MAY_NEED_TESTING { color: var(--muted); }
   color: var(--warn);
   margin: 4px 0 0;
 }
+
+.diagram-prompt {
+  width: 100%;
+  min-height: 220px;
+  margin-top: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  background: #14161a;
+  color: #cdd3dc;
+  border: 1px solid #2a2e36;
+  border-radius: 6px;
+  padding: 8px;
+  resize: vertical;
+}

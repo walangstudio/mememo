@@ -586,6 +586,49 @@ async function generateDiagram() {
   try {
     const data = await fetchJson('/diagram' + qs(params));
     diagramStatus.classList.add('hidden');
+
+    if (data.success === false) {
+      diagramStatus.textContent = data.message || 'no diagram';
+      diagramStatus.classList.remove('hidden');
+      diagramStatus.classList.add('diagram-error');
+      return;
+    }
+
+    // Passthrough: no LLM provider configured — the server returned a grounded
+    // prompt instead of a diagram. Offer it to copy into a chat model.
+    if (data.passthrough) {
+      const wrap = document.createElement('div');
+      const note = document.createElement('p');
+      note.className = 'diagram-truncated';
+      note.textContent =
+        'No LLM provider configured — paste this prompt into Claude (or set one in providers.yaml) to render the ' +
+        type + ' diagram.';
+      const ta = document.createElement('textarea');
+      ta.className = 'diagram-prompt';
+      ta.readOnly = true;
+      ta.value = data.passthrough_prompt;
+      const copy = document.createElement('button');
+      copy.textContent = 'copy prompt';
+      copy.addEventListener('click', async () => {
+        ta.select();
+        try {
+          if (navigator.clipboard) {
+            await navigator.clipboard.writeText(ta.value);
+          } else {
+            // Non-secure origin (LAN HTTP): clipboard API is unavailable.
+            document.execCommand('copy');
+          }
+          copy.textContent = 'copied ✓';
+        } catch {
+          copy.textContent = 'select + Ctrl-C';
+        }
+        setTimeout(() => (copy.textContent = 'copy prompt'), 1500);
+      });
+      wrap.append(note, copy, ta);
+      diagramOutput.appendChild(wrap);
+      return;
+    }
+
     const container = document.createElement('div');
     container.innerHTML = `<pre class="mermaid">${esc(data.mermaid)}</pre>`;
     if (data.truncated) {
