@@ -275,9 +275,21 @@ def test_diagram_route_call_by_function_name(web_client: TestClient) -> None:
     assert "flowchart" in r.json()["mermaid"]
 
 
-def test_diagram_route_invalid_type(web_client: TestClient) -> None:
-    r = web_client.get("/diagram", params={"type": "erd"})
-    assert r.status_code == 400
+def test_diagram_route_llm_type_passthrough(web_client: TestClient) -> None:
+    # LLM types are now valid. With no provider configured (CI), the route
+    # returns a grounded passthrough prompt instead of a rendered diagram.
+    r = web_client.get(
+        "/diagram",
+        params={"type": "sequence", "scope": "foo", "repo_id": REPO, "branch": BRANCH},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["type"] == "sequence"
+    assert body["success"] is True
+    # Either a provider rendered it, or we got a prompt to paste into a chat model.
+    assert body["passthrough"] is False or body["passthrough_prompt"]
+    if body["passthrough"]:
+        assert "sequenceDiagram" in body["passthrough_prompt"]
 
 
 def test_diagram_route_unknown_type(web_client: TestClient) -> None:
@@ -524,6 +536,22 @@ async def test_phase2_llm_path_strips_fences(store: StorageManager) -> None:
     assert resp.passthrough is False
     assert resp.mermaid == "sequenceDiagram\n  A->>B: call"
     assert llm.user and "foo" in llm.user  # grounding reached the model
+
+
+async def test_phase2_llm_empty_output_falls_back_to_passthrough(store: StorageManager) -> None:
+    # Model returns only fences/whitespace -> stripped mermaid is "" -> must fall
+    # back to passthrough, not return an empty diagram that breaks mermaid.run().
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="sequence", scope="foo", repo_id=REPO, branch=BRANCH),
+        _FakeMM(store),
+        _CompletingLLM("```mermaid\n```"),
+    )
+    assert resp.success
+    assert resp.passthrough is True
+    assert resp.mermaid == ""
+    assert resp.passthrough_prompt
 
 
 async def test_phase2_llm_none_falls_back_to_passthrough(store: StorageManager) -> None:

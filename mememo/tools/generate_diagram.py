@@ -230,20 +230,24 @@ async def _phase2(
         )
 
     raw = await llm_adapter.complete(system_prompt, user_prompt)
-    if raw is None:
+    mermaid = _strip_fences(raw) if raw else ""
+    # raw=None (call failed) or empty output (model returned only fences/prose)
+    # both fall back to passthrough — we still have a usable prompt, and an empty
+    # mermaid string would make the renderer (mermaid.run) choke.
+    if not mermaid.strip():
         return GenerateDiagramResponse(
             success=True,
             type=params.type,
             truncated=truncated,
             passthrough=True,
             passthrough_prompt=f"{system_prompt}\n\n{user_prompt}",
-            message="LLM call failed — falling back to passthrough.",
+            message="LLM returned no diagram — falling back to passthrough.",
         )
 
     return GenerateDiagramResponse(
         success=True,
         type=params.type,
-        mermaid=_strip_fences(raw),
+        mermaid=mermaid,
         truncated=truncated,
     )
 

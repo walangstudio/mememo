@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.14.2] - 2026-06-02
+
+### Added
+- **Flow diagrams in the web UI.** The Diagrams panel's `sequence`/`usecase`/
+  `state`/`erd` options are no longer disabled. The `/diagram` route now
+  delegates the LLM types to the shared `generate_diagram` (grounded in the
+  deterministic subgraph + source): if an LLM provider is configured it renders
+  the Mermaid server-side; otherwise it returns the grounded prompt and the UI
+  shows it with a **copy-prompt** button to paste into a chat model. All diagram
+  routes now return a uniform shape (`success`/`passthrough`/`passthrough_prompt`).
+
 ## [0.14.1] - 2026-06-02
 
 ### Added

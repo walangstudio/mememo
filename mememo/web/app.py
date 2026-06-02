@@ -282,6 +282,7 @@ def create_app(storage_getter=None) -> FastAPI:
         }
 
     _diagram_types = {"class", "call", "module"}
+    _llm_diagram_types = {"sequence", "usecase", "state", "erd"}
 
     @app.get("/diagram")
     def get_diagram(
@@ -292,11 +293,10 @@ def create_app(storage_getter=None) -> FastAPI:
         depth: int = Query(default=2, ge=1, le=6),
         max_nodes: int = Query(default=60, ge=1, le=500),
     ) -> dict[str, Any]:
-        if type not in _diagram_types:
+        if type not in _diagram_types and type not in _llm_diagram_types:
             raise HTTPException(
                 400,
-                f"type must be one of {sorted(_diagram_types)}; got {type!r}. "
-                "erd/sequence/state/usecase are Phase 2.",
+                f"type must be one of {sorted(_diagram_types | _llm_diagram_types)}; got {type!r}.",
             )
         storage = _storage()
         conn = storage.conn
@@ -314,6 +314,46 @@ def create_app(storage_getter=None) -> FastAPI:
             if row:
                 resolved_repo = row[0]
                 resolved_branch = resolved_branch or row[1]
+
+        # LLM-synthesized types: delegate to the shared generate_diagram impl,
+        # which grounds the prompt and either renders via a configured provider
+        # or returns a passthrough_prompt for the user to paste into a chat model.
+        # The route is sync (threadpool), so asyncio.run is safe here.
+        if type in _llm_diagram_types:
+            import asyncio
+
+            from ..core.git_manager import GitManager
+            from ..core.llm_adapter import LLMAdapter
+            from ..tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+            class _MM:
+                def __init__(self, s):
+                    self.storage_manager = s
+                    self.git_manager = GitManager()
+
+            resp = asyncio.run(
+                generate_diagram(
+                    GenerateDiagramParams(
+                        type=type,
+                        scope=scope,
+                        repo_id=resolved_repo or None,
+                        branch=resolved_branch or None,
+                        depth=depth,
+                        max_nodes=max_nodes,
+                    ),
+                    _MM(storage),
+                    LLMAdapter(),
+                )
+            )
+            return {
+                "type": type,
+                "mermaid": resp.mermaid,
+                "truncated": resp.truncated,
+                "passthrough": resp.passthrough,
+                "passthrough_prompt": resp.passthrough_prompt,
+                "success": resp.success,
+                "message": resp.message,
+            }
 
         if type == "class":
             mermaid = class_diagram(conn, resolved_repo, resolved_branch, scope=scope)
@@ -352,7 +392,15 @@ def create_app(storage_getter=None) -> FastAPI:
             mermaid = call_graph(conn, root_id, depth=depth, max_nodes=max_nodes)
             truncated = "%% truncated" in mermaid
 
-        return {"type": type, "mermaid": mermaid, "truncated": truncated}
+        return {
+            "type": type,
+            "mermaid": mermaid,
+            "truncated": truncated,
+            "passthrough": False,
+            "passthrough_prompt": "",
+            "success": True,
+            "message": "",
+        }
 
     @app.get("/scopes")
     def list_scopes(
