@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.3] - 2026-06-02
+
+### Fixed
+- **Empty diagram crashed the renderer with a Mermaid parse error**
+  (`Expecting ..., got 'EOF'`). A diagram with no data emits a header plus a
+  `%% no data` comment, which Mermaid can't parse. New `is_empty_diagram()` is
+  now checked everywhere a diagram is rendered: the web `/diagram` route returns
+  an `empty` flag and the panel shows a "no data for this scope" message; the MCP
+  `generate_diagram` tool returns `success=False` with a clear message for empty
+  deterministic diagrams; and the HTML opener renders a "no data" note instead of
+  an unparseable `<pre class="mermaid">`.
+
 ## [0.14.2] - 2026-06-02
 
 ### Added

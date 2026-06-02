@@ -594,6 +594,16 @@ async function generateDiagram() {
       return;
     }
 
+    // No data for this scope — rendering "%% no data" throws a mermaid parse
+    // error, so show a message instead.
+    if (data.empty) {
+      diagramStatus.textContent =
+        `no ${type} data for ${scope ? "scope '" + scope + "'" : 'this repo'} — ` +
+        'try a different repo, scope, or diagram type.';
+      diagramStatus.classList.remove('hidden');
+      return;
+    }
+
     // Passthrough: no LLM provider configured — the server returned a grounded
     // prompt instead of a diagram. Offer it to copy into a chat model.
     if (data.passthrough) {
