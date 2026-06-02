@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.14.1] - 2026-06-02
+
+### Added
+- **Open diagrams without installing anything.** A `.mmd` file isn't viewable by
+  a non-developer; now diagrams render as a self-contained, double-clickable
+  `.html` (mermaid.js from the same pinned CDN+SRI as the web UI; offline message
+  with the source if the CDN is blocked).
+  - `mememo/diagram_html.py` — `render_html(diagrams, title)` / `write_html(...)`.
+    Accepts one diagram or several (tabbed gallery). Source is HTML-escaped so a
+    label can't break the page.
+  - `python -m mememo diagram <class|call|module> [--scope] [--repo] [--out]` —
+    generate a deterministic diagram from the index and open it in the browser.
+  - `python -m mememo render <file.mmd|-> [--out] [--no-open]` — convert any
+    Mermaid file (or stdin) into an openable `.html`.
+
 ## [0.14.0] - 2026-06-01
 
 ### Added

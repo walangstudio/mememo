@@ -453,6 +453,14 @@ def _public_entry_ids(conn, repo_id: str, branch: str, scope: str | None) -> lis
     return [r["id"] for r in conn.execute(sql, args).fetchall()]
 
 
+async def resolve_call_root(conn, repo_id: str, branch: str, scope: str | None) -> str | None:
+    """Public: resolve a memory_id to root a call/sequence graph from ``scope``.
+
+    Reused by the ``mememo diagram call`` CLI.
+    """
+    return await _resolve_call_root(conn, repo_id, branch, scope)
+
+
 async def _resolve_call_root(conn, repo_id: str, branch: str, scope: str | None) -> str | None:
     """Return a memory_id to use as BFS root for call graphs.
 
