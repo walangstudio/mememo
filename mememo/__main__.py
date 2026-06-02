@@ -214,9 +214,125 @@ def _cmd_reindex_identity(args: list[str]) -> int:
     return cmd_reindex_identity(args)
 
 
+def _open_in_browser(path: str) -> None:
+    import webbrowser
+    from pathlib import Path
+
+    webbrowser.open(Path(path).resolve().as_uri())
+
+
+def _cmd_render(args: list[str]) -> int:
+    """Convert a Mermaid (.mmd) file (or stdin) into a double-clickable .html."""
+    import argparse
+    from pathlib import Path
+
+    ap = argparse.ArgumentParser(prog="mememo render")
+    ap.add_argument("input", help="Mermaid .mmd file, or '-' for stdin")
+    ap.add_argument("--out", default=None, help="Output .html (default: alongside input)")
+    ap.add_argument("--title", default="mememo diagram")
+    ap.add_argument("--no-open", action="store_true", help="Don't open the browser")
+    ns = ap.parse_args(args)
+
+    if ns.input == "-":
+        mermaid = sys.stdin.read()
+        out = ns.out or "mememo-diagram.html"
+    else:
+        src = Path(ns.input)
+        if not src.is_file():
+            sys.stderr.write(f"render: no such file: {ns.input}\n")
+            return 1
+        mermaid = src.read_text(encoding="utf-8")
+        out = ns.out or str(src.with_suffix(".html"))
+
+    from .diagram_html import write_html
+
+    write_html(mermaid, out, title=ns.title)
+    print(f"wrote {out}")
+    if not ns.no_open:
+        _open_in_browser(out)
+    return 0
+
+
+def _cmd_diagram(args: list[str]) -> int:
+    """Generate a deterministic diagram from the index and open it in the browser."""
+    import argparse
+    import asyncio
+    from pathlib import Path
+
+    ap = argparse.ArgumentParser(prog="mememo diagram")
+    ap.add_argument("type", choices=["class", "call", "module"], help="Diagram type")
+    ap.add_argument("--scope", default=None, help="class: file/class; call: function/memory_id")
+    ap.add_argument(
+        "--repo", default=None, help="Repo path to pick repo_id/branch (default: busiest)"
+    )
+    ap.add_argument("--out", default=None, help="Output .html path")
+    ap.add_argument("--no-open", action="store_true")
+    ns = ap.parse_args(args)
+
+    from .core.storage_manager import StorageManager
+    from .diagram_html import write_html
+    from .diagrams import call_graph, class_diagram, module_dependency
+    from .types.config import MemoConfig
+
+    storage = StorageManager(base_dir=MemoConfig.from_env().storage.base_dir)
+    conn = storage.conn
+
+    repo_id, branch = _resolve_cli_repo(conn, ns.repo)
+    if repo_id is None:
+        sys.stderr.write("No indexed repo found. Index one first (index_repository).\n")
+        return 1
+
+    if ns.type == "class":
+        mermaid = class_diagram(conn, repo_id, branch, scope=ns.scope)
+    elif ns.type == "module":
+        mermaid = module_dependency(conn, repo_id, branch)
+    else:  # call
+        from .tools.generate_diagram import resolve_call_root
+
+        root = asyncio.run(resolve_call_root(conn, repo_id, branch, ns.scope))
+        if root is None:
+            sys.stderr.write(
+                f"Could not resolve a call-graph root from scope={ns.scope!r}. "
+                "Pass a function name that exists in the index.\n"
+            )
+            return 1
+        mermaid = call_graph(conn, root, depth=3)
+
+    out = ns.out or f"mememo-{ns.type}.html"
+    write_html(mermaid, out, title=f"mememo {ns.type} diagram")
+    print(f"wrote {Path(out).resolve()}")
+    if not ns.no_open:
+        _open_in_browser(out)
+    return 0
+
+
+def _resolve_cli_repo(conn, repo_path: str | None) -> tuple[str | None, str | None]:
+    """Pick (repo_id, branch): detect from repo_path, else the busiest indexed repo."""
+    if repo_path:
+        import asyncio
+
+        from .core.git_manager import GitManager
+
+        try:
+            ctx = asyncio.run(GitManager().detect_context(repo_path))
+            return ctx.repo.id, ctx.branch.name
+        except Exception as e:
+            sys.stderr.write(
+                f"warning: could not detect repo from {repo_path!r} ({e}); "
+                "falling back to the busiest indexed repo.\n"
+            )
+    row = conn.execute(
+        "SELECT repo_id, branch_name FROM memories "
+        "GROUP BY repo_id, branch_name ORDER BY COUNT(*) DESC LIMIT 1"
+    ).fetchone()
+    return (row["repo_id"], row["branch_name"]) if row else (None, None)
+
+
 _SUBCOMMANDS = {
     "install-git-hooks": _cmd_install_git_hooks,
     "serve": _cmd_serve,
+    "diagram": _cmd_diagram,
+    "render": _cmd_render,
     "migrate-worktrees": _cmd_migrate_worktrees,
     "merge-branch": _cmd_merge_branch,
     "sync-commits": _cmd_sync_commits,
@@ -280,6 +396,8 @@ def main() -> None:
             f"  {name:<22} {_subcommand_help(name)}"
             for name in (
                 "serve",
+                "diagram",
+                "render",
                 "install-git-hooks",
                 "migrate-worktrees",
                 "merge-branch",
@@ -313,6 +431,8 @@ def main() -> None:
 def _subcommand_help(name: str) -> str:
     return {
         "serve": "Launch localhost web UI (requires [web] extra)",
+        "diagram": "Generate a class/call/module diagram and open it in the browser",
+        "render": "Convert a Mermaid .mmd file into a double-clickable .html",
         "install-git-hooks": "Install opt-in post-merge / post-commit / pre-tool hooks",
         "migrate-worktrees": "Re-key legacy per-worktree repo_ids onto the canonical one",
         "merge-branch": "Shim over merge_branch MCP tool (called by post-merge hook)",
