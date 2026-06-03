@@ -208,6 +208,104 @@ def _cmd_import_md(args: list[str]) -> int:
     return cmd_import_md(args)
 
 
+def _cmd_index(args: list[str]) -> int:
+    """Index a repository into mememo from the CLI (the explicit first-index)."""
+    import argparse
+    import asyncio
+
+    ap = argparse.ArgumentParser(prog="mememo index")
+    ap.add_argument("path", nargs="?", default=".", help="Repo path (default: cwd)")
+    ap.add_argument("--full", action="store_true", help="Force a full (non-incremental) re-index")
+    ap.add_argument(
+        "--patterns", nargs="*", default=None, help="Glob patterns (default: code exts)"
+    )
+    ap.add_argument("--max-files", type=int, default=1000)
+    ap.add_argument("--watch", action="store_true", help="Re-index on an interval until Ctrl-C")
+    ap.add_argument("--interval", type=float, default=60.0, help="--watch poll seconds")
+    ap.add_argument("--quiet", action="store_true")
+    ns = ap.parse_args(args)
+
+    async def _build() -> tuple:
+        # Build the memory manager directly rather than via initialize_mememo:
+        # a one-shot CLI index doesn't need the LLM adapter / skill store, and
+        # the background identity-migration thread it spawns can trip a shared
+        # huggingface_hub httpx client ("client has been closed") mid-index.
+        from pathlib import Path
+
+        from .core.git_manager import GitManager
+        from .core.identity import GLOBAL_REPO_ID
+        from .core.memory_manager import MemoryManager
+        from .core.storage_manager import StorageManager
+        from .core.vector_index import VectorIndex
+        from .embeddings.embedder import Embedder
+        from .types.config import MemoConfig
+
+        cfg = MemoConfig.from_env()
+        base = Path(cfg.storage.base_dir).expanduser()
+        base.mkdir(parents=True, exist_ok=True)
+        gm = GitManager()
+        emb = Embedder(
+            model_name=cfg.embedding.model_name,
+            device=cfg.embedding.device,
+            batch_size=cfg.embedding.batch_size,
+        )
+        try:
+            ctx = await gm.detect_context(ns.path)
+            repo_id, branch = ctx.repo.id, ctx.branch.name
+        except Exception:
+            repo_id, branch = GLOBAL_REPO_ID, "main"
+        mm = MemoryManager(
+            git_manager=gm,
+            storage_manager=StorageManager(base_dir=base),
+            embedder=emb,
+            vector_index=VectorIndex(
+                base_path=base / "vector_index",
+                repo_id=repo_id,
+                branch=branch,
+                dimension=emb.dimension,
+            ),
+            auto_sanitize=cfg.security.auto_sanitize,
+            secrets_detection=cfg.security.secrets_detection,
+        )
+        return cfg, mm
+
+    async def _index_once(cfg, mm, first: bool) -> bool:
+        from .tools.index_repository import index_repository
+        from .tools.schemas import IndexRepositoryParams
+
+        kw: dict = {
+            "repo_path": ns.path,
+            "incremental": not (ns.full and first),
+            "max_files": ns.max_files,
+        }
+        if ns.patterns:
+            kw["file_patterns"] = ns.patterns
+        resp = await index_repository(
+            IndexRepositoryParams(**kw), mm, ignored_dirs=cfg.indexing.ignored_dirs
+        )
+        if not ns.quiet:
+            print(resp.message)
+        return resp.success
+
+    async def _run() -> int:
+        cfg, mm = await _build()
+        ok = await _index_once(cfg, mm, first=True)
+        if not ns.watch:
+            return 0 if ok else 1
+        sys.stderr.write(f"watching {ns.path} every {ns.interval:.0f}s — Ctrl-C to stop\n")
+        try:
+            while True:
+                await asyncio.sleep(ns.interval)
+                await _index_once(cfg, mm, first=False)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            return 0
+
+    try:
+        return asyncio.run(_run())
+    except KeyboardInterrupt:
+        return 0
+
+
 def _cmd_reindex_identity(args: list[str]) -> int:
     from .cli import cmd_reindex_identity
 
@@ -331,6 +429,7 @@ def _resolve_cli_repo(conn, repo_path: str | None) -> tuple[str | None, str | No
 _SUBCOMMANDS = {
     "install-git-hooks": _cmd_install_git_hooks,
     "serve": _cmd_serve,
+    "index": _cmd_index,
     "diagram": _cmd_diagram,
     "render": _cmd_render,
     "migrate-worktrees": _cmd_migrate_worktrees,
@@ -396,6 +495,7 @@ def main() -> None:
             f"  {name:<22} {_subcommand_help(name)}"
             for name in (
                 "serve",
+                "index",
                 "diagram",
                 "render",
                 "install-git-hooks",
@@ -431,6 +531,7 @@ def main() -> None:
 def _subcommand_help(name: str) -> str:
     return {
         "serve": "Launch localhost web UI (requires [web] extra)",
+        "index": "Index a repo into mememo (the explicit first-index); --watch to keep it fresh",
         "diagram": "Generate a class/call/module diagram and open it in the browser",
         "render": "Convert a Mermaid .mmd file into a double-clickable .html",
         "install-git-hooks": "Install opt-in post-merge / post-commit / pre-tool hooks",

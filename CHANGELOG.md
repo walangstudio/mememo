@@ -1,6 +1,22 @@
 # Changelog
 
-## [0.14.3] - 2026-06-02
+## [0.15.0] - 2026-06-02
+
+### Added
+- **`mememo index <path>` CLI** — the explicit first-index without going through
+  a chat tool (there was no CLI verb before). `--full` forces a non-incremental
+  re-index, `--watch [--interval N]` keeps a repo fresh on a poll loop, `--quiet`
+  for hooks. Builds the memory manager directly (no LLM adapter / background
+  migration thread) and writes to the same store/vector-index the server reads.
+- **Opt-in auto-index on session start.** `MEMEMO_AUTO_INDEX_ON_SESSION_START=true`
+  (or `hook.auto_index_on_session_start`) makes the SessionStart hook spawn a
+  detached `mememo index <repo>` for the current repo — full first index, then
+  incremental — so a project stays indexed with no explicit trigger. Non-blocking
+  (never delays session open) and guarded by a per-repo lock with a TTL
+  (`auto_index_min_interval_minutes`, default 15) so concurrent sessions don't
+  pile up indexes.
+
+
 
 ### Fixed
 - **Empty diagram crashed the renderer with a Mermaid parse error**
