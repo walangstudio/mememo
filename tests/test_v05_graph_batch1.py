@@ -509,6 +509,30 @@ def test_top_level_function_has_no_class_name() -> None:
     assert helper.class_name is None
 
 
+def test_nested_closure_in_method_is_not_a_class_member() -> None:
+    # A helper closure defined inside a method must NOT inherit the class — only
+    # the direct enclosing scope counts, or class diagrams list local helpers as
+    # methods.
+    sample = """\
+class Service:
+    def handle(self):
+        def _inner():
+            return 1
+
+        return _inner()
+"""
+    chunker = PythonASTChunker()
+    chunks, _ = chunker.chunk_with_edges(sample, "pkg/svc.py")
+    inner = next(c for c in chunks if c.function_name == "_inner")
+    assert inner.chunk_type == "function"
+    assert inner.class_name is None
+    assert inner.parent_class is None
+    # ...while the real method still carries its class.
+    handle = next(c for c in chunks if c.function_name == "handle")
+    assert handle.chunk_type == "method"
+    assert handle.class_name == "Service"
+
+
 def test_self_method_call_targets_class_qualified_symbol() -> None:
     chunker = PythonASTChunker()
     _, edges = chunker.chunk_with_edges(SELF_CALL_SAMPLE, "pkg/svc.py")

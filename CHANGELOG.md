@@ -12,6 +12,10 @@
   class (the bodies were empty before), call-graph labels read `Class.fn`
   instead of bare `fn`, and the index qualname becomes `module.Class.method`.
   **Requires a re-index** for already-indexed repos (`mememo index <path> --full`).
+  A method's owning class is the *direct* enclosing scope, so a helper closure
+  nested inside a method stays a plain function and never pollutes the class
+  diagram's member list. (Removed the dead `_emit_edges` second-pass walker,
+  superseded by the unified `chunk_with_edges` traversal.)
 
 ### Added
 - **`self.x()` / `cls.x()` calls resolve to real `CALLS` edges.** Intra-class

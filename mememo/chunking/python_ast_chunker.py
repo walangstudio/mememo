@@ -164,7 +164,12 @@ class PythonASTChunker(BaseChunker):
                 return
 
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                parent = enclosing_class()
+                # A method's owning class is the *direct* enclosing scope, not any
+                # ancestor class: a helper closure nested inside a method must stay
+                # a plain function (class_name=None) so it doesn't pollute the
+                # class diagram's member list. scope_stack[-1] is the immediate
+                # named scope (control-flow blocks like `if` don't push).
+                parent = scope_stack[-1][1] if scope_stack[-1][0] == "class" else None
                 qual = f"{cur_qualname()}.{node.name}"
                 start = node.lineno
                 end = node.end_lineno or start
@@ -176,10 +181,9 @@ class PythonASTChunker(BaseChunker):
                         end_line=end,
                         chunk_type="method" if parent else "function",
                         function_name=node.name,
-                        # A method's owning class is its SQL-queryable context:
-                        # together with function_name it forms the qualname
-                        # (module.Class.method) that call resolution + class
-                        # diagrams key on. Top-level functions stay class_name=None.
+                        # class_name is the SQL-queryable owning class: with
+                        # function_name it forms the module.Class.method qualname
+                        # that call resolution and class diagrams key on.
                         class_name=parent,
                         docstring=docstring,
                         decorators=[self._get_decorator_name(d) for d in node.decorator_list]
@@ -277,79 +281,3 @@ def _call_target(func: ast.expr, class_qualname: str | None) -> str:
     ):
         return f"{class_qualname}.{func.attr}" if class_qualname else func.attr
     return _name_from_attr_chain(func)
-
-
-def _emit_edges(tree: ast.AST, module: str) -> list[RawEdge]:
-    """Second-pass walker that emits IMPORTS / CALLS / EXTENDS / USES /
-    DECORATED_BY edges. The source_qualname of every edge is the qualified
-    path of the enclosing function/class/module, never just ``module``."""
-    edges: list[RawEdge] = []
-
-    # Track the enclosing scope stack so we know which function / class
-    # produces each edge. Pure DFS — simple parents-during-walk pattern.
-    scope_stack: list[str] = [module]  # module is the implicit outer scope
-
-    def cur() -> str:
-        return ".".join(scope_stack)
-
-    def walk(node: ast.AST) -> None:
-        # Imports always sit at the module scope of THIS file.
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                edges.append(RawEdge(module, alias.name, "IMPORTS"))
-            return
-        if isinstance(node, ast.ImportFrom):
-            base = node.module or ""
-            for alias in node.names:
-                target = f"{base}.{alias.name}" if base else alias.name
-                edges.append(RawEdge(module, target, "IMPORTS"))
-            return
-
-        if isinstance(node, ast.ClassDef):
-            qual = f"{cur()}.{node.name}"
-            # EXTENDS edges per base class.
-            for base in node.bases:
-                tgt = _name_from_attr_chain(base)
-                if tgt:
-                    edges.append(RawEdge(qual, tgt, "EXTENDS"))
-            # DECORATED_BY on the class itself.
-            for dec in node.decorator_list:
-                tgt = _name_from_attr_chain(dec.func if isinstance(dec, ast.Call) else dec)
-                if tgt:
-                    edges.append(RawEdge(qual, tgt, "DECORATED_BY"))
-            scope_stack.append(node.name)
-            for child in ast.iter_child_nodes(node):
-                walk(child)
-            scope_stack.pop()
-            return
-
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            qual = f"{cur()}.{node.name}"
-            for dec in node.decorator_list:
-                tgt = _name_from_attr_chain(dec.func if isinstance(dec, ast.Call) else dec)
-                if tgt:
-                    edges.append(RawEdge(qual, tgt, "DECORATED_BY"))
-            scope_stack.append(node.name)
-            for child in ast.iter_child_nodes(node):
-                walk(child)
-            scope_stack.pop()
-            return
-
-        if isinstance(node, ast.Call):
-            tgt = _name_from_attr_chain(node.func)
-            if tgt:
-                edges.append(RawEdge(cur(), tgt, "CALLS"))
-            for child in ast.iter_child_nodes(node):
-                walk(child)
-            return
-
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-            # ``self.foo`` access inside a method — emit a USES edge to ``foo``.
-            if node.value.id in ("self", "cls"):
-                edges.append(RawEdge(cur(), node.attr, "USES"))
-
-        for child in ast.iter_child_nodes(node):
-            walk(child)
-
-    walk(tree)
-    return edges
