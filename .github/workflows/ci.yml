@@ -48,6 +48,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # The integration tests load sentence-transformers/all-MiniLM-L6-v2. Cache
+      # the HF model across runs so we don't re-download it every time — repeated
+      # downloads get rate-limited (HTTP 429), which flakily fails the job.
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-all-MiniLM-L6-v2-v1
+          restore-keys: |
+            hf-${{ runner.os }}-
+
       - name: Run tests
         run: pytest tests/ -v --cov=mememo --cov-report=xml
 
