@@ -46,6 +46,12 @@ class PythonASTChunker(BaseChunker):
         """
         Chunk Python code using AST parsing.
 
+        Delegates to the scope-aware ``chunk_with_edges`` walk and drops the
+        edges. This is the single source of truth for chunk metadata, so memory
+        chunks carry the same ``parent_class`` / ``class_name`` linkage the edge
+        pass relies on (a method's owning class must be queryable for class
+        diagrams and for qualname-based call resolution).
+
         Args:
             code: Python source code
             file_path: Path to file
@@ -56,30 +62,7 @@ class PythonASTChunker(BaseChunker):
         Raises:
             SyntaxError: If Python code has syntax errors
         """
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            logger.warning(f"Python syntax error in {file_path}: {e}")
-            raise
-
-        chunks = []
-        lines = code.split("\n")
-
-        # Walk the AST and extract chunks
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                chunk = self._extract_function(node, lines, file_path)
-                if chunk:
-                    chunks.append(chunk)
-            elif isinstance(node, ast.AsyncFunctionDef):
-                chunk = self._extract_function(node, lines, file_path, is_async=True)
-                if chunk:
-                    chunks.append(chunk)
-            elif isinstance(node, ast.ClassDef):
-                chunk = self._extract_class(node, lines, file_path)
-                if chunk:
-                    chunks.append(chunk)
-
+        chunks, _edges = self.chunk_with_edges(code, file_path)
         logger.debug(f"Extracted {len(chunks)} chunks from {file_path}")
         return chunks
 
@@ -115,6 +98,17 @@ class PythonASTChunker(BaseChunker):
                 if kind == "class":
                     return name
             return None
+
+        def enclosing_class_qualname() -> str | None:
+            """Dotted path up to and including the nearest enclosing class,
+            e.g. ``pkg.mod.Outer.Inner`` — used to bind ``self.x()`` calls."""
+            last = -1
+            for i, (kind, _name) in enumerate(scope_stack):
+                if kind == "class":
+                    last = i
+            if last < 0:
+                return None
+            return ".".join(name for _, name in scope_stack[: last + 1])
 
         def visit(node: ast.AST) -> None:
             if isinstance(node, ast.Import):
@@ -182,6 +176,11 @@ class PythonASTChunker(BaseChunker):
                         end_line=end,
                         chunk_type="method" if parent else "function",
                         function_name=node.name,
+                        # A method's owning class is its SQL-queryable context:
+                        # together with function_name it forms the qualname
+                        # (module.Class.method) that call resolution + class
+                        # diagrams key on. Top-level functions stay class_name=None.
+                        class_name=parent,
                         docstring=docstring,
                         decorators=[self._get_decorator_name(d) for d in node.decorator_list]
                         or None,
@@ -207,7 +206,7 @@ class PythonASTChunker(BaseChunker):
                 return
 
             if isinstance(node, ast.Call):
-                tgt = _name_from_attr_chain(node.func)
+                tgt = _call_target(node.func, enclosing_class_qualname())
                 if tgt:
                     edges.append(RawEdge(cur_qualname(), tgt, "CALLS"))
                 for child in ast.iter_child_nodes(node):
@@ -224,115 +223,6 @@ class PythonASTChunker(BaseChunker):
         for child in ast.iter_child_nodes(tree):
             visit(child)
         return chunks, edges
-
-    def _extract_function(
-        self,
-        node: ast.FunctionDef,
-        lines: list[str],
-        file_path: str,
-        is_async: bool = False,
-    ) -> Chunk | None:
-        """
-        Extract function definition with metadata.
-
-        Args:
-            node: AST FunctionDef node
-            lines: Source code lines
-            file_path: Path to file
-            is_async: Whether function is async
-
-        Returns:
-            Chunk or None if extraction fails
-        """
-        start_line = node.lineno
-        end_line = node.end_lineno or start_line
-
-        # Extract text
-        text = "\n".join(lines[start_line - 1 : end_line])
-
-        # Extract docstring
-        docstring = ast.get_docstring(node)
-
-        # Extract decorators
-        decorators = []
-        for dec in node.decorator_list:
-            decorators.append(self._get_decorator_name(dec))
-
-        # Check if this is a method (inside a class)
-        parent_class = None
-        # Note: We'd need to track parent context during walk for this
-        # For now, we'll detect methods by checking for 'self' or 'cls' first param
-        is_method = False
-        if node.args.args:
-            first_arg = node.args.args[0].arg
-            if first_arg in ("self", "cls"):
-                is_method = True
-
-        return Chunk(
-            text=text,
-            start_line=start_line,
-            end_line=end_line,
-            chunk_type="method" if is_method else "function",
-            function_name=node.name,
-            docstring=docstring,
-            decorators=decorators if decorators else None,
-            parent_class=parent_class,
-            language="python",
-            file_path=file_path,
-        )
-
-    def _extract_class(
-        self,
-        node: ast.ClassDef,
-        lines: list[str],
-        file_path: str,
-    ) -> Chunk | None:
-        """
-        Extract class definition with metadata.
-
-        Args:
-            node: AST ClassDef node
-            lines: Source code lines
-            file_path: Path to file
-
-        Returns:
-            Chunk or None if extraction fails
-        """
-        start_line = node.lineno
-        end_line = node.end_lineno or start_line
-
-        # Extract text
-        text = "\n".join(lines[start_line - 1 : end_line])
-
-        # Extract docstring
-        docstring = ast.get_docstring(node)
-
-        # Extract decorators
-        decorators = []
-        for dec in node.decorator_list:
-            decorators.append(self._get_decorator_name(dec))
-
-        # Extract parent class (first base class)
-        parent_class = None
-        if node.bases:
-            base = node.bases[0]
-            if isinstance(base, ast.Name):
-                parent_class = base.id
-            elif isinstance(base, ast.Attribute):
-                parent_class = base.attr
-
-        return Chunk(
-            text=text,
-            start_line=start_line,
-            end_line=end_line,
-            chunk_type="class",
-            class_name=node.name,
-            docstring=docstring,
-            decorators=decorators if decorators else None,
-            parent_class=parent_class,
-            language="python",
-            file_path=file_path,
-        )
 
     def _get_decorator_name(self, decorator: ast.expr) -> str:
         """
@@ -370,6 +260,23 @@ def _name_from_attr_chain(node: ast.expr) -> str:
         base = _name_from_attr_chain(node.value)
         return f"{base}.{node.attr}" if base else node.attr
     return ""
+
+
+def _call_target(func: ast.expr, class_qualname: str | None) -> str:
+    """Resolve a call's target label.
+
+    ``self.x()`` / ``cls.x()`` inside a class bind to that class's member
+    (``pkg.mod.Class.x``) so the resolver links intra-class calls to the right
+    method instead of leaving a dangling ``self.x`` symbol. Everything else
+    falls back to the dotted name chain (``foo``, ``mod.bar``).
+    """
+    if (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id in ("self", "cls")
+    ):
+        return f"{class_qualname}.{func.attr}" if class_qualname else func.attr
+    return _name_from_attr_chain(func)
 
 
 def _emit_edges(tree: ast.AST, module: str) -> list[RawEdge]:

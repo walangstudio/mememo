@@ -458,6 +458,87 @@ def test_method_chunk_has_parent_class_via_unified_walk() -> None:
     assert all(m.parent_class == "MyClass" for m in methods)
 
 
+# ---------- method/class linkage for diagrams + call resolution -------------
+
+
+SELF_CALL_SAMPLE = """\
+class Service:
+    def handle(self):
+        self.process()
+        helper()
+
+    def process(self):
+        return 1
+
+
+def helper():
+    return 0
+"""
+
+
+def test_method_chunk_carries_class_name_for_diagrams() -> None:
+    # class_diagram attaches methods via WHERE class_name = ?, and the index
+    # qualname builder needs class_name to form module.Class.method. A method
+    # chunk must therefore expose its owning class as class_name (not only
+    # parent_class, which is not a SQL-queryable column).
+    chunker = PythonASTChunker()
+    chunks, _ = chunker.chunk_with_edges(PY_SAMPLE, "pkg/mod.py")
+    methods = [c for c in chunks if c.chunk_type == "method"]
+    assert methods
+    assert all(m.class_name == "MyClass" for m in methods)
+    # The class row itself is a class node (no function_name), not a method.
+    classes = [c for c in chunks if c.chunk_type == "class"]
+    assert classes and all(c.function_name is None for c in classes)
+
+
+def test_legacy_chunk_path_populates_method_class_name() -> None:
+    # The production path (factory.chunk_file -> chunk()) must produce the same
+    # class linkage as chunk_with_edges — that's the path that builds memories.
+    chunker = PythonASTChunker()
+    chunks = chunker.chunk(PY_SAMPLE, "pkg/mod.py")
+    method = next(c for c in chunks if c.chunk_type == "method")
+    assert method.class_name == "MyClass"
+    assert method.function_name == "method"
+
+
+def test_top_level_function_has_no_class_name() -> None:
+    chunker = PythonASTChunker()
+    chunks, _ = chunker.chunk_with_edges(SELF_CALL_SAMPLE, "pkg/svc.py")
+    helper = next(c for c in chunks if c.function_name == "helper")
+    assert helper.chunk_type == "function"
+    assert helper.class_name is None
+
+
+def test_self_method_call_targets_class_qualified_symbol() -> None:
+    chunker = PythonASTChunker()
+    _, edges = chunker.chunk_with_edges(SELF_CALL_SAMPLE, "pkg/svc.py")
+    calls = [e for e in edges if e.edge_type == "CALLS"]
+    # self.process() inside handle binds to the class member, not "self.process".
+    assert any(
+        e.source_qualname == "pkg.svc.Service.handle"
+        and e.target_label == "pkg.svc.Service.process"
+        for e in calls
+    )
+    # A bare imported/module call still resolves by plain name.
+    assert any(e.target_label == "helper" for e in calls)
+    # No dangling self.* labels leak through.
+    assert not any(e.target_label.startswith("self.") for e in calls)
+
+
+def test_self_call_resolves_to_method_memory() -> None:
+    from mememo.chunking.base_chunker import RawEdge
+
+    symbols = [
+        SymbolEntry(memory_id="m-handle", qualname="pkg.svc.Service.handle"),
+        SymbolEntry(memory_id="m-process", qualname="pkg.svc.Service.process"),
+    ]
+    raw = [RawEdge("pkg.svc.Service.handle", "pkg.svc.Service.process", "CALLS")]
+    relations = resolve_edges(raw, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols)
+    assert relations[0].confidence == "EXTRACTED"
+    assert relations[0].target_memory_id == "m-process"
+    assert relations[0].target_symbol is None
+
+
 # ---------- T022: entity dedup pipeline -------------------------------------
 
 

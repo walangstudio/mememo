@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.16.0] - 2026-06-03
+
+### Fixed
+- **Python method chunks now carry their owning class.** The production chunk
+  path (`factory.chunk_file` → `PythonASTChunker.chunk`) used a flat
+  `ast.walk` that hardcoded `parent_class=None` and never set `class_name` on
+  methods, so every indexed method memory had zero class linkage. `chunk()` now
+  delegates to the scope-aware `chunk_with_edges` walk and methods record
+  `class_name = <owning class>`. Effects: class diagrams attach methods to their
+  class (the bodies were empty before), call-graph labels read `Class.fn`
+  instead of bare `fn`, and the index qualname becomes `module.Class.method`.
+  **Requires a re-index** for already-indexed repos (`mememo index <path> --full`).
+
+### Added
+- **`self.x()` / `cls.x()` calls resolve to real `CALLS` edges.** Intra-class
+  method calls used to emit a dangling `self.x` target the resolver could never
+  match; they now bind to the enclosing class member (`module.Class.x`), so the
+  resolver links them to the method's memory. Richer call graphs and
+  `graph_neighbors` / `graph_impact` over object-oriented Python.
+
 ## [0.15.1] - 2026-06-03
 
 ### Fixed (code review of v0.15.0)
