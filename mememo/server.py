@@ -22,12 +22,8 @@ from fastmcp import FastMCP
 
 # v0.6 MCP resources (T031)
 from . import resources as _resources
-from .core.git_manager import GitManager
 from .core.llm_adapter import LLMAdapter
 from .core.memory_manager import MemoryManager
-from .core.storage_manager import StorageManager
-from .core.vector_index import VectorIndex
-from .embeddings.embedder import Embedder
 from .tools import (
     batch_store as batch_store_impl,
 )
@@ -436,62 +432,14 @@ async def initialize_mememo():
                 "sqlite3 against sqlcipher, or unset the flag to silence this warning."
             )
 
-    # Initialize storage manager
-    storage_manager = StorageManager(base_dir=base_dir)
-    logger.info("Storage manager initialized")
+    # Build the core stack via the shared factory (same wiring `mememo index`
+    # uses, so the CLI and server never drift on vector-index path / security
+    # flags / repo-id fallback). detect_context(None) uses the server's cwd.
+    from .core.bootstrap import build_memory_manager
 
-    # Initialize git manager
-    git_manager = GitManager()
-    logger.info("Git manager initialized")
-
-    # Initialize embedder (lazy loading - model loaded on first use)
-    embedder = Embedder(
-        model_name=config.embedding.model_name,
-        device=config.embedding.device,
-        batch_size=config.embedding.batch_size,
-    )
-    logger.info(f"Embedder initialized: {config.embedding.model_name}")
-
-    # Detect git context (optional - use defaults if not in a repo)
-    from .core.identity import GLOBAL_REPO_ID
-
-    try:
-        git_context = await git_manager.detect_context()
-        repo_id = git_context.repo.id
-        branch = git_context.branch.name
-        logger.info(f"Git context detected - Repository: {repo_id}, Branch: {branch}")
-    except RuntimeError:
-        # Not in a git repository. MEMEMO_REPO_ID (already checked inside
-        # resolve_project_id when in a repo) still applies here: if set, use it
-        # so the caller can pin a stable id without a git remote.
-        repo_id = os.environ.get("MEMEMO_REPO_ID", "").strip() or GLOBAL_REPO_ID
-        branch = "main"
-        logger.warning(
-            "Not in a git repository: using repo_id=%r. "
-            "Memories will commingle across non-git mememo sessions unless "
-            "MEMEMO_REPO_ID is set explicitly.",
-            repo_id,
-        )
-
-    # Initialize vector index
-    vector_index = VectorIndex(
-        base_path=base_dir / "vector_index",
-        repo_id=repo_id,
-        branch=branch,
-        dimension=embedder.dimension,
-    )
-    logger.info(f"Vector index initialized (repo: {repo_id}, branch: {branch})")
-
-    # Initialize memory manager
-    memory_manager = MemoryManager(
-        git_manager=git_manager,
-        storage_manager=storage_manager,
-        embedder=embedder,
-        vector_index=vector_index,
-        auto_sanitize=config.security.auto_sanitize,
-        secrets_detection=config.security.secrets_detection,
-    )
-    logger.info("Memory manager initialized")
+    memory_manager, repo_id, branch = await build_memory_manager(config)
+    storage_manager = memory_manager.storage_manager
+    logger.info("Memory manager initialized (repo: %s, branch: %s)", repo_id, branch)
 
     # Initialize LLM adapter (lazy — no API calls until capture is invoked)
     llm_adapter = LLMAdapter()

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.15.1] - 2026-06-03
+
+### Fixed (code review of v0.15.0)
+- **Auto-index lock not released on a crashed child.** The detached
+  `mememo index` child can die silently (e.g. the embedder fails to load); its
+  lock then suppressed auto-indexing for the whole TTL (15 min). The child now
+  owns its lock (`--autoindex-lock`) and releases it on any non-zero exit, so the
+  next session retries instead of waiting it out.
+- **Stale-lock reclaim race.** Two sessions opening at once could both unlink an
+  expired lock and both spawn. Acquisition is now a bounded `O_EXCL`-create loop:
+  only one create wins; the loser re-checks, sees the fresh lock, and skips.
+- **`mememo index --watch` swallowed failed rounds.** A round that returns
+  `success=False` (errors are caught inside `index_repository`) now logs a
+  warning instead of looking identical to success.
+- **CLI/server construction drift.** `mememo index` and `initialize_mememo` now
+  share one `build_memory_manager(config)` factory (`mememo/core/bootstrap.py`),
+  so the vector-index path, secret-scan/auto-sanitize flags, and repo-id fallback
+  (now honoring `MEMEMO_REPO_ID` in both) can't diverge.
+
 ## [0.15.0] - 2026-06-02
 
 ### Added

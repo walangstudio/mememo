@@ -223,50 +223,22 @@ def _cmd_index(args: list[str]) -> int:
     ap.add_argument("--watch", action="store_true", help="Re-index on an interval until Ctrl-C")
     ap.add_argument("--interval", type=float, default=60.0, help="--watch poll seconds")
     ap.add_argument("--quiet", action="store_true")
+    # Set by the auto-index spawner: a lock file this run owns and must release
+    # on failure so a crashed child doesn't suppress retries for the whole TTL.
+    ap.add_argument("--autoindex-lock", default=None, help=argparse.SUPPRESS)
     ns = ap.parse_args(args)
 
     async def _build() -> tuple:
-        # Build the memory manager directly rather than via initialize_mememo:
-        # a one-shot CLI index doesn't need the LLM adapter / skill store, and
-        # the background identity-migration thread it spawns can trip a shared
-        # huggingface_hub httpx client ("client has been closed") mid-index.
-        from pathlib import Path
-
-        from .core.git_manager import GitManager
-        from .core.identity import GLOBAL_REPO_ID
-        from .core.memory_manager import MemoryManager
-        from .core.storage_manager import StorageManager
-        from .core.vector_index import VectorIndex
-        from .embeddings.embedder import Embedder
+        # Build the memory manager via the shared factory (same wiring the server
+        # uses) rather than initialize_mememo: a one-shot CLI index doesn't need
+        # the LLM adapter / skill store, and the background identity-migration
+        # thread initialize_mememo spawns can trip a shared huggingface_hub httpx
+        # client ("client has been closed") mid-index.
+        from .core.bootstrap import build_memory_manager
         from .types.config import MemoConfig
 
         cfg = MemoConfig.from_env()
-        base = Path(cfg.storage.base_dir).expanduser()
-        base.mkdir(parents=True, exist_ok=True)
-        gm = GitManager()
-        emb = Embedder(
-            model_name=cfg.embedding.model_name,
-            device=cfg.embedding.device,
-            batch_size=cfg.embedding.batch_size,
-        )
-        try:
-            ctx = await gm.detect_context(ns.path)
-            repo_id, branch = ctx.repo.id, ctx.branch.name
-        except Exception:
-            repo_id, branch = GLOBAL_REPO_ID, "main"
-        mm = MemoryManager(
-            git_manager=gm,
-            storage_manager=StorageManager(base_dir=base),
-            embedder=emb,
-            vector_index=VectorIndex(
-                base_path=base / "vector_index",
-                repo_id=repo_id,
-                branch=branch,
-                dimension=emb.dimension,
-            ),
-            auto_sanitize=cfg.security.auto_sanitize,
-            secrets_detection=cfg.security.secrets_detection,
-        )
+        mm, _repo_id, _branch = await build_memory_manager(cfg, repo_path=ns.path)
         return cfg, mm
 
     async def _index_once(cfg, mm, first: bool) -> bool:
@@ -296,14 +268,30 @@ def _cmd_index(args: list[str]) -> int:
         try:
             while True:
                 await asyncio.sleep(ns.interval)
-                await _index_once(cfg, mm, first=False)
+                if not await _index_once(cfg, mm, first=False):
+                    # index_repository swallows errors and returns success=False;
+                    # surface it so a repo that fails every tick isn't silent.
+                    sys.stderr.write(f"mememo index: watch round failed for {ns.path}\n")
         except (KeyboardInterrupt, asyncio.CancelledError):
             return 0
 
+    # When spawned as a background auto-index child, the parent passed the lock
+    # path. Release it on failure so the next session retries instead of waiting
+    # out the TTL; leave it on success so the TTL rate-limit works.
+    lock_path = ns.autoindex_lock
     try:
-        return asyncio.run(_run())
+        rc = asyncio.run(_run())
     except KeyboardInterrupt:
-        return 0
+        rc = 0
+    except Exception as exc:
+        sys.stderr.write(f"mememo index failed: {exc}\n")
+        rc = 1
+    if lock_path and rc != 0:
+        try:
+            os.unlink(lock_path)
+        except OSError:
+            pass
+    return rc
 
 
 def _cmd_reindex_identity(args: list[str]) -> int:
