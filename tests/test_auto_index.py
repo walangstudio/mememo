@@ -9,6 +9,22 @@ def test_index_subcommand_registered() -> None:
     assert "index" in _SUBCOMMANDS
 
 
+def test_index_cli_releases_autoindex_lock_on_failure(tmp_path, monkeypatch) -> None:
+    # A failed auto-index child must release its lock so the next session retries
+    # instead of waiting out the TTL. Uses a non-existent repo path so the index
+    # fails fast (index_repository validates the path before loading the model).
+    monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(tmp_path / "store"))
+    from mememo.__main__ import _cmd_index
+
+    lock = tmp_path / "held.lock"
+    lock.write_text("repo")
+    missing = str(tmp_path / "no_such_repo")
+
+    rc = _cmd_index([missing, "--quiet", "--autoindex-lock", str(lock)])
+    assert rc == 1
+    assert not lock.exists()
+
+
 def test_auto_index_config_flag(monkeypatch) -> None:
     from mememo.types.config import MemoConfig
 
@@ -32,8 +48,10 @@ def test_maybe_background_index_spawns_then_respects_lock(tmp_path, monkeypatch)
     ss._maybe_background_index(cfg, str(tmp_path), spawn=lambda argv: calls.append(argv))
     assert len(calls) == 1
     argv = calls[0]
-    assert "index" in argv and argv[-1] == "--quiet"
-    assert "mememo" in argv
+    assert "index" in argv and "--quiet" in argv and "mememo" in argv
+    # The child is handed its lock so it can release it on its own failure.
+    assert "--autoindex-lock" in argv
+    assert argv[argv.index("--autoindex-lock") + 1].endswith(".lock")
 
     # A second call within the TTL window must NOT spawn again (lock guard).
     calls.clear()

@@ -138,8 +138,11 @@ def _maybe_background_index(cfg, cwd: str, spawn=_spawn_detached) -> None:
     repo = repos[0]
 
     # Claim the slot atomically *before* spawning so two sessions opening at once
-    # don't both kick off an index (O_EXCL create). A recent lock means one ran
-    # within the TTL → skip; a stale lock is reclaimed.
+    # don't both kick off an index. O_EXCL create is the only atomic step: the
+    # winner creates the file; a loser that sees a fresh lock skips. A stale lock
+    # (older than the TTL) is reclaimed. The bounded loop avoids the TOCTOU where
+    # both sessions unlink a stale lock and both then create — only one create
+    # wins, the other re-checks and sees the now-fresh lock.
     lock = None
     try:
         from ..utils.hashing import hash_path
@@ -148,20 +151,33 @@ def _maybe_background_index(cfg, cwd: str, spawn=_spawn_detached) -> None:
         lock_dir.mkdir(parents=True, exist_ok=True)
         candidate = lock_dir / f"{hash_path(repo)}.lock"
         ttl = cfg.hook.auto_index_min_interval_minutes * 60
-        if candidate.exists():
-            if (time.time() - candidate.stat().st_mtime) < ttl:
-                return  # one ran recently
-            candidate.unlink()  # stale — reclaim
-        with open(candidate, "x", encoding="utf-8") as fh:
-            fh.write(repo)
-        lock = candidate
-    except FileExistsError:
-        return  # lost the race to a concurrent session
+        for _ in range(3):
+            try:
+                with open(candidate, "x", encoding="utf-8") as fh:
+                    fh.write(repo)
+                lock = candidate
+                break
+            except FileExistsError:
+                try:
+                    age = time.time() - candidate.stat().st_mtime
+                except OSError:
+                    continue  # vanished between create and stat — retry
+                if age < ttl:
+                    return  # a recent run (possibly a racing session) owns it
+                try:
+                    candidate.unlink()  # stale — reclaim and retry the create
+                except OSError:
+                    pass
     except Exception:
         lock = None  # locking is best-effort; proceed unguarded
 
+    argv = [sys.executable, "-m", "mememo", "index", repo, "--quiet"]
+    if lock is not None:
+        # Hand the lock to the child so it releases it on failure (the child can
+        # detect its own crash; the parent, fire-and-forget, cannot).
+        argv += ["--autoindex-lock", str(lock)]
     try:
-        spawn([sys.executable, "-m", "mememo", "index", repo, "--quiet"])
+        spawn(argv)
         print(
             f"mememo session-start: background indexing {os.path.basename(repo)}", file=sys.stderr
         )
