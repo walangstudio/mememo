@@ -189,6 +189,19 @@ class HookConfig(BaseModel):
         default=8, gt=0, description="Max repos to scan in workspace discovery"
     )
 
+    # Auto-index on session start (opt-in). When True, SessionStart spawns a
+    # detached `mememo index <repo>` for the current repo (full first index, then
+    # incremental) so a project stays indexed without an explicit trigger.
+    auto_index_on_session_start: bool = Field(
+        default=False,
+        description="On session start, background-index the current repo (opt-in)",
+    )
+    auto_index_min_interval_minutes: float = Field(
+        default=15.0,
+        gt=0,
+        description="Skip auto-index if one ran for this repo within this window",
+    )
+
 
 class Config(BaseModel):
     """Complete mememo configuration."""
@@ -282,6 +295,13 @@ class Config(BaseModel):
                     os.getenv("MEMEMO_HOOK_SESSION_START_TOKEN_BUDGET", "600")
                 ),
                 workspace_max_repos=int(os.getenv("MEMEMO_WORKSPACE_MAX_REPOS", "8")),
+                auto_index_on_session_start=os.getenv(
+                    "MEMEMO_AUTO_INDEX_ON_SESSION_START", "false"
+                ).lower()
+                == "true",
+                auto_index_min_interval_minutes=float(
+                    os.getenv("MEMEMO_AUTO_INDEX_MIN_INTERVAL_MINUTES", "15.0")
+                ),
             ),
         )
 

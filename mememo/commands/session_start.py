@@ -32,9 +32,17 @@ async def cmd_session_start() -> None:
         or ""
     )
 
+    import os
+
     from ..types.config import MemoConfig
 
     cfg = MemoConfig.from_env()
+
+    # Opt-in: keep the current repo indexed without an explicit trigger. Spawns a
+    # detached `mememo index` so it never blocks session open. Runs independently
+    # of recall (a repo with no memories yet is exactly the one to index).
+    if cfg.hook.auto_index_on_session_start:
+        _maybe_background_index(cfg, cwd or os.getcwd())
 
     if not cfg.hook.session_start_enabled:
         print(json.dumps({"continue": True}))
@@ -43,8 +51,6 @@ async def cmd_session_start() -> None:
     from ..server import ensure_initialized
 
     await ensure_initialized()
-
-    import os
 
     import mememo.server as srv
 
@@ -84,6 +90,88 @@ async def cmd_session_start() -> None:
             }
         )
     )
+
+
+def _spawn_detached(argv: list[str]) -> None:
+    """Start a process that outlives this short-lived hook process."""
+    import subprocess
+
+    kwargs: dict = {
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "stdin": subprocess.DEVNULL,
+    }
+    if sys.platform == "win32":
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        kwargs["creationflags"] = 0x00000008 | 0x00000200
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(argv, **kwargs)
+
+
+def _maybe_background_index(cfg, cwd: str, spawn=_spawn_detached) -> None:
+    """Background-index the current repo if one hasn't run recently.
+
+    Best-effort and fully guarded: any failure is swallowed so a flaky spawn
+    never breaks session open. A per-repo lock file (TTL = auto_index_min_interval)
+    prevents every concurrent session from kicking off its own index.
+    """
+    import os
+    import time
+    from pathlib import Path
+
+    try:
+        from ..core.workspace import discover_workspace
+
+        repos = discover_workspace(cwd) or []
+    except Exception:
+        repos = []
+    if not repos:
+        # Only fall back to cwd if it's actually a git repo — otherwise we'd
+        # index an arbitrary directory (home / workspace root) under the global
+        # lane, polluting it and burying repo-scoped recall.
+        if cwd and (Path(cwd) / ".git").exists():
+            repos = [cwd]
+        else:
+            return
+
+    repo = repos[0]
+
+    # Claim the slot atomically *before* spawning so two sessions opening at once
+    # don't both kick off an index (O_EXCL create). A recent lock means one ran
+    # within the TTL → skip; a stale lock is reclaimed.
+    lock = None
+    try:
+        from ..utils.hashing import hash_path
+
+        lock_dir = Path(cfg.storage.base_dir).expanduser() / "autoindex"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        candidate = lock_dir / f"{hash_path(repo)}.lock"
+        ttl = cfg.hook.auto_index_min_interval_minutes * 60
+        if candidate.exists():
+            if (time.time() - candidate.stat().st_mtime) < ttl:
+                return  # one ran recently
+            candidate.unlink()  # stale — reclaim
+        with open(candidate, "x", encoding="utf-8") as fh:
+            fh.write(repo)
+        lock = candidate
+    except FileExistsError:
+        return  # lost the race to a concurrent session
+    except Exception:
+        lock = None  # locking is best-effort; proceed unguarded
+
+    try:
+        spawn([sys.executable, "-m", "mememo", "index", repo, "--quiet"])
+        print(
+            f"mememo session-start: background indexing {os.path.basename(repo)}", file=sys.stderr
+        )
+    except Exception as exc:
+        if lock is not None:
+            try:
+                lock.unlink()  # release so a later session can retry
+            except OSError:
+                pass
+        print(f"mememo session-start: auto-index spawn failed: {exc}", file=sys.stderr)
 
 
 def _format_session_context(results, cwd: str) -> str:
