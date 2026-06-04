@@ -35,6 +35,40 @@ MODEL_REGISTRY = {
 
 DeviceType = Literal["auto", "cpu", "cuda", "mps"]
 
+_SYSTEM_CA_READY = False
+
+
+def _ensure_system_ca() -> None:
+    """Route SSL verification through the OS trust store before the model download.
+
+    On a TLS-intercepting corporate proxy the standard certifi bundle doesn't
+    contain the proxy's root CA, so the first-run HuggingFace download fails with
+    ``CERTIFICATE_VERIFY_FAILED`` and mememo can't build an index. The OS trust
+    store *does* hold that CA (it's why browsers work), so ``truststore`` makes
+    the download succeed — the Python analog of curl/Node's ``--use-system-ca``.
+
+    Best-effort and idempotent: runs once, never raises (a missing truststore or
+    a failed injection just leaves the default certifi bundle in place). Opt out
+    with ``MEMEMO_USE_SYSTEM_CA=0`` to keep the stock CA bundle.
+    """
+    global _SYSTEM_CA_READY
+    if _SYSTEM_CA_READY:
+        return
+
+    import os
+
+    if os.environ.get("MEMEMO_USE_SYSTEM_CA", "1").strip().lower() in ("0", "false", "no"):
+        return  # opted out — leave the one-shot flag unset so it stays a no-op
+
+    _SYSTEM_CA_READY = True  # one attempt, even on failure
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+        logger.debug("truststore: SSL verification now uses the OS trust store")
+    except Exception as e:  # truststore absent or injection failed — degrade quietly
+        logger.debug("truststore unavailable (%s); using the default CA bundle", e)
+
 
 class Embedder:
     """
@@ -139,6 +173,11 @@ class Embedder:
                 f"Cache-only load failed ({type(e).__name__}: {e}); "
                 f"falling back to download for {model_info['name']}"
             )
+            # Only now, when a network download is actually required, route SSL
+            # through the OS trust store so the download works behind a corporate
+            # TLS proxy. Cached / offline loads never reach here, so the
+            # process-wide SSL change is scoped to genuine first-run downloads.
+            _ensure_system_ca()
             self._model = SentenceTransformer(
                 model_info["name"],
                 device=self.device,
