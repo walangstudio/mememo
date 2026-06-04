@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.2] - 2026-06-04
+
+### Docs
+- Code-review fix of v0.18.1: the Memory Graph feature bullet said typed edges
+  span "all 13 supported languages", which undercounts and drops Python — the
+  edge graph covers Python (AST) plus all 13 tree-sitter languages (14),
+  matching the count used elsewhere in the README.
+
 ## [0.18.1] - 2026-06-04
 
 ### Docs

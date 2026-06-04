@@ -29,7 +29,7 @@ clients (Cursor, Windsurf, Cline, etc.) see [Installation](#-installation).
 - **🔐 Security-First**: Secrets detection with auto-sanitization (covers cross-branch memory copies too, v0.4+)
 - **📂 Git-Aware**: Automatic branch isolation + linked-worktree-canonical `repo_id` (v0.6)
 - **⏱ Commit-Aware** *(v0.4)*: Every memory carries the SHA it was minted at; append-only event log enables time-travel recall and branch-merge unions
-- **🕸 Memory Graph** *(v0.5)*: Typed edges (`IMPORTS` / `CALLS` / `EXTENDS` / `IMPLEMENTS` / `USES` / `DECORATED_BY`) across all 13 supported languages; intra-class `self`/`this` calls resolve to the owning method (v0.16+); Louvain communities; symbol resolver with bounded fuzzy match
+- **🕸 Memory Graph** *(v0.5)*: Typed edges (`IMPORTS` / `CALLS` / `EXTENDS` / `IMPLEMENTS` / `USES` / `DECORATED_BY`) across Python and all 13 tree-sitter languages; intra-class `self`/`this` calls resolve to the owning method (v0.16+); Louvain communities; symbol resolver with bounded fuzzy match
 - **📐 Diagrams** *(v0.13+)*: `generate_diagram` emits Mermaid straight from the code graph — deterministic class / call / module diagrams, plus LLM-synthesized sequence / use-case / state / ERD (passthrough-aware, rendered in chat). Also a `/diagram` panel in the web UI
 - **🌐 Web UI** *(v0.6, optional)*: Localhost-only D3-force graph + paginated table + time-travel slider via `mememo serve`
 - **⚡ Incremental**: Only re-index changed files (Merkle DAG)
