@@ -45,7 +45,14 @@ def _flatten_member_expression(node, code_bytes: bytes) -> str:
 # Class-field node types across the grammars we extract attributes from, and
 # the nested-type nodes whose own fields must NOT be pulled into the outer class.
 _FIELD_NODE_TYPES = frozenset(
-    {"field_declaration", "public_field_definition", "field_definition", "property_declaration"}
+    {
+        "field_declaration",  # java / c / c++ / c# / rust / go
+        "public_field_definition",  # typescript
+        "field_definition",  # javascript
+        "property_declaration",  # c# / kotlin / swift / php
+        "val_definition",  # scala
+        "var_definition",  # scala
+    }
 )
 _NESTED_TYPE_NODES = frozenset(
     {
@@ -71,16 +78,43 @@ _DECLARATOR_WRAPPERS = frozenset(
 _NAME_NODE_TYPES = frozenset(
     {"identifier", "property_identifier", "private_property_identifier", "field_identifier"}
 )
+# Method/function/lambda bodies hold *locals*, never class fields — and in some
+# grammars (Scala ``val_definition``) a local uses the same node type as a field,
+# so the field walk must not descend into them.
+_SCOPE_BODY_NODES = frozenset(
+    {
+        "function_declaration",
+        "function_definition",
+        "function_item",
+        "method_declaration",
+        "method_definition",
+        "constructor_declaration",
+        "local_function_statement",
+        "lambda",
+        "lambda_literal",
+        "anonymous_function",
+        # Property accessors hold locals too (Swift computed/observed props,
+        # Kotlin custom get/set), and Swift/Kotlin locals reuse the field node.
+        "computed_property",
+        "getter",
+        "setter",
+    }
+)
 
 
 def _field_names(node, code_bytes: bytes) -> list[str]:
     """All field names a single field/property declaration declares.
 
     Returns a list because one declaration can declare several (``int a, b;``).
-    Handles a ``name``/``property`` field (Rust/Go/TS field, C# property, JS
-    field), Java/C# ``variable_declarator`` (incl. multiple), C++ bare
-    ``field_identifier`` and pointer/array/reference declarators, and C#'s
-    ``variable_declaration`` nesting.
+    Handles, across grammars: a ``name``/``property`` field (Rust/Go/TS/JS field,
+    C# property); Java/C# ``variable_declarator`` (incl. multiple); C++ bare
+    ``field_identifier`` and pointer/array/reference declarators; C#'s
+    ``variable_declaration`` nesting; Kotlin ``variable_declaration`` → identifier;
+    Swift ``pattern`` → simple_identifier; PHP ``property_element`` → variable_name;
+    Scala ``val_definition``/``var_definition`` → identifier.
+
+    Tuple-destructured fields (Swift ``var (x, y)`` / Scala ``val (a, b)``) are
+    not extracted — uncommon, and the single-name shortcut would be misleading.
     """
     direct = node.child_by_field_name("name") or node.child_by_field_name("property")
     if direct is not None and direct.type in _NAME_NODE_TYPES:
@@ -88,18 +122,43 @@ def _field_names(node, code_bytes: bytes) -> list[str]:
 
     names: list[str] = []
 
+    def add(n) -> None:
+        if n is not None:
+            t = _text(n, code_bytes)
+            if t:
+                names.append(t)
+
+    # Scala val/var definition: name is the leading identifier (type is a
+    # type_identifier, so no collision).
+    if node.type in ("val_definition", "var_definition"):
+        add(next((c for c in node.named_children if c.type == "identifier"), None))
+        return names
+
     def collect(n) -> None:
         for ch in n.children:
-            if ch.type == "field_identifier":
-                names.append(_text(ch, code_bytes))
-            elif ch.type == "variable_declarator":
-                nm = ch.child_by_field_name("name")
-                names.append(_text(nm if nm is not None else ch, code_bytes))
-            elif ch.type in _DECLARATOR_WRAPPERS or ch.type == "variable_declaration":
+            ct = ch.type
+            if ct == "field_identifier":
+                add(ch)
+            elif ct == "variable_declarator":  # java / c#
+                add(ch.child_by_field_name("name") or ch)
+            elif ct == "variable_name":  # php $field
+                t = _text(ch, code_bytes).lstrip("$")
+                if t:
+                    names.append(t)
+            elif ct == "variable_declaration":
+                # c# wraps variable_declarator(s); kotlin puts the bare name
+                # identifier first (followed by a user_type for the type).
+                if any(s.type == "variable_declarator" for s in ch.named_children):
+                    collect(ch)
+                else:
+                    add(next((s for s in ch.named_children if s.type == "identifier"), None))
+            elif ct == "pattern":  # swift property pattern
+                add(next((s for s in ch.named_children if s.type == "simple_identifier"), None))
+            elif ct == "property_element" or ct in _DECLARATOR_WRAPPERS:
                 collect(ch)
 
     collect(node)
-    return [n for n in names if n]
+    return names
 
 
 def _class_field_names(class_node, code_bytes: bytes) -> list[str]:
@@ -115,7 +174,7 @@ def _class_field_names(class_node, code_bytes: bytes) -> list[str]:
 
     def walk(node) -> None:
         for ch in node.children:
-            if ch.type in _NESTED_TYPE_NODES:
+            if ch.type in _NESTED_TYPE_NODES or ch.type in _SCOPE_BODY_NODES:
                 continue
             if ch.type in _FIELD_NODE_TYPES:
                 for nm in _field_names(ch, code_bytes):
@@ -1152,6 +1211,7 @@ def walk_kotlin(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
+                    attributes=_class_field_names(node, code_bytes) or None,
                     language="kotlin",
                     file_path=file_path,
                 )
@@ -1454,6 +1514,7 @@ def walk_php(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
+                    attributes=_class_field_names(node, code_bytes) or None,
                     language="php",
                     file_path=file_path,
                 )
@@ -1644,6 +1705,7 @@ def walk_swift(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
+                    attributes=_class_field_names(node, code_bytes) or None,
                     language="swift",
                     file_path=file_path,
                 )
@@ -1814,6 +1876,7 @@ def walk_scala(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
+                    attributes=_class_field_names(node, code_bytes) or None,
                     language="scala",
                     file_path=file_path,
                 )

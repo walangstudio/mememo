@@ -1,4 +1,4 @@
-"""Tree-sitter class-field extraction -> Chunk.attributes (v0.20.1).
+"""Tree-sitter class-field extraction -> Chunk.attributes.
 
 Generalizes the Python class-field extraction (v0.20.0) to the typed OO
 tree-sitter languages so their class diagrams show fields too. Each case asserts
@@ -50,6 +50,30 @@ CASES = {
         "class A {\n  balance = 0;\n  #owner = 'x';\n  m() { let local = 1; }\n}\n",
         {"balance", "owner"},
     ),
+    "kotlin": (
+        "tree_sitter_kotlin",
+        "A.kt",
+        'class A {\n  val owner: String = ""\n  var balance: Int = 0\n  fun m() {}\n}\n',
+        {"owner", "balance"},
+    ),
+    "swift": (
+        "tree_sitter_swift",
+        "A.swift",
+        'class A {\n  var owner: String = ""\n  let balance: Int = 0\n  func m() {}\n}\n',
+        {"owner", "balance"},
+    ),
+    "scala": (
+        "tree_sitter_scala",
+        "A.scala",
+        'class A {\n  val owner: String = ""\n  var balance: Int = 0\n  def m(): Unit = {}\n}\n',
+        {"owner", "balance"},
+    ),
+    "php": (
+        "tree_sitter_php",
+        "A.php",
+        "<?php\nclass A {\n  private int $balance;\n  public string $owner;\n  function m() {}\n}\n",
+        {"balance", "owner"},
+    ),
 }
 
 
@@ -92,6 +116,38 @@ def test_rust_enum_variant_fields_not_leaked() -> None:
     )
     e = next(c for c in chunks if c.class_name == "E")
     assert not (e.attributes or [])  # an enum has variants, not data fields
+
+
+def test_scala_method_local_vals_not_treated_as_fields() -> None:
+    # Scala uses val_definition for both class fields AND method locals, so the
+    # walk must not descend into method bodies.
+    pytest.importorskip("tree_sitter_scala")
+    src = "class A {\n  val field = 1\n  def m(): Int = { val localv = 2; localv }\n}\n"
+    names = _fields(src, "A.scala", "scala")
+    assert "field" in names
+    assert "localv" not in names
+
+
+def test_swift_computed_property_accessor_locals_not_fields() -> None:
+    pytest.importorskip("tree_sitter_swift")
+    src = "class A {\n  let stored = 0\n  var area: Int { let tmp = stored; return tmp }\n}\n"
+    names = _fields(src, "A.swift", "swift")
+    assert "stored" in names and "area" in names
+    assert "tmp" not in names
+
+
+def test_kotlin_custom_getter_locals_not_fields() -> None:
+    pytest.importorskip("tree_sitter_kotlin")
+    src = "class A {\n  val items = 0\n  val size: Int\n    get() { val tmp = items; return tmp }\n}\n"
+    names = _fields(src, "A.kt", "kotlin")
+    assert "items" in names and "size" in names
+    assert "tmp" not in names
+
+
+def test_php_multiple_properties_one_declaration() -> None:
+    pytest.importorskip("tree_sitter_php")
+    names = _fields("<?php\nclass A {\n  public $a, $b;\n}\n", "A.php", "php")
+    assert {"a", "b"} <= names
 
 
 def test_nested_class_fields_not_leaked_into_outer() -> None:
