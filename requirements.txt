@@ -1,3 +1,5 @@
+# Mirrors the [project].dependencies in pyproject.toml. pyproject is the source
+# of truth — prefer `pip install -e .`; keep this in sync when deps change.
 fastmcp>=0.2.0
 pydantic>=2.0
 sentence-transformers>=2.2.0
@@ -11,6 +13,14 @@ tree-sitter-java>=0.23.0
 tree-sitter-c>=0.23.0
 tree-sitter-cpp>=0.23.0
 tree-sitter-c-sharp>=0.23.0
+tree-sitter-kotlin>=1.1.0
+tree-sitter-ruby>=0.23.0
+tree-sitter-php>=0.23.0
+tree-sitter-swift>=0.7.0
+tree-sitter-scala>=0.23.0
 numpy>=1.24.0,<2.0.0
 torch>=2.0.0
 tiktoken>=0.5.0
+requests>=2.33.0
+pyyaml>=6.0
+truststore>=0.9.1
