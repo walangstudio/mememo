@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.0] - 2026-06-04
+
+### Added
+- **Works behind a TLS-intercepting corporate proxy out of the box.** The
+  first-run HuggingFace model download used the stock certifi CA bundle, which
+  doesn't contain an enterprise proxy's root CA, so the embedder failed with
+  `CERTIFICATE_VERIFY_FAILED` and no index could be built. The embedder now
+  routes SSL through the OS trust store via `truststore` (which holds that CA —
+  it's why browsers work) right before the download, the Python analog of
+  `--use-system-ca`. Best-effort and idempotent; opt out with
+  `MEMEMO_USE_SYSTEM_CA=0` to keep the stock bundle. Verified end-to-end: a
+  fresh `all-MiniLM-L6-v2` download + encode that previously failed now loads.
+
 ## [0.16.0] - 2026-06-03
 
 ### Fixed
