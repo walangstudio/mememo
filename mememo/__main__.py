@@ -369,7 +369,7 @@ def _cmd_diagram(args: list[str]) -> int:
         return 1
 
     if ns.type == "class":
-        mermaid = class_diagram(conn, repo_id, branch, scope=ns.scope)
+        mermaid = class_diagram(conn, repo_id, branch, scope=ns.scope, base_dir=storage.base_dir)
     elif ns.type == "module":
         mermaid = module_dependency(conn, repo_id, branch)
     else:  # call

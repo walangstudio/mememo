@@ -69,6 +69,10 @@ class Chunk:
     docstring: str | None = None
     decorators: list[str] | None = None
     parent_class: str | None = None
+    # Class fields/attributes for a class chunk, rendered as "name" or
+    # "name: type" (typed class vars / dataclass fields + ``self.x`` instance
+    # attrs). Drives class-diagram field rows. None for non-class chunks.
+    attributes: list[str] | None = None
     language: str | None = None
 
     # Additional context

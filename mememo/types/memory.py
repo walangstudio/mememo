@@ -72,6 +72,9 @@ class MemoryContent(BaseModel):
     docstring: str | None = Field(None, description="Docstring/comment")
     decorators: list[str] | None = Field(None, description="Decorators/annotations")
     parent_class: str | None = Field(None, description="Parent class for methods")
+    attributes: list[str] | None = Field(
+        None, description="Class fields as 'name' / 'name: type' (if class chunk)"
+    )
 
 
 # Risk grading literal — populated by sync_commits / detect_changes (FR-007/008/009)
@@ -277,6 +280,7 @@ class CreateMemoryParams(BaseModel):
     docstring: str | None = None
     decorators: list[str] | None = None
     parent_class: str | None = None
+    attributes: list[str] | None = None
 
 
 class MemoryFilters(BaseModel):

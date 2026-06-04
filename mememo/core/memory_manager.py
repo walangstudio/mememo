@@ -184,6 +184,7 @@ class MemoryManager:
                 docstring=params.docstring,
                 decorators=params.decorators,
                 parent_class=params.parent_class,
+                attributes=params.attributes,
             ),
             metadata=MemoryMetadata(
                 tags=params.tags or [],
@@ -284,6 +285,7 @@ class MemoryManager:
                     docstring=params.docstring,
                     decorators=params.decorators,
                     parent_class=params.parent_class,
+                    attributes=params.attributes,
                 ),
                 metadata=MemoryMetadata(
                     tags=params.tags or [],

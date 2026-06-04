@@ -5,8 +5,10 @@ Phase 1: class diagram, call graph, module dependency. No LLM.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
+from pathlib import Path
 
 
 def _mmid(s: str) -> str:
@@ -48,6 +50,30 @@ def _method(name: str | None) -> str:
     return re.sub(r"[^A-Za-z0-9_?!=]", "", name or "")
 
 
+def _attr_name(attr: str) -> str:
+    """Field name from a stored ``"name"`` / ``"name: type"`` attribute, kept to
+    chars that are safe inside a Mermaid ``{ ... }`` class body."""
+    name = (attr or "").split(":", 1)[0].strip()
+    return re.sub(r"[^A-Za-z0-9_]", "", name)
+
+
+def _load_attributes(base_dir: Path | None, content_ref: str | None) -> list[str]:
+    """Read a class memory's ``attributes`` list from its content blob.
+
+    Returns [] when no base_dir is available (caller didn't pass one), the blob
+    is missing/unreadable, or the chunk carries no attributes — so class
+    diagrams degrade to methods-only rather than failing.
+    """
+    if not base_dir or not content_ref:
+        return []
+    try:
+        blob = json.loads((base_dir / content_ref).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    attrs = blob.get("attributes")
+    return attrs if isinstance(attrs, list) else []
+
+
 def _label(file_path: str | None, class_name: str | None, fn_name: str | None) -> str:
     """Compact label: file:Class.fn or fallbacks."""
     parts = []
@@ -72,11 +98,15 @@ def class_diagram(
     repo_id: str,
     branch: str,
     scope: str | None = None,
+    base_dir: Path | None = None,
 ) -> str:
     """Mermaid classDiagram for classes in the given repo/branch.
 
     scope=None => whole repo; scope=a file_path => only classes in that file;
     scope=a class_name => only that class + its direct supertypes/implementors.
+    When ``base_dir`` (the storage base dir) is given, class fields are read from
+    each class's content blob and rendered as attribute rows; without it the
+    diagram shows methods only.
     """
     # Determine which class memories to include.
     # Class rows: chunk_type='class' or (class_name set and function_name null).
@@ -94,7 +124,7 @@ def class_diagram(
 
     where = " AND ".join(conditions)
     rows = conn.execute(
-        f"SELECT DISTINCT m.id, m.class_name, m.file_path "
+        f"SELECT DISTINCT m.id, m.class_name, m.file_path, m.content_ref "
         f"FROM memories m "
         f"WHERE {where} AND m.stale = 0",
         params,
@@ -107,7 +137,11 @@ def class_diagram(
         if not cn:
             continue
         if cn not in classes:
-            classes[cn] = {"id": r["id"], "file_path": r["file_path"]}
+            classes[cn] = {
+                "id": r["id"],
+                "file_path": r["file_path"],
+                "content_ref": r["content_ref"],
+            }
 
     if not classes:
         return "classDiagram\n%% no data"
@@ -115,7 +149,7 @@ def class_diagram(
     lines = ["classDiagram"]
 
     # Emit class bodies with methods.
-    for class_name, info in classes.items():
+    for idx, (class_name, info) in enumerate(classes.items()):
         mmid = _mmid(class_name)
         method_rows = conn.execute(
             "SELECT DISTINCT function_name FROM memories "
@@ -126,9 +160,22 @@ def class_diagram(
         ).fetchall()
         methods = [_method(r["function_name"]) for r in method_rows if r["function_name"]]
         methods = [m for m in methods if m]
-        if methods:
-            method_lines = "\n".join(f"    +{m}()" for m in methods)
-            lines.append(f"class {mmid} {{\n{method_lines}\n}}")
+
+        # Field rows from the class's stored attributes (deduped, kept order).
+        # Cap blob reads so a huge whole-repo diagram doesn't do one file read
+        # per class (the diagram is already unusable past a few dozen classes).
+        seen_attrs: set[str] = set()
+        attr_names: list[str] = []
+        attr_src = _load_attributes(base_dir, info.get("content_ref")) if idx < 80 else []
+        for a in attr_src:
+            n = _attr_name(a)
+            if n and n not in seen_attrs:
+                seen_attrs.add(n)
+                attr_names.append(n)
+
+        body = [f"    +{n}" for n in attr_names] + [f"    +{m}()" for m in methods]
+        if body:
+            lines.append(f"class {mmid} {{\n" + "\n".join(body) + "\n}")
         else:
             lines.append(f"class {mmid}")
 

@@ -139,6 +139,7 @@ class PythonASTChunker(BaseChunker):
                         decorators=[self._get_decorator_name(d) for d in node.decorator_list]
                         or None,
                         parent_class=enclosing_class(),
+                        attributes=_class_attributes(node) or None,
                         language="python",
                         file_path=file_path,
                     )
@@ -264,6 +265,63 @@ def _name_from_attr_chain(node: ast.expr) -> str:
         base = _name_from_attr_chain(node.value)
         return f"{base}.{node.attr}" if base else node.attr
     return ""
+
+
+def _class_attributes(node: ast.ClassDef) -> list[str]:
+    """Extract a class's fields as ``"name"`` / ``"name: type"`` strings.
+
+    Covers typed class-level vars and dataclass/Pydantic fields (``ast.AnnAssign``)
+    and instance attributes assigned in ``__init__`` (``self.x = ...`` /
+    ``self.x: T = ...``). Plain untyped class-level constants are skipped — they
+    are usually module constants/loggers, not data fields, and only add noise to
+    a class diagram. Typed wins over untyped for the same name; capped at 30.
+    """
+    attrs: dict[str, str] = {}
+
+    def add(name: str, annotation: ast.expr | None) -> None:
+        if name.startswith("__") or (name in attrs and ":" in attrs[name]):
+            return  # skip dunders; keep an already-typed rendering
+        if annotation is not None:
+            try:
+                attrs[name] = f"{name}: {ast.unparse(annotation)}"
+                return
+            except Exception:
+                pass
+        attrs.setdefault(name, name)
+
+    for stmt in node.body:
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            add(stmt.target.id, stmt.annotation)
+        elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and stmt.name == "__init__":
+            for tgt, ann in _self_attr_assigns(stmt):
+                if (
+                    isinstance(tgt, ast.Attribute)
+                    and isinstance(tgt.value, ast.Name)
+                    and tgt.value.id == "self"
+                ):
+                    add(tgt.attr, ann)
+
+    return list(attrs.values())[:30]
+
+
+def _self_attr_assigns(fn_node: ast.AST):
+    """Yield ``(target, annotation)`` for assignments inside a function body,
+    NOT descending into nested function/class/lambda scopes — a nested ``def``'s
+    ``self`` is a different binding, so its assignments aren't this class's
+    fields. Control-flow blocks (if/for/with/try) ARE descended into.
+    """
+
+    def walk(node: ast.AST):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                continue
+            if isinstance(child, ast.AnnAssign):
+                yield child.target, child.annotation
+            elif isinstance(child, ast.Assign) and len(child.targets) == 1:
+                yield child.targets[0], None
+            yield from walk(child)
+
+    yield from walk(fn_node)
 
 
 def _call_target(func: ast.expr, class_qualname: str | None) -> str:

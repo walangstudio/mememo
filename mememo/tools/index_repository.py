@@ -213,6 +213,7 @@ async def index_repository(
                             docstring=chunk.docstring,
                             decorators=chunk.decorators,
                             parent_class=chunk.parent_class,
+                            attributes=chunk.attributes,
                             tags=["indexed", "repository"],
                             relationships=MemoryRelationships(),
                         )

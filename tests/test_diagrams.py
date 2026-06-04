@@ -175,6 +175,34 @@ def test_class_diagram_empty_repo(store: StorageManager) -> None:
     assert "%% no data" in result
 
 
+def test_class_diagram_renders_attributes_with_base_dir(store: StorageManager) -> None:
+    import json
+
+    # Derived's content_ref is "r2" (see _seed). Give it stored attributes.
+    blob = store.base_dir / "r2"
+    blob.parent.mkdir(parents=True, exist_ok=True)
+    blob.write_text(
+        json.dumps({"text": "...", "attributes": ["owner: str", "balance: int"]}),
+        encoding="utf-8",
+    )
+    result = class_diagram(store.conn, REPO, BRANCH, base_dir=store.base_dir)
+    assert "+owner" in result  # field rows rendered (name only, parse-safe)
+    assert "+balance" in result
+    assert "+foo()" in result  # methods still listed alongside fields
+
+
+def test_class_diagram_no_attributes_without_base_dir(store: StorageManager) -> None:
+    # Backward compatible: no base_dir => methods only, no blob reads.
+    import json
+
+    blob = store.base_dir / "r2"
+    blob.parent.mkdir(parents=True, exist_ok=True)
+    blob.write_text(json.dumps({"text": "...", "attributes": ["owner: str"]}), encoding="utf-8")
+    result = class_diagram(store.conn, REPO, BRANCH)
+    assert "+owner" not in result
+    assert "+foo()" in result
+
+
 def test_is_empty_diagram() -> None:
     from mememo.diagrams import is_empty_diagram
 
