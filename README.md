@@ -204,6 +204,11 @@ export MEMEMO_EMBEDDING_MODEL="minilm"  # or "gemma"
 # Device (default: auto-detect)
 export MEMEMO_EMBEDDING_DEVICE="auto"  # or "cuda", "mps", "cpu"
 
+# Route the first-run model download through the OS trust store (default: on)
+# so it works behind a TLS-intercepting corporate proxy. Set to 0 to keep the
+# stock certifi CA bundle.
+export MEMEMO_USE_SYSTEM_CA="1"
+
 # Security settings
 export MEMEMO_SECRETS_DETECTION="true"
 export MEMEMO_AUTO_SANITIZE="false"
@@ -479,6 +484,16 @@ Upgrade (pull the latest source first, or re-download and extract, then):
 bash install.sh --upgrade
 bash install.sh --upgrade -c all   # also reconfigure all clients
 ```
+
+> **Upgrading to v0.16.0+ from an older index:** Python method→class linkage and
+> `self.x()` call resolution changed how methods are indexed. Existing indexes
+> won't show methods in class diagrams or intra-class call edges until you
+> re-index: `mememo index <repo> --full`.
+
+**First-run download behind a corporate proxy?** If the initial model download
+fails with `CERTIFICATE_VERIFY_FAILED`, mememo routes SSL through the OS trust
+store (which holds your proxy's root CA) automatically. If you need to disable
+that and use the stock CA bundle, set `MEMEMO_USE_SYSTEM_CA=0`.
 
 ### Manual MCP Config
 

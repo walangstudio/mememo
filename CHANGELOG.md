@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.17.1] - 2026-06-04
+
+### Fixed (code review of v0.17.0)
+- **CA-injection one-shot flag set before the injection ran.** Under a
+  concurrent first-run model load, a second thread could see the flag set, skip
+  injection, and download with the stock CA bundle before `inject_into_ssl` had
+  taken effect. The flag is now set *after* the attempt (injection is
+  idempotent, so a racing load re-injects harmlessly).
+- **`requirements.txt` had drifted from `pyproject.toml`** — it was missing
+  `truststore`, `requests`, `pyyaml`, and the Kotlin/Ruby/PHP/Swift/Scala
+  tree-sitter grammars, so `pip install -r requirements.txt` produced a degraded
+  install (no corporate-TLS fix, text-only chunking for 5 languages). Re-synced.
+
+### Docs
+- Documented `MEMEMO_USE_SYSTEM_CA` and the corporate-TLS first-run behavior, and
+  added an upgrade note that v0.16.0's method→class linkage needs a `--full`
+  re-index of existing indexes.
+
 ## [0.17.0] - 2026-06-04
 
 ### Added

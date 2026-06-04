@@ -60,7 +60,6 @@ def _ensure_system_ca() -> None:
     if os.environ.get("MEMEMO_USE_SYSTEM_CA", "1").strip().lower() in ("0", "false", "no"):
         return  # opted out — leave the one-shot flag unset so it stays a no-op
 
-    _SYSTEM_CA_READY = True  # one attempt, even on failure
     try:
         import truststore
 
@@ -68,6 +67,12 @@ def _ensure_system_ca() -> None:
         logger.debug("truststore: SSL verification now uses the OS trust store")
     except Exception as e:  # truststore absent or injection failed — degrade quietly
         logger.debug("truststore unavailable (%s); using the default CA bundle", e)
+    finally:
+        # Set the flag only *after* the attempt completes. inject_into_ssl is
+        # idempotent, so if a concurrent first-run load races in before this, it
+        # re-injects harmlessly rather than skipping injection that hasn't taken
+        # effect yet and then downloading with the stock CA bundle.
+        _SYSTEM_CA_READY = True
 
 
 class Embedder:
