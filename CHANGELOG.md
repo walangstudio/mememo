@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.20.1] - 2026-06-04
+
+### Added
+- **Class fields in class diagrams now cover the tree-sitter OO languages too.**
+  v0.20.0 extracted class fields for Python; the tree-sitter walkers now extract
+  them for **Java, C#, C/C++, TypeScript, JavaScript, and Rust** (struct fields)
+  into `Chunk.attributes`. Handles multi-declarator fields (`int a, b;` → both),
+  C/C++ pointer/array/reference members (`int* p` → `p`, not `* p`), and skips
+  nested-type and Rust enum-variant fields. Go (structs aren't chunked as
+  classes) and Kotlin/Swift/Scala/PHP/Ruby are unchanged — a clean follow-up.
+  Requires a re-index for fields to appear.
+
 ## [0.20.0] - 2026-06-04
 
 ### Added
