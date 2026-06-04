@@ -359,7 +359,9 @@ def create_app(storage_getter=None) -> FastAPI:
             }
 
         if type == "class":
-            mermaid = class_diagram(conn, resolved_repo, resolved_branch, scope=scope)
+            mermaid = class_diagram(
+                conn, resolved_repo, resolved_branch, scope=scope, base_dir=storage.base_dir
+            )
             truncated = False
         elif type == "module":
             mermaid = module_dependency(conn, resolved_repo, resolved_branch, max_nodes=max_nodes)

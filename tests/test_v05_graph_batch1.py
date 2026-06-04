@@ -654,6 +654,52 @@ def test_self_method_call_targets_class_qualified_symbol() -> None:
     assert not any(e.target_label.startswith("self.") for e in calls)
 
 
+ATTRS_SAMPLE = """\
+class Account:
+    owner: str
+    balance: int = 0
+    LIMIT = 1000
+
+    def __init__(self, owner: str):
+        self.owner = owner
+        self.history: list = []
+        self._cache = {}
+"""
+
+
+def test_class_chunk_extracts_attributes() -> None:
+    chunker = PythonASTChunker()
+    chunks, _ = chunker.chunk_with_edges(ATTRS_SAMPLE, "acct.py")
+    cls = next(c for c in chunks if c.chunk_type == "class")
+    attrs = cls.attributes or []
+    assert "owner: str" in attrs  # typed wins over the untyped self.owner
+    assert "balance: int" in attrs  # dataclass-style typed class var
+    assert "history: list" in attrs  # typed self attr in __init__
+    assert "_cache" in attrs  # untyped self attr
+    # Plain untyped class-level constants are noise -> skipped.
+    assert not any(a.split(":")[0].strip() == "LIMIT" for a in attrs)
+
+
+def test_class_attributes_ignore_nested_closure_self() -> None:
+    # self.x assigned inside a nested def in __init__ is a DIFFERENT self
+    # binding and must not become a class field.
+    sample = """\
+class C:
+    def __init__(self):
+        self.real = 1
+
+        def _cb():
+            self.phantom = 2
+        self.cb = _cb
+"""
+    chunker = PythonASTChunker()
+    chunks, _ = chunker.chunk_with_edges(sample, "c.py")
+    attrs = next(c for c in chunks if c.chunk_type == "class").attributes or []
+    names = {a.split(":")[0].strip() for a in attrs}
+    assert "real" in names and "cb" in names
+    assert "phantom" not in names
+
+
 def test_self_call_resolves_to_method_memory() -> None:
     from mememo.chunking.base_chunker import RawEdge
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.20.0] - 2026-06-04
+
+### Added
+- **Class diagrams show fields, not just methods.** The Python chunker now
+  extracts a class's attributes — typed class vars / dataclass / Pydantic fields
+  and `self.x` instance attributes set in `__init__` — into the class chunk
+  (stored in the content blob; untyped class-level constants and nested-closure
+  `self` assignments are excluded as noise). `class_diagram` renders them as
+  `+field` rows above the methods when given the storage `base_dir`, and the
+  same skeleton now feeds the ERD generator so it builds from real fields
+  instead of guessing them from source text. Requires a re-index of Python repos
+  for the fields to appear; existing indexes render methods-only as before.
+
 ## [0.19.0] - 2026-06-04
 
 ### Fixed

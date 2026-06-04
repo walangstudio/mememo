@@ -442,6 +442,7 @@ class StorageManager:
             "docstring": memory.content.docstring,
             "decorators": memory.content.decorators,
             "parent_class": memory.content.parent_class,
+            "attributes": memory.content.attributes,
         }
         content_path.write_text(json.dumps(content_blob, indent=2), encoding="utf-8")
 
@@ -714,6 +715,7 @@ class StorageManager:
                 docstring=content_blob.get("docstring"),
                 decorators=content_blob.get("decorators"),
                 parent_class=content_blob.get("parent_class"),
+                attributes=content_blob.get("attributes"),
             ),
             metadata=MemoryMetadata(
                 tags=tags,

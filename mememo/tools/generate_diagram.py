@@ -121,10 +121,11 @@ async def _phase1(
     from ..diagrams import call_graph, class_diagram, is_empty_diagram, module_dependency
 
     conn = memory_manager.storage_manager.conn
+    base_dir = memory_manager.storage_manager.base_dir
     mermaid = ""
 
     if params.type == "class":
-        mermaid = class_diagram(conn, repo_id, branch, scope=params.scope)
+        mermaid = class_diagram(conn, repo_id, branch, scope=params.scope, base_dir=base_dir)
         truncated = False
     elif params.type == "module":
         mermaid = module_dependency(conn, repo_id, branch, max_nodes=params.max_nodes)
@@ -317,10 +318,16 @@ async def _gather_grounding(
                 if sib not in source_ids:
                     source_ids.append(sib)
     elif dtype == "state":
-        skeleton = class_diagram(conn, repo_id, branch, scope=params.scope)
+        skeleton = class_diagram(
+            conn, repo_id, branch, scope=params.scope, base_dir=storage.base_dir
+        )
         source_ids = _scope_member_ids(conn, repo_id, branch, params.scope, only_classes=False)
     elif dtype == "erd":
-        skeleton = class_diagram(conn, repo_id, branch, scope=params.scope)
+        # Fields in the deterministic skeleton give the model real attributes to
+        # build the ERD from instead of guessing them from the source text.
+        skeleton = class_diagram(
+            conn, repo_id, branch, scope=params.scope, base_dir=storage.base_dir
+        )
         source_ids = _scope_member_ids(conn, repo_id, branch, params.scope, only_classes=True)
     else:  # usecase
         skeleton = module_dependency(conn, repo_id, branch, max_nodes=params.max_nodes)
