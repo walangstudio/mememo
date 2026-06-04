@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.20.2] - 2026-06-04
+
+### Added
+- **Class fields now also cover Kotlin, Swift, Scala, and PHP** — completing the
+  declared-field tree-sitter languages (Java/C#/C++/TS/JS/Rust shipped in
+  v0.20.1). Handles Kotlin `val`/`var` properties, Swift `let`/`var` (and
+  computed/observed-property accessors), Scala `val`/`var` definitions, and PHP
+  `$`-prefixed properties (multiple per declaration). The field walk skips
+  property-accessor and method bodies so locals (Scala/Swift/Kotlin reuse the
+  field node for locals) and accessor locals aren't mistaken for fields. Go
+  (structs aren't chunked as classes) and Ruby (`@x` in `initialize`, no
+  declarations) remain a follow-up. Requires a re-index.
+
 ## [0.20.1] - 2026-06-04
 
 ### Added
