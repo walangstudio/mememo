@@ -42,6 +42,92 @@ def _flatten_member_expression(node, code_bytes: bytes) -> str:
     return _text(node, code_bytes)
 
 
+# Class-field node types across the grammars we extract attributes from, and
+# the nested-type nodes whose own fields must NOT be pulled into the outer class.
+_FIELD_NODE_TYPES = frozenset(
+    {"field_declaration", "public_field_definition", "field_definition", "property_declaration"}
+)
+_NESTED_TYPE_NODES = frozenset(
+    {
+        "class_declaration",
+        "class_specifier",
+        "struct_specifier",
+        "struct_item",
+        "interface_declaration",
+        "enum_declaration",
+        "enum_variant",  # a Rust enum variant's struct fields aren't enum fields
+        "record_declaration",
+        "trait_item",
+        "impl_item",
+        "object_declaration",
+    }
+)
+
+# Declarator wrappers to descend through to reach the bare field identifier
+# (C/C++ ``int* p`` / ``int arr[4]`` / ``int& r``).
+_DECLARATOR_WRAPPERS = frozenset(
+    {"pointer_declarator", "array_declarator", "reference_declarator", "init_declarator"}
+)
+_NAME_NODE_TYPES = frozenset(
+    {"identifier", "property_identifier", "private_property_identifier", "field_identifier"}
+)
+
+
+def _field_names(node, code_bytes: bytes) -> list[str]:
+    """All field names a single field/property declaration declares.
+
+    Returns a list because one declaration can declare several (``int a, b;``).
+    Handles a ``name``/``property`` field (Rust/Go/TS field, C# property, JS
+    field), Java/C# ``variable_declarator`` (incl. multiple), C++ bare
+    ``field_identifier`` and pointer/array/reference declarators, and C#'s
+    ``variable_declaration`` nesting.
+    """
+    direct = node.child_by_field_name("name") or node.child_by_field_name("property")
+    if direct is not None and direct.type in _NAME_NODE_TYPES:
+        return [_text(direct, code_bytes)]
+
+    names: list[str] = []
+
+    def collect(n) -> None:
+        for ch in n.children:
+            if ch.type == "field_identifier":
+                names.append(_text(ch, code_bytes))
+            elif ch.type == "variable_declarator":
+                nm = ch.child_by_field_name("name")
+                names.append(_text(nm if nm is not None else ch, code_bytes))
+            elif ch.type in _DECLARATOR_WRAPPERS or ch.type == "variable_declaration":
+                collect(ch)
+
+    collect(node)
+    return [n for n in names if n]
+
+
+def _class_field_names(class_node, code_bytes: bytes) -> list[str]:
+    """Field names declared directly on a class/struct (not its nested types).
+
+    Walks the class subtree collecting names from field/property declarations,
+    skipping any nested type declaration so an inner class's (or enum variant's)
+    fields don't leak into the outer one. Method/function bodies hold locals
+    under different node types, so they're naturally excluded. Capped at 30.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+
+    def walk(node) -> None:
+        for ch in node.children:
+            if ch.type in _NESTED_TYPE_NODES:
+                continue
+            if ch.type in _FIELD_NODE_TYPES:
+                for nm in _field_names(ch, code_bytes):
+                    if nm and nm not in seen:
+                        seen.add(nm)
+                        names.append(nm)
+            walk(ch)
+
+    walk(class_node)
+    return names[:30]
+
+
 def walk_typescript_or_javascript(
     tree, code_bytes: bytes, module: str, file_path: str, language: str
 ) -> tuple[list[Chunk], list[RawEdge]]:
@@ -118,6 +204,7 @@ def walk_typescript_or_javascript(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
+                    attributes=_class_field_names(node, code_bytes) or None,
                     language=language,
                     file_path=file_path,
                 )
@@ -446,6 +533,7 @@ def walk_rust(
                     end_line=end,
                     chunk_type="class",
                     class_name=name,
+                    attributes=_class_field_names(node, code_bytes) or None,
                     language="rust",
                     file_path=file_path,
                 )
@@ -564,6 +652,7 @@ def walk_java(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
+                    attributes=_class_field_names(node, code_bytes) or None,
                     language="java",
                     file_path=file_path,
                 )
@@ -735,6 +824,7 @@ def walk_c_family(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
+                    attributes=_class_field_names(node, code_bytes) or None,
                     language=lang,
                     file_path=file_path,
                 )
@@ -878,6 +968,7 @@ def walk_csharp(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
+                    attributes=_class_field_names(node, code_bytes) or None,
                     language="csharp",
                     file_path=file_path,
                 )
