@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.18.1] - 2026-06-04
+
+### Docs
+- README now documents the five languages added in v0.10.0 (Kotlin, Ruby, PHP,
+  Swift, Scala) in the Supported Languages table, and the `generate_diagram`
+  tool + `/diagram` web panel (class/call/module deterministic; sequence/usecase/
+  state/erd LLM-synthesized) — both were shipped but undocumented. Corrected the
+  stale "25 MCP tools" / "15+ languages" counts to the actual 26 tools + 6
+  resources and 14 languages.
+
 ## [0.18.0] - 2026-06-04
 
 ### Fixed
