@@ -214,6 +214,25 @@ def get_supported_extensions() -> list[str]:
     return sorted(LANGUAGE_MAP.keys())
 
 
+def get_index_globs() -> list[str]:
+    """Default ``**/*<ext>`` globs for every fully-supported *code* language.
+
+    "Fully supported" = Python (AST) plus every language with a tree-sitter edge
+    walker — i.e. the languages that yield structural chunks AND the typed-edge
+    graph. Markdown (its own ``import-md`` flow) and chunker-less extensions like
+    ``.svelte`` / ``.vue`` (text fallback only) are excluded so a default index
+    doesn't text-blob them or log a per-file "unsupported" warning.
+
+    Deriving the index/sync defaults from here keeps them from drifting behind a
+    newly-added language — the old hard-coded ``*.py/*.ts/*.js/*.go/*.rs`` list
+    silently skipped Java, C/C++, C#, Kotlin, Ruby, PHP, Swift, and Scala.
+    """
+    from .ts_edges import EDGE_WALKERS
+
+    indexable = {"python", *EDGE_WALKERS}
+    return sorted({f"**/*{ext}" for ext, lang in LANGUAGE_MAP.items() if lang in indexable})
+
+
 def get_language_info(language: str) -> dict | None:
     """
     Get detailed information about a language.

@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.19.0] - 2026-06-04
+
+### Fixed
+- **Default indexing now covers every supported language.** `index_repository`
+  and `sync_commits` defaulted to `["**/*.py", "**/*.ts", "**/*.js", "**/*.go",
+  "**/*.rs"]`, so a default index of a Java, C#, C/C++, Kotlin, Ruby, PHP, Swift,
+  or Scala repo matched **zero files** — all the per-language edge-walker and
+  call-resolution work was unreachable without manually passing `file_patterns`.
+  The default now derives from `language_detector.get_index_globs()` (Python +
+  every edge-walker language; markdown and chunker-less `.svelte`/`.vue` excluded)
+  so it can't drift behind a newly-added language. A regression test ties the
+  default globs to the walker registry.
+
+### Changed
+- **Indexing parses each file once.** The main chunk loop and the edge pass each
+  walked every file (the loop built chunks and discarded edges; the edge pass
+  re-walked to recover them). `ChunkerFactory.chunk_file_with_edges` now returns
+  chunks and the typed edges from a single AST/tree-sitter walk, and the edge
+  pass only resolves + persists — halving the parse/edge-walk work per file on
+  the indexing hot path.
+
 ## [0.18.2] - 2026-06-04
 
 ### Docs
