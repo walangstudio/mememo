@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.18.0] - 2026-06-04
+
+### Fixed
+- **Tree-sitter intra-method calls now resolve (all 13 non-Python languages).**
+  Method chunks set `parent_class` but not `class_name`, so the symbol built for
+  a method was `module.method` while the call edge's source was
+  `module.Class.method` — they never matched, so *every* call made inside a
+  method (Java/C#/C++/TS/JS/Kotlin/Ruby/PHP/Swift/Scala/Rust) was dropped, not
+  just `this.`-qualified ones. Method chunks now carry `class_name = <owning
+  class>` (the same fix v0.16.0 applied to Python), so the qualname aligns and
+  these calls resolve. Class diagrams now attach methods for these languages
+  too. Go is intentionally unchanged (its scope omits the receiver type, so
+  `class_name=None` is what keeps Go calls resolving).
+
+### Added
+- **`self`/`this`/`cls`/`$this`/`Self` intra-class calls resolve to the sibling
+  method, in every language.** The resolver now rebinds a single-hop
+  receiver-qualified call (`this.helper`, `self.helper`, `$this->helper`,
+  `Self::new`) to the source's own class when the raw label doesn't otherwise
+  resolve — generalizing the Python-only rewrite from v0.16.0 to the
+  tree-sitter walkers. Resolved edges never change (fallback only fires on an
+  unresolved label).
+
+**Requires a re-index** of already-indexed non-Python repos
+(`mememo index <path> --full`) for the new call edges and class-diagram method
+membership to appear.
+
 ## [0.17.1] - 2026-06-04
 
 ### Fixed (code review of v0.17.0)

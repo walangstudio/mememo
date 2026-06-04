@@ -178,6 +178,11 @@ def walk_typescript_or_javascript(
                     end_line=end,
                     chunk_type="method" if parent else "function",
                     function_name=name,
+                    # Owning class is the SQL-queryable context: with
+                    # function_name it forms the module.Class.method qualname the
+                    # edge source uses, so intra-method calls + class diagrams
+                    # resolve. Top-level functions keep class_name=None.
+                    class_name=parent,
                     parent_class=parent,
                     language=language,
                     file_path=file_path,
@@ -402,6 +407,7 @@ def walk_rust(
                         end_line=end,
                         chunk_type="method",
                         function_name=name,
+                        class_name=impl_type,
                         parent_class=impl_type,
                         language="rust",
                         file_path=file_path,
@@ -594,6 +600,11 @@ def walk_java(
                     end_line=end,
                     chunk_type="method" if parent else "function",
                     function_name=name,
+                    # Owning class is the SQL-queryable context: with
+                    # function_name it forms the module.Class.method qualname the
+                    # edge source uses, so intra-method calls + class diagrams
+                    # resolve. Top-level functions keep class_name=None.
+                    class_name=parent,
                     parent_class=parent,
                     language="java",
                     file_path=file_path,
@@ -758,6 +769,11 @@ def walk_c_family(
                     end_line=end,
                     chunk_type="method" if parent else "function",
                     function_name=name,
+                    # Owning class is the SQL-queryable context: with
+                    # function_name it forms the module.Class.method qualname the
+                    # edge source uses, so intra-method calls + class diagrams
+                    # resolve. Top-level functions keep class_name=None.
+                    class_name=parent,
                     parent_class=parent,
                     language=lang,
                     file_path=file_path,
@@ -892,6 +908,11 @@ def walk_csharp(
                     end_line=end,
                     chunk_type="method" if parent else "function",
                     function_name=name,
+                    # Owning class is the SQL-queryable context: with
+                    # function_name it forms the module.Class.method qualname the
+                    # edge source uses, so intra-method calls + class diagrams
+                    # resolve. Top-level functions keep class_name=None.
+                    class_name=parent,
                     parent_class=parent,
                     language="csharp",
                     file_path=file_path,
@@ -1067,6 +1088,11 @@ def walk_kotlin(
                     end_line=end,
                     chunk_type="method" if parent else "function",
                     function_name=name,
+                    # Owning class is the SQL-queryable context: with
+                    # function_name it forms the module.Class.method qualname the
+                    # edge source uses, so intra-method calls + class diagrams
+                    # resolve. Top-level functions keep class_name=None.
+                    class_name=parent,
                     parent_class=parent,
                     language="kotlin",
                     file_path=file_path,
@@ -1224,6 +1250,11 @@ def walk_ruby(
                     end_line=end,
                     chunk_type="method" if parent else "function",
                     function_name=name,
+                    # Owning class is the SQL-queryable context: with
+                    # function_name it forms the module.Class.method qualname the
+                    # edge source uses, so intra-method calls + class diagrams
+                    # resolve. Top-level functions keep class_name=None.
+                    class_name=parent,
                     parent_class=parent,
                     language="ruby",
                     file_path=file_path,
@@ -1367,6 +1398,11 @@ def walk_php(
                     end_line=end,
                     chunk_type="method" if parent else "function",
                     function_name=name,
+                    # Owning class is the SQL-queryable context: with
+                    # function_name it forms the module.Class.method qualname the
+                    # edge source uses, so intra-method calls + class diagrams
+                    # resolve. Top-level functions keep class_name=None.
+                    class_name=parent,
                     parent_class=parent,
                     language="php",
                     file_path=file_path,
@@ -1542,6 +1578,11 @@ def walk_swift(
                     end_line=end,
                     chunk_type="method" if parent else "function",
                     function_name=name,
+                    # Owning class is the SQL-queryable context: with
+                    # function_name it forms the module.Class.method qualname the
+                    # edge source uses, so intra-method calls + class diagrams
+                    # resolve. Top-level functions keep class_name=None.
+                    class_name=parent,
                     parent_class=parent,
                     language="swift",
                     file_path=file_path,
@@ -1707,6 +1748,11 @@ def walk_scala(
                     end_line=end,
                     chunk_type="method" if parent else "function",
                     function_name=name,
+                    # Owning class is the SQL-queryable context: with
+                    # function_name it forms the module.Class.method qualname the
+                    # edge source uses, so intra-method calls + class diagrams
+                    # resolve. Top-level functions keep class_name=None.
+                    class_name=parent,
                     parent_class=parent,
                     language="scala",
                     file_path=file_path,

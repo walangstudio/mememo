@@ -108,6 +108,20 @@ def test_t016_typescript_method_qualname_includes_class(
     methods = [c for c in chunks if c.chunk_type == "method"]
     assert methods
     assert all(m.parent_class == "UserService" for m in methods)
+    # class_name (SQL-queryable) must also carry the owning class so the
+    # index qualname (module.Class.method) matches the edge source and
+    # intra-method calls resolve.
+    assert all(m.class_name == "UserService" for m in methods)
+
+
+def test_t018_go_method_keeps_class_name_none(chunker: TreeSitterChunker) -> None:
+    # Go pushes only the function name onto the scope stack (no class scope), so
+    # the edge source is module.method; the method chunk must keep class_name
+    # None so its qualname matches and Go calls keep resolving.
+    chunks, _ = chunker.chunk_with_edges(GO_SAMPLE, "main.go", "go")
+    methods = [c for c in chunks if c.chunk_type == "method"]
+    assert methods
+    assert all(m.class_name is None for m in methods)
 
 
 # ---------- T017: JavaScript ------------------------------------------------
