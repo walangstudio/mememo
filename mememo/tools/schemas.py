@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from ..chunking.language_detector import get_index_globs
 from ..types.memory import (
     Memory,
     MemoryContentType,
@@ -250,8 +251,8 @@ class IndexRepositoryParams(BaseModel):
 
     repo_path: str = Field(description="Path to repository root")
     file_patterns: list[str] = Field(
-        default=["**/*.py", "**/*.ts", "**/*.js", "**/*.go", "**/*.rs"],
-        description="Glob patterns for files to index",
+        default_factory=get_index_globs,
+        description="Glob patterns for files to index (defaults to every supported code language)",
     )
     incremental: bool = Field(
         default=True, description="Use incremental indexing (only changed files)"
@@ -331,7 +332,7 @@ class SyncCommitsParams(BaseModel):
 
     repo_path: str = Field(description="Path to the repository root")
     file_patterns: list[str] = Field(
-        default=["**/*.py", "**/*.ts", "**/*.js", "**/*.go", "**/*.rs"],
+        default_factory=get_index_globs,
         description="Glob patterns controlling which changed files get re-indexed",
     )
 

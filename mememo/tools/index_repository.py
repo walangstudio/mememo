@@ -26,11 +26,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Languages that emit edges in the v0.5 edge pass: Python (AST chunker) plus
-# every tree-sitter walker registered in ts_edges.EDGE_WALKERS. Driven by the
-# registry so a new language walker is picked up here automatically instead of
-# silently producing no edges (regression guard — rust/java/c/cpp/csharp were
-# walked but never indexed because this list was hardcoded to the original 5).
+# Languages that emit edges: Python (AST chunker) plus every tree-sitter walker
+# registered in ts_edges.EDGE_WALKERS. Informational now — chunk_file_with_edges
+# dispatches by chunker type, so the edge pass no longer gates on this list — but
+# kept (and tested) as the canonical "these languages produce edges" set.
 EDGE_PASS_LANGUAGES: frozenset[str] = frozenset({"python", "markdown", *EDGE_WALKERS})
 
 # Chunks accumulated before a batched flush (one git-detect + one batched embed
@@ -107,13 +106,14 @@ async def index_repository(
         chunks_created = 0
         skip_reasons: dict[str, int] = {}
 
-        # Accumulate (rel_path, content, lang) and SymbolEntry rows during the
-        # main loop so the v0.5 edge pass doesn't have to re-walk + re-read +
-        # re-query SQLite. Each entry already lives in memory here.
+        # Collect the typed edges emitted alongside the chunks (one walk per
+        # file, not two) plus the SymbolEntry rows, so the edge pass only has to
+        # resolve + persist — no re-walk, no re-read, no SQL rebuild.
+        from ..chunking.base_chunker import RawEdge
         from ..chunking.python_ast_chunker import file_path_to_module
         from ..core.symbol_resolver import SymbolEntry
 
-        edge_inputs: list[tuple[str, str, str]] = []
+        all_raw_edges: list[RawEdge] = []
         symbols: list[SymbolEntry] = []
 
         # Batch chunk creation: one git-detect + one batched embed + one vector
@@ -186,14 +186,17 @@ async def index_repository(
         for i, file_path in enumerate(files_to_index):
             try:
                 content = file_path.read_text(encoding="utf-8")
-                chunks = chunker_factory.chunk_file(content, str(file_path))
+                # Chunk by rel_path (not the absolute path): chunk_with_edges
+                # derives the edge source qualname's module from this path, and
+                # it must match the symbol table built below (also rel-path based)
+                # or every edge would be dropped as having an unknown source.
+                rel_path = str(file_path.relative_to(repo_path)).replace("\\", "/")
+                chunks, raw_edges = chunker_factory.chunk_file_with_edges(content, rel_path)
                 if not chunks:
                     _skip("empty_chunks")
                     continue
 
-                rel_path = str(file_path.relative_to(repo_path)).replace("\\", "/")
                 module = file_path_to_module(rel_path)
-                file_lang = chunks[0].language
 
                 for chunk in chunks:
                     pending_params.append(
@@ -216,8 +219,7 @@ async def index_repository(
                     )
                     pending_meta.append((module, chunk))
 
-                if file_lang in EDGE_PASS_LANGUAGES:
-                    edge_inputs.append((rel_path, content, file_lang))
+                all_raw_edges.extend(raw_edges)
 
                 files_indexed += 1
 
@@ -247,11 +249,11 @@ async def index_repository(
         duration = time.time() - start_time
         files_skipped = sum(skip_reasons.values())
 
-        # v0.5 edge pass — emit + resolve + persist edges using the in-memory
-        # symbol table and source already loaded above. No second filesystem
-        # walk, no SQL rebuild. Best-effort: log and continue on failure.
+        # v0.5 edge pass — resolve + persist the edges collected during the main
+        # loop against the in-memory symbol table. The walk already happened once
+        # per file above. Best-effort: log and continue on failure.
         try:
-            await _run_edge_pass(repo_path, memory_manager, edge_inputs, symbols)
+            await _resolve_and_persist_edges(repo_path, memory_manager, all_raw_edges, symbols)
         except Exception as e:
             logger.warning(f"v0.5 edge pass failed (continuing without edges): {e}")
 
@@ -459,26 +461,21 @@ def _find_matching_files(
 # v0.5: edge-emission post-pass (FR-013, FR-015, FR-017) -----------------
 
 
-async def _run_edge_pass(
+async def _resolve_and_persist_edges(
     repo_path: Path,
     memory_manager: "MemoryManager",
-    edge_inputs: list[tuple[str, str, str]],
+    raw_edges: list,
     symbols: list,
 ) -> None:
-    """Extract typed edges from the files already chunked by the main loop.
+    """Resolve the edges collected during the main loop and persist relations.
 
-    ``edge_inputs`` is a list of ``(rel_path, content, language)`` triples and
-    ``symbols`` is the pre-built ``SymbolEntry`` list for every chunk just
-    persisted — no second filesystem walk, no SQL rebuild.
-
-    Best-effort: per-file failures are logged and skipped so the legacy
-    chunk-only flow still produces a usable index.
+    The chunk walk already emitted these edges in the same pass that built the
+    chunks, so this only resolves ``raw_edges`` against the in-memory symbol
+    table and inserts the resulting relations — no second walk, no SQL rebuild.
     """
-    if not edge_inputs or not symbols:
+    if not raw_edges or not symbols:
         return
 
-    from ..chunking.base_chunker import RawEdge
-    from ..chunking.python_ast_chunker import PythonASTChunker
     from ..core.symbol_resolver import resolve_edges
     from ..types.memory import coerce_sha
 
@@ -487,38 +484,8 @@ async def _run_edge_pass(
     branch = context.branch.name
     commit_sha = coerce_sha(context.branch.commit_hash)
 
-    from ..chunking.markdown_chunker import MarkdownChunker
-
-    py_chunker = PythonASTChunker()
-    md_chunker = MarkdownChunker()
-    ts_chunker = None
-    try:
-        from ..chunking.tree_sitter_chunker import TreeSitterChunker
-
-        ts_chunker = TreeSitterChunker()
-    except Exception as e:
-        logger.debug(f"edge pass: tree-sitter unavailable: {e}")
-
-    all_edges: list[RawEdge] = []
-    for rel_path, content, lang in edge_inputs:
-        try:
-            if lang == "python":
-                _, edges = py_chunker.chunk_with_edges(content, rel_path)
-            elif lang == "markdown":
-                _, edges = md_chunker.chunk_with_edges(content, rel_path)
-            elif lang in EDGE_WALKERS and ts_chunker is not None:
-                _, edges = ts_chunker.chunk_with_edges(content, rel_path, lang)
-            else:
-                continue
-            all_edges.extend(edges)
-        except SyntaxError as e:
-            logger.debug(f"edge pass: skipped {rel_path}: {e}")
-
-    if not all_edges:
-        return
-
     relations = resolve_edges(
-        all_edges,
+        raw_edges,
         repo_id=repo_id,
         branch=branch,
         commit_sha=commit_sha,
@@ -527,6 +494,6 @@ async def _run_edge_pass(
     if relations:
         inserted = memory_manager.storage_manager.insert_relations(relations)
         logger.info(
-            f"v0.5 edge pass: extracted {len(all_edges)} raw edges, "
+            f"v0.5 edge pass: collected {len(raw_edges)} raw edges, "
             f"resolved {len(relations)}, inserted {inserted}"
         )

@@ -126,6 +126,33 @@ class ChunkerFactory:
                 # Return empty list as last resort
                 return []
 
+    def chunk_file_with_edges(self, code: str, file_path: str, language: str | None = None):
+        """Like ``chunk_file`` but returns ``(chunks, raw_edges)`` in one pass.
+
+        Lets a caller (the repository indexer) get both chunks and the typed-edge
+        graph from a single AST/tree-sitter walk instead of chunking once and
+        re-walking for edges. Languages without an edge emitter (plain text,
+        tree-sitter languages with no registered walker) return an empty edge
+        list. Falls back to text chunking (no edges) if the structured chunker
+        raises — mirroring ``chunk_file``.
+        """
+        chunker = self.get_chunker(file_path)
+        try:
+            if isinstance(chunker, TreeSitterChunker):
+                if language is None:
+                    language = detect_language(file_path)
+                return chunker.chunk_with_edges(code, file_path, language=language)
+            if isinstance(chunker, (PythonASTChunker, MarkdownChunker)):
+                return chunker.chunk_with_edges(code, file_path)
+            return chunker.chunk(code, file_path), []
+        except Exception as e:
+            logger.warning(f"Chunking failed for {file_path} with {type(chunker).__name__}: {e}")
+            try:
+                return self._get_text_chunker().chunk(code, file_path), []
+            except Exception as fallback_error:
+                logger.error(f"Text chunker fallback also failed: {fallback_error}")
+                return [], []
+
     def _get_python_chunker(self) -> PythonASTChunker:
         """Get or create Python AST chunker (lazy loading)."""
         if self._python_chunker is None:
