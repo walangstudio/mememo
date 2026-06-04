@@ -73,6 +73,32 @@ def _build_tail_index(
     return out
 
 
+# Receivers that denote "the current instance/class" across the languages we
+# walk: this (TS/JS/Java/C++/C#/Kotlin/Scala), self (Python/Rust/Swift/Ruby),
+# $this (PHP), Self (Rust associated fns), cls (Python classmethods).
+_SELF_RECEIVERS = frozenset({"this", "self", "Self", "cls"})
+
+
+def _rebind_self_receiver(target_label: str, source_qualname: str) -> str | None:
+    """Rebind a single-hop ``self``/``this`` call to the source's own class.
+
+    Tree-sitter walkers emit an intra-class call like ``this.helper`` /
+    ``self.helper`` / ``$this.helper`` / ``Self::helper`` with the receiver kept
+    verbatim, which never matches a qualname. The receiver means "this class",
+    so rebind it to ``<source class>.helper`` (the source method's qualname minus
+    its own trailing name). Returns None when the label isn't a single-hop
+    self/this call, or the source has no class prefix.
+    """
+    for sep in (".", "::"):
+        head, found, rest = target_label.partition(sep)
+        if not found or not rest or "." in rest or "::" in rest:
+            continue  # not a separator hit, or a multi-hop chain (this.a.b)
+        if head in _SELF_RECEIVERS or head == "$this":  # PHP uses $this
+            class_qual = source_qualname.rsplit(".", 1)[0] if "." in source_qualname else ""
+            return f"{class_qual}.{rest}" if class_qual else None
+    return None
+
+
 def _resolve_one(
     label: str,
     table: dict[str, list[SymbolEntry]],
@@ -169,6 +195,19 @@ def resolve_edges(
         target, confidence = _resolve_one(
             raw.target_label, table, tail_index, fuzzy_qualnames, fuzzy_threshold
         )
+        # Fallback for intra-class calls the walkers leave receiver-qualified
+        # (``this.helper`` / ``self.helper`` / ``$this.helper`` / ``Self::new``).
+        # Only when the raw label didn't resolve, so resolved edges never change.
+        if target is None and raw.edge_type == "CALLS":
+            rebound = _rebind_self_receiver(raw.target_label, raw.source_qualname)
+            if rebound is not None:
+                # Exact match only: the ``self.`` receiver means "this class", so
+                # bind solely to the sibling method ``<class>.x`` when it exists.
+                # A suffix/fuzzy fallback here would defeat that and bind to an
+                # unrelated ``x`` in some other class.
+                owners = table.get(rebound)
+                if owners and len(owners) == 1:
+                    target, confidence = owners[0], "EXTRACTED"
         out.append(
             Relation(
                 id=str(uuid4()),

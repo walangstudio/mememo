@@ -152,6 +152,111 @@ def test_t019_unresolved_is_ambiguous() -> None:
     assert relations[0].target_symbol == "unknown_function"
 
 
+# ---- intra-class self/this call resolution (all languages, via the resolver) --
+
+
+def _resolve_one_call(target_label, source="pkg.mod.Svc.handle"):
+    from mememo.chunking.base_chunker import RawEdge
+
+    symbols = [
+        SymbolEntry(memory_id="m-handle", qualname="pkg.mod.Svc.handle"),
+        SymbolEntry(memory_id="m-process", qualname="pkg.mod.Svc.process"),
+    ]
+    raw = [RawEdge(source, target_label, "CALLS")]
+    return resolve_edges(raw, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols)[0]
+
+
+def test_self_receiver_calls_resolve_across_languages() -> None:
+    # Every walker leaves an intra-class call receiver-qualified; the resolver
+    # rebinds it to the source's own class so it links to the sibling method.
+    for label in ("this.process", "self.process", "$this.process", "cls.process"):
+        rel = _resolve_one_call(label)
+        assert rel.target_memory_id == "m-process", label
+        assert rel.target_symbol is None, label
+
+
+def test_self_static_call_with_scope_operator_resolves() -> None:
+    # Rust ``Self::process`` / PHP-style ``self::process`` (scope operator).
+    rel = _resolve_one_call("Self::process")
+    assert rel.target_memory_id == "m-process"
+
+
+def test_non_self_receiver_is_not_rebound() -> None:
+    # A call on some other object must stay unresolved, not get force-bound to
+    # the source's class.
+    rel = _resolve_one_call("other.process")
+    assert rel.target_memory_id is None
+    assert rel.target_symbol == "other.process"
+
+
+def test_multi_hop_self_chain_is_not_rebound() -> None:
+    # self.client.fetch is a call on a member, not a sibling method — leave it.
+    rel = _resolve_one_call("this.client.process")
+    assert rel.target_memory_id is None
+    assert rel.target_symbol == "this.client.process"
+
+
+def test_self_rebind_only_when_sibling_exists() -> None:
+    # this.missing has no sibling target -> stays unresolved (no false bind).
+    rel = _resolve_one_call("this.missing")
+    assert rel.target_memory_id is None
+    assert rel.target_symbol == "this.missing"
+
+
+def test_self_call_does_not_bind_to_unrelated_class_method() -> None:
+    # self.process where the SOURCE class has no own 'process' must NOT bind to
+    # a uniquely-named 'process' in a different class (the self. constraint).
+    from mememo.chunking.base_chunker import RawEdge
+
+    symbols = [
+        SymbolEntry(memory_id="m-handle", qualname="pkg.A.handle"),  # class A, no process
+        SymbolEntry(memory_id="m-other", qualname="pkg.B.process"),  # unrelated class B
+    ]
+    raw = [RawEdge("pkg.A.handle", "self.process", "CALLS")]
+    rel = resolve_edges(raw, repo_id="r", branch="main", commit_sha=SHA, symbols=symbols)[0]
+    assert rel.target_memory_id is None  # pkg.A.process doesn't exist -> no bind
+    assert rel.target_symbol == "self.process"
+
+
+def test_java_walker_self_call_resolves_end_to_end() -> None:
+    pytest.importorskip("tree_sitter")
+    pytest.importorskip("tree_sitter_java")
+    from mememo.chunking.python_ast_chunker import file_path_to_module
+    from mememo.chunking.tree_sitter_chunker import TreeSitterChunker
+
+    java = """\
+class Svc {
+    void handle() { this.process(); }
+    void process() {}
+}
+"""
+    chunker = TreeSitterChunker()
+    chunks, edges = chunker.chunk_with_edges(java, "Svc.java", "java")
+    calls = [e for e in edges if e.edge_type == "CALLS"]
+    assert any(e.target_label == "this.process" for e in calls)
+
+    # Build the symbol table exactly like index_repository (module.Class.fn).
+    module = file_path_to_module("Svc.java")
+    symbols = []
+    for i, ch in enumerate(chunks):
+        if ch.function_name:
+            parts = [module]
+            if ch.class_name:
+                parts.append(ch.class_name)
+            parts.append(ch.function_name)
+            symbols.append(SymbolEntry(memory_id=f"m{i}", qualname=".".join(parts)))
+    process_id = next(s.memory_id for s in symbols if s.qualname.endswith(".process"))
+
+    relations = resolve_edges(
+        [e for e in calls if e.target_label == "this.process"],
+        repo_id="r",
+        branch="main",
+        commit_sha=SHA,
+        symbols=symbols,
+    )
+    assert relations and relations[0].target_memory_id == process_id
+
+
 def test_t019_skips_when_source_qualname_unknown() -> None:
     from mememo.chunking.base_chunker import RawEdge
 
