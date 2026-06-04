@@ -49,7 +49,7 @@ dependencies = [
     # Routes SSL through the OS trust store so the first-run HuggingFace model
     # download works behind a TLS-intercepting corporate proxy. Pure-Python, no
     # native build. Opt out at runtime with MEMEMO_USE_SYSTEM_CA=0.
-    "truststore>=0.9",
+    "truststore>=0.9.1",
 ]
 
 [project.optional-dependencies]

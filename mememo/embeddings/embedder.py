@@ -54,12 +54,13 @@ def _ensure_system_ca() -> None:
     global _SYSTEM_CA_READY
     if _SYSTEM_CA_READY:
         return
-    _SYSTEM_CA_READY = True  # one attempt, even on failure
 
     import os
 
     if os.environ.get("MEMEMO_USE_SYSTEM_CA", "1").strip().lower() in ("0", "false", "no"):
-        return
+        return  # opted out — leave the one-shot flag unset so it stays a no-op
+
+    _SYSTEM_CA_READY = True  # one attempt, even on failure
     try:
         import truststore
 
@@ -152,9 +153,6 @@ class Embedder:
                 f"Unknown model: {self.model_name}. " f"Available: {list(MODEL_REGISTRY.keys())}"
             )
 
-        # Make the (possible) download below work behind a corporate TLS proxy.
-        _ensure_system_ca()
-
         model_info = MODEL_REGISTRY[self.model_name]
         logger.info(f"Loading embedding model: {model_info['name']}")
         logger.info(f"  Dimension: {model_info['dimension']}")
@@ -175,6 +173,11 @@ class Embedder:
                 f"Cache-only load failed ({type(e).__name__}: {e}); "
                 f"falling back to download for {model_info['name']}"
             )
+            # Only now, when a network download is actually required, route SSL
+            # through the OS trust store so the download works behind a corporate
+            # TLS proxy. Cached / offline loads never reach here, so the
+            # process-wide SSL change is scoped to genuine first-run downloads.
+            _ensure_system_ca()
             self._model = SentenceTransformer(
                 model_info["name"],
                 device=self.device,

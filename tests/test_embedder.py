@@ -37,6 +37,12 @@ def test_ensure_system_ca_opt_out_skips_injection(monkeypatch) -> None:
     monkeypatch.setattr(truststore, "inject_into_ssl", lambda: called.__setitem__("inject", True))
     emb._ensure_system_ca()
     assert called["inject"] is False
+    # Opting out must NOT consume the one-shot flag: a later enabled call in the
+    # same process must still be able to inject.
+    assert emb._SYSTEM_CA_READY is False
+    monkeypatch.setenv("MEMEMO_USE_SYSTEM_CA", "1")
+    emb._ensure_system_ca()
+    assert called["inject"] is True
 
 
 def test_ensure_system_ca_injects_once(monkeypatch) -> None:
