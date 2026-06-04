@@ -24,12 +24,13 @@ clients (Cursor, Windsurf, Cline, etc.) see [Installation](#-installation).
 
 ### Core Capabilities
 - **🎯 Code-Aware**: Understands code structure (functions, classes, methods)
-- **🌳 Multi-Language**: 15+ file extensions supported
+- **🌳 Multi-Language**: Python (AST) + 13 languages via tree-sitter (TS, JS, Go, Rust, Java, C/C++, C#, Kotlin, Ruby, PHP, Swift, Scala) + Markdown
 - **🔍 Semantic Search**: Vector embeddings with FAISS similarity search
 - **🔐 Security-First**: Secrets detection with auto-sanitization (covers cross-branch memory copies too, v0.4+)
 - **📂 Git-Aware**: Automatic branch isolation + linked-worktree-canonical `repo_id` (v0.6)
 - **⏱ Commit-Aware** *(v0.4)*: Every memory carries the SHA it was minted at; append-only event log enables time-travel recall and branch-merge unions
-- **🕸 Memory Graph** *(v0.5)*: Typed edges (`IMPORTS` / `CALLS` / `EXTENDS` / `IMPLEMENTS` / `USES` / `DECORATED_BY`) across Python / TypeScript / JavaScript / Go; Louvain communities; symbol resolver with bounded fuzzy match
+- **🕸 Memory Graph** *(v0.5)*: Typed edges (`IMPORTS` / `CALLS` / `EXTENDS` / `IMPLEMENTS` / `USES` / `DECORATED_BY`) across all 13 supported languages; intra-class `self`/`this` calls resolve to the owning method (v0.16+); Louvain communities; symbol resolver with bounded fuzzy match
+- **📐 Diagrams** *(v0.13+)*: `generate_diagram` emits Mermaid straight from the code graph — deterministic class / call / module diagrams, plus LLM-synthesized sequence / use-case / state / ERD (passthrough-aware, rendered in chat). Also a `/diagram` panel in the web UI
 - **🌐 Web UI** *(v0.6, optional)*: Localhost-only D3-force graph + paginated table + time-travel slider via `mememo serve`
 - **⚡ Incremental**: Only re-index changed files (Merkle DAG)
 - **🤖 Passive Hooks**: Auto-capture memories, inject context, and (v0.6) augment Grep/Glob/Bash results — no manual invocation
@@ -72,6 +73,32 @@ Set `MEMEMO_SMART_CONTEXT_ENABLED=false` to revert to the legacy fixed-budget be
 | Java | `.java` | Tree-sitter | Classes, methods, interfaces |
 | C/C++ | `.c`, `.cpp`, `.h`, `.hpp` | Tree-sitter | Functions, classes, structs |
 | C# | `.cs` | Tree-sitter | Classes, methods, interfaces |
+| Kotlin | `.kt`, `.kts` | Tree-sitter | Classes, methods, objects |
+| Ruby | `.rb` | Tree-sitter | Classes, modules, methods, mixins |
+| PHP | `.php` | Tree-sitter | Classes, interfaces, methods |
+| Swift | `.swift` | Tree-sitter | Classes, structs, protocols, methods |
+| Scala | `.scala` | Tree-sitter | Classes, traits, objects, methods |
+
+All tree-sitter languages emit the typed-edge graph (CALLS / EXTENDS / IMPLEMENTS / IMPORTS / USES) that powers semantic recall, call graphs, and diagrams.
+
+### Diagrams
+
+`generate_diagram` turns the indexed code graph into [Mermaid](https://mermaid.js.org/):
+
+| Type | Source | Where |
+|------|--------|-------|
+| `class` | deterministic (graph) | chat + web `/diagram` |
+| `call` | deterministic (graph) | chat + web `/diagram` |
+| `module` | deterministic (graph) | chat + web `/diagram` |
+| `sequence` / `usecase` / `state` / `erd` | LLM-synthesized from the graph + source | chat (passthrough-aware) |
+
+```
+generate_diagram(type="class", scope="auth/service.py")   # class diagram for a file
+generate_diagram(type="call",  scope="login")             # call graph rooted at a function
+generate_diagram(type="sequence", scope="checkout")       # host model renders the Mermaid
+```
+
+The deterministic types are exact (read straight from the edge graph); the LLM types return a ready-to-render prompt when no API model is configured, so the host model (e.g. Claude Code) draws them inline. The web UI (`mememo serve`) renders the deterministic types in a `/diagram` panel. Index a repo first (`mememo index <path>`).
 
 ## 🤔 Why mememo?
 
@@ -79,7 +106,7 @@ Unlike general-purpose AI memory solutions, mememo is **purpose-built for code**
 
 | Feature | mememo | General Memory Tools |
 |---------|--------|---------------------|
-| **Code Structure Awareness** | ✅ AST + tree-sitter for 15+ languages | ❌ Text-only indexing |
+| **Code Structure Awareness** | ✅ AST + tree-sitter for 14 languages | ❌ Text-only indexing |
 | **Git Branch Isolation** | ✅ Automatic per-branch context | ❌ No version control awareness |
 | **Deployment** | ✅ Local-first, zero external dependencies | ☁️ Cloud-based or complex setup |
 | **Incremental Indexing** | ✅ Merkle DAG (5-10x faster re-indexing) | ❌ Full corpus re-indexing |
@@ -1050,7 +1077,7 @@ fallback and can be re-imported via `import-md` if needed.
 
 ```
 mememo/
-├── server.py              # FastMCP server (25 MCP tools)
+├── server.py              # FastMCP server (26 MCP tools + 6 resources)
 ├── cli.py                 # Hook CLI (capture --hook, inject --hook)
 ├── core/                  # Core managers
 │   ├── memory_manager.py  # Orchestrates all memory ops
