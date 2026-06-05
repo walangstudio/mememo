@@ -12,6 +12,10 @@
 - `SearchParams.repo_id` / `branch` are now honored by `search_similar` as an
   explicit lane override (they were previously dead fields) — the mechanism the
   hook uses to reach the GLOBAL lane without per-prompt workspace discovery.
+- The query is embedded once and reused across both lanes (new
+  `search_similar(query_embedding=...)`), and the GLOBAL search is skipped when
+  the ambient lane already is global — so the two-lane recall adds no extra
+  embedding cost. Opt out with `MEMEMO_HOOK_INJECT_GLOBAL_LANE=false`.
 
 ## [0.23.0] - 2026-06-05
 
