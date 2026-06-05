@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.23.0] - 2026-06-05
+
+### Added
+- **Hybrid lexical+vector recall.** The `memories_fts` FTS5 table was populated
+  but unused; `search_similar` can now fuse a BM25 lexical pass with the vector
+  candidate pool via Reciprocal Rank Fusion (`mememo/core/hybrid.py`), so exact
+  identifiers and terse jargon the embedder blurs (project names, function
+  names) rank correctly. Verified on the real store: "business idea validation"
+  now ranks the right memory first instead of an unrelated note. Falls back to
+  pure vector when there's no lexical match.
+- Opt-in via `SearchParams.hybrid` (default **off**). Enabled on the recall
+  surfaces — the per-prompt inject hook, `recall_context`, and `search_similar`
+  — and deliberately **off** for callers that use `min_similarity` as a hard
+  gate (capture dedup, pre-tool hook, `recall_at_commit`), since a strong
+  lexical hit may bypass the similarity floor.
+
+### Fixed
+- `search_similar` now applies stale/type/tag filtering **before** truncating to
+  `top_k`, so a filtered-out hit no longer steals a slot from a valid one
+  further down the ranking.
+
+### Notes
+- SessionStart `recall_workspace` still uses its own vector-only path; extending
+  hybrid fusion there is a follow-up.
+
 ## [0.22.0] - 2026-06-05
 
 ### Added

@@ -29,6 +29,7 @@ from ..types import (
     RelationType,
     RepoContext,
 )
+from .hybrid import fts_match
 
 logger = logging.getLogger(__name__)
 
@@ -353,6 +354,36 @@ class StorageManager:
                 (row["id"], text),
             )
         self.conn.commit()
+
+    def search_fts(self, query: str, repo_id: str, branch: str, top_k: int) -> list[str]:
+        """Lexical BM25 search over memory content, scoped to ``(repo_id, branch)``.
+
+        Returns memory ids best-match-first (SQLite ``bm25()`` is most-negative
+        for the best match, so ``ORDER BY score`` ascending is best-first). The
+        query is sanitized to a safe OR-of-quoted-terms MATCH expression, so no
+        user punctuation can raise an FTS5 syntax error. Returns ``[]`` when the
+        query has no usable terms or FTS is unavailable — callers then fall back
+        to pure vector search.
+        """
+        match = fts_match(query)
+        if not match:
+            return []
+        try:
+            rows = self.conn.execute(
+                """
+                SELECT f.memory_id AS mid
+                FROM memories_fts f
+                JOIN memories m ON m.id = f.memory_id
+                WHERE f.content MATCH ? AND m.repo_id = ? AND m.branch_name = ?
+                ORDER BY bm25(memories_fts)
+                LIMIT ?
+                """,
+                (match, repo_id, branch, top_k),
+            ).fetchall()
+        except sqlite3.OperationalError as e:  # malformed MATCH / missing fts table
+            logger.debug("FTS search skipped: %s", e)
+            return []
+        return [row["mid"] for row in rows]
 
     def _backfill_v04_commit_metadata(self) -> None:
         """One-shot, idempotent backfill of created_at_sha + seed memory_events.

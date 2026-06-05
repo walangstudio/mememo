@@ -313,6 +313,7 @@ async def cmd_inject() -> None:
         top_k=20,
         min_similarity=cfg.hook.inject_search_floor,
         include_stale=False,
+        hybrid=True,
     )
     results = await srv.memory_manager.search_similar(search_params)
 
