@@ -161,15 +161,53 @@ def _field_names(node, code_bytes: bytes) -> list[str]:
     return names
 
 
-def _class_field_names(class_node, code_bytes: bytes) -> list[str]:
-    """Field names declared directly on a class/struct (not its nested types).
+# Type nodes a wrapper (C# / Kotlin ``variable_declaration``) can hold when it
+# exposes no ``type`` field of its own.
+_TYPE_CHILD_NODES = frozenset(
+    {"user_type", "type_identifier", "nullable_type", "generic_type", "qualified_name"}
+)
 
-    Walks the class subtree collecting names from field/property declarations,
-    skipping any nested type declaration so an inner class's (or enum variant's)
-    fields don't leak into the outer one. Method/function bodies hold locals
-    under different node types, so they're naturally excluded. Capped at 30.
+
+def _decl_type_text(node, code_bytes: bytes) -> str | None:
+    """Best-effort declared type of a field/property node, as a single line.
+
+    Reaches the type via, in order: a ``type`` field (java/c/c++/c#-property/
+    rust/scala/php/go, and typescript's ``type_annotation``); a ``type_annotation``
+    child (swift); or a wrapping ``variable_declaration`` (c#-field / kotlin).
+    Strips a leading ``:`` (type annotations carry one), collapses whitespace,
+    and drops anything over 60 chars. Returns None when the grammar exposes no
+    type (javascript, ruby) or none is found — the caller then stores a bare
+    name. The class diagram independently gates the type against a safe charset,
+    so a messy type here can never break rendering.
     """
-    names: list[str] = []
+    t = node.child_by_field_name("type")
+    if t is None:
+        for ch in node.children:
+            if ch.type == "type_annotation":  # swift (typescript hits the field above)
+                t = ch
+                break
+            if ch.type == "variable_declaration":  # c# / kotlin wrapper
+                t = ch.child_by_field_name("type") or next(
+                    (s for s in ch.named_children if s.type in _TYPE_CHILD_NODES), None
+                )
+                if t is not None:
+                    break
+    if t is None:
+        return None
+    txt = " ".join(_text(t, code_bytes).split()).lstrip(": ").strip()
+    return txt if txt and len(txt) <= 60 else None
+
+
+def _class_fields(class_node, code_bytes: bytes) -> list[str]:
+    """Fields declared directly on a class/struct (not its nested types).
+
+    Walks the class subtree collecting ``"name"`` or ``"name: type"`` entries
+    from field/property declarations, skipping any nested type declaration so an
+    inner class's (or enum variant's) fields don't leak into the outer one.
+    Method/function bodies hold locals under different node types, so they're
+    naturally excluded. Deduped by name, capped at 30.
+    """
+    entries: list[str] = []
     seen: set[str] = set()
 
     def walk(node) -> None:
@@ -177,44 +215,46 @@ def _class_field_names(class_node, code_bytes: bytes) -> list[str]:
             if ch.type in _NESTED_TYPE_NODES or ch.type in _SCOPE_BODY_NODES:
                 continue
             if ch.type in _FIELD_NODE_TYPES:
+                type_text = _decl_type_text(ch, code_bytes)
                 for nm in _field_names(ch, code_bytes):
                     if nm and nm not in seen:
                         seen.add(nm)
-                        names.append(nm)
+                        entries.append(f"{nm}: {type_text}" if type_text else nm)
             walk(ch)
 
     walk(class_node)
-    return names[:30]
+    return entries[:30]
 
 
 def _go_struct_fields(struct_type_node, code_bytes: bytes) -> list[str]:
-    """Named fields of a Go ``struct_type`` (skips embedded/anonymous fields).
+    """Named fields of a Go ``struct_type`` as ``"name"`` / ``"name: type"``.
 
     ``field_declaration_list`` holds ``field_declaration`` nodes; each carries
-    one or more ``field_identifier`` names (``A, B int`` → both) plus a type.
-    Embedded fields (``Logger``) have a type but no ``field_identifier``, so
-    they contribute no name. Capped at 30.
+    one or more ``field_identifier`` names (``A, B int`` → both) plus one shared
+    type. Embedded fields (``Logger``) have a type but no ``field_identifier``,
+    so they contribute no name. Capped at 30.
 
     Deliberately does NOT go through ``_field_names``: that helper's
     ``child_by_field_name("name")`` shortcut returns only the *first* name of a
     Go ``field_declaration``, dropping ``b`` from ``a, b int`` — so collect the
     ``field_identifier`` children directly here.
     """
-    names: list[str] = []
+    entries: list[str] = []
     seen: set[str] = set()
     fdl = next((c for c in struct_type_node.children if c.type == "field_declaration_list"), None)
     if fdl is None:
-        return names
+        return entries
     for fd in fdl.children:
         if fd.type != "field_declaration":
             continue
+        type_text = _decl_type_text(fd, code_bytes)
         for ch in fd.children:
             if ch.type == "field_identifier":
                 nm = _text(ch, code_bytes)
                 if nm and nm not in seen:
                     seen.add(nm)
-                    names.append(nm)
-    return names[:30]
+                    entries.append(f"{nm}: {type_text}" if type_text else nm)
+    return entries[:30]
 
 
 def _ruby_instance_var_fields(class_node, code_bytes: bytes) -> list[str]:
@@ -319,7 +359,7 @@ def walk_typescript_or_javascript(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
-                    attributes=_class_field_names(node, code_bytes) or None,
+                    attributes=_class_fields(node, code_bytes) or None,
                     language=language,
                     file_path=file_path,
                 )
@@ -713,7 +753,7 @@ def walk_rust(
                     end_line=end,
                     chunk_type="class",
                     class_name=name,
-                    attributes=_class_field_names(node, code_bytes) or None,
+                    attributes=_class_fields(node, code_bytes) or None,
                     language="rust",
                     file_path=file_path,
                 )
@@ -832,7 +872,7 @@ def walk_java(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
-                    attributes=_class_field_names(node, code_bytes) or None,
+                    attributes=_class_fields(node, code_bytes) or None,
                     language="java",
                     file_path=file_path,
                 )
@@ -1004,7 +1044,7 @@ def walk_c_family(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
-                    attributes=_class_field_names(node, code_bytes) or None,
+                    attributes=_class_fields(node, code_bytes) or None,
                     language=lang,
                     file_path=file_path,
                 )
@@ -1148,7 +1188,7 @@ def walk_csharp(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
-                    attributes=_class_field_names(node, code_bytes) or None,
+                    attributes=_class_fields(node, code_bytes) or None,
                     language="csharp",
                     file_path=file_path,
                 )
@@ -1332,7 +1372,7 @@ def walk_kotlin(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
-                    attributes=_class_field_names(node, code_bytes) or None,
+                    attributes=_class_fields(node, code_bytes) or None,
                     language="kotlin",
                     file_path=file_path,
                 )
@@ -1636,7 +1676,7 @@ def walk_php(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
-                    attributes=_class_field_names(node, code_bytes) or None,
+                    attributes=_class_fields(node, code_bytes) or None,
                     language="php",
                     file_path=file_path,
                 )
@@ -1827,7 +1867,7 @@ def walk_swift(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
-                    attributes=_class_field_names(node, code_bytes) or None,
+                    attributes=_class_fields(node, code_bytes) or None,
                     language="swift",
                     file_path=file_path,
                 )
@@ -1998,7 +2038,7 @@ def walk_scala(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
-                    attributes=_class_field_names(node, code_bytes) or None,
+                    attributes=_class_fields(node, code_bytes) or None,
                     language="scala",
                     file_path=file_path,
                 )
