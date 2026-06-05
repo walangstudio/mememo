@@ -16,7 +16,9 @@ from uuid import uuid4
 
 from ..embeddings import Embedder
 from ..types import (
+    BranchContext,
     CreateMemoryParams,
+    GitContext,
     Memory,
     MemoryContent,
     MemoryEvent,
@@ -24,6 +26,7 @@ from ..types import (
     MemoryMetadata,
     MemoryRelationships,
     MemorySummary,
+    RepoContext,
     SearchParams,
     SearchResult,
     coerce_sha,
@@ -375,6 +378,7 @@ class MemoryManager:
         params: SearchParams,
         cwd: str | None = None,
         content_types: list[str] | set[str] | None = None,
+        query_embedding: list[float] | None = None,
     ) -> list[SearchResult]:
         """
         Search for similar memories using vector similarity.
@@ -384,15 +388,27 @@ class MemoryManager:
             cwd: Working directory for git context detection
             content_types: Optional set of content types to keep. Pushed into the
                 batch loader so the JSON blob is never read for filtered rows.
+            query_embedding: Precomputed query embedding. Pass it when searching
+                several lanes for the same query (e.g. ambient + GLOBAL) so the
+                embedder runs once instead of per lane.
 
         Returns:
             List of search results with similarity scores
         """
-        context = await self.git_manager.detect_context(cwd)
+        # An explicit repo_id targets a specific lane (e.g. the GLOBAL lane for
+        # cross-project recall) instead of the ambient git context.
+        if params.repo_id:
+            context = GitContext(
+                repo=RepoContext(id=params.repo_id, name="", path="", remote_url=None),
+                branch=BranchContext(name=params.branch or "main", commit_hash=""),
+            )
+        else:
+            context = await self.git_manager.detect_context(cwd)
 
-        # Generate embedding for query
-        logger.debug(f"Generating embedding for query: {params.query[:50]}...")
-        query_embedding = self.embedder.embed_query(params.query)
+        # Generate embedding for query (unless the caller precomputed it).
+        if query_embedding is None:
+            logger.debug(f"Generating embedding for query: {params.query[:50]}...")
+            query_embedding = self.embedder.embed_query(params.query).tolist()
 
         # Search vector index (resolved per repo/branch). When hybrid is on we
         # pool more candidates than requested so the lexical signal has room to
@@ -401,7 +417,7 @@ class MemoryManager:
         top_k = params.top_k
         pool_k = max(top_k, HYBRID_POOL_K) if params.hybrid else top_k
         distances, memory_ids = vi.search(
-            query_embedding=query_embedding.tolist(),
+            query_embedding=query_embedding,
             top_k=pool_k,
         )
 
