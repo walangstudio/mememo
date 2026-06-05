@@ -57,6 +57,33 @@ def _attr_name(attr: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "", name)
 
 
+# A type token is rendered only when it maps to this safe charset (after the
+# bracket→``~`` generic rewrite): letters/digits/_/./~, plus commas and spaces
+# for multi-arg generics. Anything else (unions ``|``, callables, quotes) is
+# dropped so an exotic annotation can never break the Mermaid parse.
+_SAFE_TYPE_RE = re.compile(r"^[A-Za-z0-9_~., ]+$")
+
+
+def _attr_member(attr: str, name: str) -> str:
+    """Mermaid class-body line for one field, ``+<type> <name>`` (UML order).
+
+    The stored attribute is ``"name"`` or ``"name: type"``. When a type is
+    present and renders to a Mermaid-safe token — generics ``[]``/``<>`` become
+    ``~ … ~`` (Mermaid's generic syntax) — it's shown before the name; otherwise
+    we fall back to ``+<name>`` so the diagram never fails to parse.
+    """
+    _, sep, raw_type = attr.partition(":")
+    if sep:
+        t = raw_type.strip()
+        for op, cl in (("[", "]"), ("<", ">"), ("(", ")"), ("{", "}")):
+            t = t.replace(op, "~").replace(cl, "~")
+        # ``~~`` (from nested generics) or unbalanced markers render oddly, so
+        # only accept a single, balanced level of generic nesting.
+        if t and "~~" not in t and t.count("~") % 2 == 0 and _SAFE_TYPE_RE.match(t):
+            return f"    +{t} {name}"
+    return f"    +{name}"
+
+
 def _load_attributes(base_dir: Path | None, content_ref: str | None) -> list[str]:
     """Read a class memory's ``attributes`` list from its content blob.
 
@@ -165,15 +192,15 @@ def class_diagram(
         # Cap blob reads so a huge whole-repo diagram doesn't do one file read
         # per class (the diagram is already unusable past a few dozen classes).
         seen_attrs: set[str] = set()
-        attr_names: list[str] = []
+        attr_lines: list[str] = []
         attr_src = _load_attributes(base_dir, info.get("content_ref")) if idx < 80 else []
         for a in attr_src:
             n = _attr_name(a)
             if n and n not in seen_attrs:
                 seen_attrs.add(n)
-                attr_names.append(n)
+                attr_lines.append(_attr_member(a, n))
 
-        body = [f"    +{n}" for n in attr_names] + [f"    +{m}()" for m in methods]
+        body = attr_lines + [f"    +{m}()" for m in methods]
         if body:
             lines.append(f"class {mmid} {{\n" + "\n".join(body) + "\n}")
         else:
