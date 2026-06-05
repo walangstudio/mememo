@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.21.2] - 2026-06-05
+
+### Added
+- **Class diagrams now render field types**, not just names. A stored
+  `name: type` attribute renders as `+<type> <name>` (UML order); generics are
+  rewritten to Mermaid's `~ … ~` syntax (`List[str]` → `+List~str~ items`).
+  Types that don't map to a safe token (unions like `Foo | None`, nested
+  generics, callables) fall back to name-only so an exotic annotation can never
+  break the Mermaid parse. Types are currently available for Python fields; the
+  tree-sitter languages store names only (rendered as `+<name>`).
+
 ## [0.21.1] - 2026-06-05
 
 ### Fixed

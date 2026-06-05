@@ -186,9 +186,34 @@ def test_class_diagram_renders_attributes_with_base_dir(store: StorageManager) -
         encoding="utf-8",
     )
     result = class_diagram(store.conn, REPO, BRANCH, base_dir=store.base_dir)
-    assert "+owner" in result  # field rows rendered (name only, parse-safe)
-    assert "+balance" in result
+    assert "+str owner" in result  # type rendered before the name (UML order)
+    assert "+int balance" in result
     assert "+foo()" in result  # methods still listed alongside fields
+
+
+def test_class_diagram_field_type_rendering(store: StorageManager) -> None:
+    import json
+
+    from mememo.diagrams import _attr_member
+
+    # Simple types render; generics map [] / <> to Mermaid ~ … ~.
+    assert _attr_member("balance: int", "balance") == "    +int balance"
+    assert _attr_member("items: List[str]", "items") == "    +List~str~ items"
+    assert _attr_member("m: dict[str, int]", "m") == "    +dict~str, int~ m"
+    # No type -> name only.
+    assert _attr_member("owner", "owner") == "    +owner"
+    # Exotic types (unions, nested generics, callables) fall back to name only
+    # so they can never break the Mermaid parse.
+    assert _attr_member("x: Foo | None", "x") == "    +x"
+    assert _attr_member("f: Callable[[int], str]", "f") == "    +f"
+    # End-to-end: the rendered diagram for a generic field stays parse-safe.
+    blob = store.base_dir / "r2"
+    blob.parent.mkdir(parents=True, exist_ok=True)
+    blob.write_text(
+        json.dumps({"text": "...", "attributes": ["tags: list[str]"]}), encoding="utf-8"
+    )
+    result = class_diagram(store.conn, REPO, BRANCH, base_dir=store.base_dir)
+    assert "+list~str~ tags" in result
 
 
 def test_class_diagram_no_attributes_without_base_dir(store: StorageManager) -> None:
