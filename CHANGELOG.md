@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.21.1] - 2026-06-05
+
+### Fixed
+- **Go intra-struct method calls now resolve.** A call on a method's own
+  receiver (`a.validate()`) was emitted with the receiver var verbatim
+  (`a.validate`), which matched no symbol, so every call between methods of the
+  same struct was dropped from the graph (Go's receiver is a named var, not
+  `self`, so the resolver's self-receiver rebind couldn't catch it). The Go
+  walker now rewrites a receiver call to the struct's fully-qualified
+  `module.Struct.method`, which the resolver binds exactly. Calls on other
+  variables and bare functions are unaffected. Improves Go call graphs and
+  `graph_neighbors`/`graph_impact`. Requires a re-index.
+
 ## [0.21.0] - 2026-06-05
 
 ### Added
