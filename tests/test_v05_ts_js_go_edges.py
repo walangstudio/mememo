@@ -201,6 +201,34 @@ def test_t018_go_method_receiver_emits_uses(chunker: TreeSitterChunker) -> None:
     assert any(e.target_label == "User" for e in uses)
 
 
+def test_t018_go_receiver_call_qualified_to_struct(chunker: TreeSitterChunker) -> None:
+    # A call on the method's own receiver var (a.validate) is rewritten to the
+    # struct's fully-qualified method so the resolver can bind it.
+    src = (
+        "package bank\n"
+        "type Account struct {\n  Balance int\n}\n"
+        "func (a *Account) Deposit(n int) {\n  a.validate(n)\n}\n"
+        "func (a *Account) validate(n int) {}\n"
+    )
+    _, edges = chunker.chunk_with_edges(src, "bank.go", "go")
+    calls = {e.target_label for e in edges if e.edge_type == "CALLS"}
+    assert "bank.Account.validate" in calls
+    assert "a.validate" not in calls
+
+
+def test_t018_go_non_receiver_call_not_rewritten(chunker: TreeSitterChunker) -> None:
+    # Only the receiver var is rewritten; calls on other vars / bare funcs stay.
+    src = (
+        "package bank\n"
+        "type Account struct {}\n"
+        "func (a *Account) Run(o *Other) {\n  o.foo()\n  bar()\n}\n"
+    )
+    _, edges = chunker.chunk_with_edges(src, "bank.go", "go")
+    calls = {e.target_label for e in edges if e.edge_type == "CALLS"}
+    assert "o.foo" in calls
+    assert "bar" in calls
+
+
 def test_t018_go_method_chunk_carries_receiver_as_parent_class(
     chunker: TreeSitterChunker,
 ) -> None:

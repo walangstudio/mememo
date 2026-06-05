@@ -430,13 +430,34 @@ def walk_go(
     - import_declaration / import_spec -> IMPORTS
     - function_declaration / method_declaration -> CALLS (inside body)
     - method receiver type -> USES (the method binds to that struct)
+    A ``recv.method()`` call (recv = the method's own receiver var) is rewritten
+    to the struct's fully-qualified ``module.Struct.method`` so the resolver
+    binds it — Go's receiver is a named var, not ``self``. ``type X struct {...}``
+    becomes a class chunk (with field names) so methods attach in class diagrams.
     """
     chunks: list[Chunk] = []
     edges: list[RawEdge] = []
     scope_stack: list[tuple[str, str]] = [("module", module)]
+    # (receiver var name, receiver struct) for the enclosing method, or None for
+    # a plain function. Lets a ``recv.method()`` call inside the body be rewritten
+    # to the struct's fully-qualified method so the resolver binds it (Go's
+    # receiver is a named var like ``a``, not ``self``, so the resolver's
+    # self-receiver rebind can't catch it — only the walker knows the name).
+    recv_stack: list[tuple[str, str] | None] = []
 
     def cur() -> str:
         return ".".join(part for _, part in scope_stack)
+
+    def _rewrite_receiver_call(tgt: str) -> str:
+        recv = recv_stack[-1] if recv_stack else None
+        if recv is None:
+            return tgt
+        rname, rstruct = recv
+        head, dot, tail = tgt.partition(".")
+        # ``_`` is the blank receiver — it can't be referenced, so never a call head.
+        if rname and rname != "_" and dot and tail and "." not in tail and head == rname:
+            return f"{module}.{rstruct}.{tail}"
+        return tgt
 
     def visit(node) -> None:
         if node.type == "type_declaration":
@@ -504,10 +525,12 @@ def walk_go(
                 )
             )
             scope_stack.append(("function", name))
+            recv_stack.append(None)  # a plain function has no receiver
             body = node.child_by_field_name("body")
             if body is not None:
                 for child in body.children:
                     visit(child)
+            recv_stack.pop()
             scope_stack.pop()
             return
 
@@ -516,11 +539,15 @@ def walk_go(
             name = _text(name_node, code_bytes) if name_node else "(anonymous)"
             # Receiver type binds the method to a struct — record as USES.
             receiver_struct: str | None = None
+            receiver_name: str | None = None
             recv = node.child_by_field_name("receiver")
             if recv is not None:
                 for p in recv.children:
                     # parameter_declaration with type identifier or pointer_type
                     if p.type == "parameter_declaration":
+                        nm = p.child_by_field_name("name")
+                        if nm is not None:
+                            receiver_name = _text(nm, code_bytes)
                         t = p.child_by_field_name("type")
                         if t is not None:
                             receiver_struct = _flatten_member_expression(t, code_bytes)
@@ -553,10 +580,12 @@ def walk_go(
             scope_stack.append(
                 ("function", f"{receiver_struct}.{name}" if receiver_struct else name)
             )
+            recv_stack.append((receiver_name, receiver_struct) if receiver_struct else None)
             body = node.child_by_field_name("body")
             if body is not None:
                 for child in body.children:
                     visit(child)
+            recv_stack.pop()
             scope_stack.pop()
             return
 
@@ -565,7 +594,7 @@ def walk_go(
             if fn is not None:
                 tgt = _flatten_member_expression(fn, code_bytes)
                 if tgt:
-                    edges.append(RawEdge(cur(), tgt, "CALLS"))
+                    edges.append(RawEdge(cur(), _rewrite_receiver_call(tgt), "CALLS"))
 
         for child in node.children:
             visit(child)
