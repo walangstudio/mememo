@@ -187,6 +187,62 @@ def _class_field_names(class_node, code_bytes: bytes) -> list[str]:
     return names[:30]
 
 
+def _go_struct_fields(struct_type_node, code_bytes: bytes) -> list[str]:
+    """Named fields of a Go ``struct_type`` (skips embedded/anonymous fields).
+
+    ``field_declaration_list`` holds ``field_declaration`` nodes; each carries
+    one or more ``field_identifier`` names (``A, B int`` → both) plus a type.
+    Embedded fields (``Logger``) have a type but no ``field_identifier``, so
+    they contribute no name. Capped at 30.
+
+    Deliberately does NOT go through ``_field_names``: that helper's
+    ``child_by_field_name("name")`` shortcut returns only the *first* name of a
+    Go ``field_declaration``, dropping ``b`` from ``a, b int`` — so collect the
+    ``field_identifier`` children directly here.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    fdl = next((c for c in struct_type_node.children if c.type == "field_declaration_list"), None)
+    if fdl is None:
+        return names
+    for fd in fdl.children:
+        if fd.type != "field_declaration":
+            continue
+        for ch in fd.children:
+            if ch.type == "field_identifier":
+                nm = _text(ch, code_bytes)
+                if nm and nm not in seen:
+                    seen.add(nm)
+                    names.append(nm)
+    return names[:30]
+
+
+def _ruby_instance_var_fields(class_node, code_bytes: bytes) -> list[str]:
+    """Instance-variable "fields" of a Ruby class/module.
+
+    Ruby has no field declarations; instance state lives in ``@ivars`` assigned
+    inside methods (usually ``#initialize``). Collect every ``@ivar`` referenced
+    in the class body — an ivar is class-scoped whether read or written — minus
+    nested class/module bodies, strip the leading ``@``, dedupe. Capped at 30.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+
+    def walk(node) -> None:
+        for ch in node.children:
+            if ch.type in ("class", "module", "singleton_class"):
+                continue
+            if ch.type == "instance_variable":
+                nm = _text(ch, code_bytes).lstrip("@")
+                if nm and nm not in seen:
+                    seen.add(nm)
+                    names.append(nm)
+            walk(ch)
+
+    walk(class_node)
+    return names[:30]
+
+
 def walk_typescript_or_javascript(
     tree, code_bytes: bytes, module: str, file_path: str, language: str
 ) -> tuple[list[Chunk], list[RawEdge]]:
@@ -383,6 +439,33 @@ def walk_go(
         return ".".join(part for _, part in scope_stack)
 
     def visit(node) -> None:
+        if node.type == "type_declaration":
+            # ``type X struct {...}`` → a class chunk so methods (bound via their
+            # receiver as parent_class/class_name) can attach in the class diagram.
+            # A single declaration can group several specs: ``type ( A struct{}; ... )``.
+            for spec in node.children:
+                if spec.type != "type_spec":
+                    continue
+                name_node = spec.child_by_field_name("name")
+                type_node = spec.child_by_field_name("type")
+                if name_node is None or type_node is None or type_node.type != "struct_type":
+                    continue
+                name = _text(name_node, code_bytes)
+                start, end = _line_range(spec)
+                chunks.append(
+                    Chunk(
+                        text=_text(spec, code_bytes),
+                        start_line=start,
+                        end_line=end,
+                        chunk_type="class",
+                        class_name=name,
+                        attributes=_go_struct_fields(type_node, code_bytes) or None,
+                        language="go",
+                        file_path=file_path,
+                    )
+                )
+            return
+
         if node.type == "import_declaration":
             # Tree-sitter-go wraps single-line imports as a single import_spec
             # directly under import_declaration, and parenthesised blocks as
@@ -453,6 +536,11 @@ def walk_go(
                     end_line=end,
                     chunk_type="method",
                     function_name=name,
+                    # Owning struct is the SQL-queryable context: with
+                    # function_name it forms the module.Struct.method qualname the
+                    # edge source uses, so intra-method calls + class diagrams
+                    # resolve (mirrors the OO walkers).
+                    class_name=parent_class,
                     parent_class=parent_class,
                     language="go",
                     file_path=file_path,
@@ -460,7 +548,11 @@ def walk_go(
             )
             if receiver_struct:
                 edges.append(RawEdge(qual, receiver_struct, "USES"))
-            scope_stack.append(("function", name))
+            # Push the struct-qualified name so CALLS emitted in the body match
+            # the method's module.Struct.method symbol qualname (mirrors Rust).
+            scope_stack.append(
+                ("function", f"{receiver_struct}.{name}" if receiver_struct else name)
+            )
             body = node.child_by_field_name("body")
             if body is not None:
                 for child in body.children:
@@ -1370,6 +1462,7 @@ def walk_ruby(
                     chunk_type="class",
                     class_name=name,
                     parent_class=enclosing_class(),
+                    attributes=_ruby_instance_var_fields(node, code_bytes) or None,
                     language="ruby",
                     file_path=file_path,
                 )

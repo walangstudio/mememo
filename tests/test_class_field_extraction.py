@@ -74,6 +74,20 @@ CASES = {
         "<?php\nclass A {\n  private int $balance;\n  public string $owner;\n  function m() {}\n}\n",
         {"balance", "owner"},
     ),
+    "go": (
+        "tree_sitter_go",
+        "a.go",
+        "package p\ntype A struct {\n  owner string\n  balance int\n}\n"
+        "func (a *A) m() { local := 1; _ = local }\n",
+        {"owner", "balance"},
+    ),
+    "ruby": (
+        "tree_sitter_ruby",
+        "a.rb",
+        "class A\n  def initialize\n    @owner = 'x'\n    @balance = 0\n  end\n"
+        "  def m\n    local = 1\n  end\nend\n",
+        {"owner", "balance"},
+    ),
 }
 
 
@@ -148,6 +162,45 @@ def test_php_multiple_properties_one_declaration() -> None:
     pytest.importorskip("tree_sitter_php")
     names = _fields("<?php\nclass A {\n  public $a, $b;\n}\n", "A.php", "php")
     assert {"a", "b"} <= names
+
+
+def test_go_embedded_field_skipped_and_multiname_captured() -> None:
+    pytest.importorskip("tree_sitter_go")
+    names = _fields("package p\ntype A struct {\n  a, b int\n  Logger\n}\n", "a.go", "go")
+    assert {"a", "b"} <= names
+    # an anonymous embedded field (type only, no field name) contributes nothing
+    assert "Logger" not in names
+
+
+def test_go_struct_chunk_and_method_share_class_name() -> None:
+    # The struct must become a class chunk AND its methods must carry class_name
+    # so the class diagram attaches the methods to the struct.
+    pytest.importorskip("tree_sitter_go")
+    src = "package p\ntype A struct {\n  x int\n}\nfunc (a *A) m() {}\n"
+    chunks, _ = TreeSitterChunker().chunk_with_edges(src, "a.go", "go")
+    cls = next(c for c in chunks if c.chunk_type == "class")
+    assert cls.class_name == "A"
+    meth = next(c for c in chunks if c.chunk_type == "method")
+    assert meth.class_name == "A"
+
+
+def test_ruby_ivars_collected_across_methods() -> None:
+    pytest.importorskip("tree_sitter_ruby")
+    src = "class A\n  def initialize\n    @a = 1\n  end\n  def setup\n    @b = 2\n  end\nend\n"
+    assert {"a", "b"} <= _fields(src, "a.rb", "ruby")
+
+
+def test_ruby_nested_class_ivars_not_leaked_into_outer() -> None:
+    pytest.importorskip("tree_sitter_ruby")
+    src = (
+        "class Outer\n  def initialize\n    @outer_field = 1\n  end\n"
+        "  class Inner\n    def initialize\n      @inner_field = 2\n    end\n  end\nend\n"
+    )
+    chunks, _ = TreeSitterChunker().chunk_with_edges(src, "o.rb", "ruby")
+    outer = next(c for c in chunks if c.class_name == "Outer")
+    names = set(outer.attributes or [])
+    assert "outer_field" in names
+    assert "inner_field" not in names
 
 
 def test_nested_class_fields_not_leaked_into_outer() -> None:
