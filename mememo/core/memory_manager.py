@@ -414,9 +414,12 @@ class MemoryManager:
         vec_order = list(memory_ids)
         sim_by_id = {mid: math.exp(-d) for mid, d in zip(memory_ids, distances)}
 
-        # Vector candidates clearing the floor (the pre-hybrid behavior).
+        # Ranked candidate ids (best-first) and the score to sort the final
+        # results by — vector similarity in the plain path, RRF score in hybrid.
+        # NOT truncated to top_k yet: stale/type/tag filtering happens first, so
+        # filtered-out hits don't steal a top_k slot from valid ones further down.
         candidate_ids = [m for m in vec_order if sim_by_id[m] >= params.min_similarity]
-        order_score: dict[str, float] = {m: sim_by_id[m] for m in vec_order}
+        rank_score: dict[str, float] = dict(sim_by_id)
 
         if params.hybrid:
             # Lexical hits matching exact identifiers/jargon the embedder blurs.
@@ -427,19 +430,13 @@ class MemoryManager:
                 params.query, context.repo.id, context.branch.name, pool_k
             )
             lex_in_pool = [m for m in lex_order if m in sim_by_id]
-            if len(memory_ids) >= pool_k and len(lex_in_pool) < len(lex_order):
-                logger.debug(
-                    "hybrid: %d lexical hit(s) outside the vector pool dropped",
-                    len(lex_order) - len(lex_in_pool),
-                )
-            # Reorder by fusing the two ranked lists; a strong lexical match may
-            # bypass the vector floor (an exact term hit is itself evidence),
-            # capped so lexical noise can't flood the budget.
-            order_score = reciprocal_rank_fusion([vec_order, lex_in_pool])
+            # Fuse the two ranked lists; a strong lexical match may bypass the
+            # vector floor (an exact term hit is itself evidence), capped so
+            # lexical noise can't flood the budget.
+            rank_score = reciprocal_rank_fusion([vec_order, lex_in_pool])
             keep = set(candidate_ids) | set(lex_in_pool[:HYBRID_LEXICAL_BYPASS])
-            candidate_ids = sorted(keep, key=lambda m: order_score.get(m, 0.0), reverse=True)
+            candidate_ids = sorted(keep, key=lambda m: rank_score[m], reverse=True)
 
-        candidate_ids = candidate_ids[:top_k]
         if not candidate_ids:
             logger.info("Found 0 similar memories")
             return []
@@ -464,11 +461,11 @@ class MemoryManager:
                     continue
             results.append(SearchResult(memory=memory, similarity=sim_by_id[memory.id]))
 
-        # Rank by fused score (hybrid) or similarity (vector-only); load order
-        # from the batch loader is not relevance order.
-        results.sort(key=lambda r: order_score.get(r.memory.id, r.similarity), reverse=True)
+        # Rank by the chosen score (load order from the batch loader is not
+        # relevance order), then cap to the requested top_k after filtering.
+        results.sort(key=lambda r: rank_score[r.memory.id], reverse=True)
         logger.info(f"Found {len(results)} similar memories")
-        return results
+        return results[:top_k]
 
     async def delete_memory(self, memory_id: str, cwd: str | None = None) -> None:
         """

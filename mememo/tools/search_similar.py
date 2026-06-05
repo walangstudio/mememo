@@ -42,6 +42,7 @@ async def search_similar(
             type=params.type,
             include_stale=params.include_stale,
             tags=params.tags,
+            hybrid=True,
         )
 
         # Search via memory manager

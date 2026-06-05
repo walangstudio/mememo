@@ -32,6 +32,7 @@ async def recall_context(
             min_similarity=params.min_similarity,
             include_stale=False,
             tags=params.tags,
+            hybrid=True,
         )
         results = await memory_manager.search_similar(
             search_params, cwd=params.repo_path, content_types=RECALL_TYPES

@@ -317,9 +317,11 @@ class SearchParams(BaseModel):
     include_stale: bool = Field(default=False, description="Include stale memories in results")
     tags: list[str] | None = Field(None, description="Filter by tags (AND logic, all must match)")
     hybrid: bool = Field(
-        default=True,
+        default=False,
         description="Fuse lexical (BM25) signal with vector search to rank exact "
-        "identifiers/jargon. Falls back to pure vector when no lexical match.",
+        "identifiers/jargon. A strong lexical hit may bypass min_similarity, so "
+        "this is opt-in for recall surfaces (inject hook, recall/search tools) and "
+        "OFF for callers that use min_similarity as a hard gate (dedup, pre-tool).",
     )
 
 
