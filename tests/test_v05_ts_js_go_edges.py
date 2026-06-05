@@ -121,7 +121,7 @@ def test_t018_go_method_binds_to_receiver_struct(chunker: TreeSitterChunker) -> 
     chunks, _ = chunker.chunk_with_edges(GO_SAMPLE, "main.go", "go")
     struct = next((c for c in chunks if c.chunk_type == "class"), None)
     assert struct is not None and struct.class_name == "User"
-    assert struct.attributes == ["Name"]
+    assert struct.attributes == ["Name: string"]
     greet = next(c for c in chunks if c.chunk_type == "method" and c.function_name == "Greet")
     assert greet.class_name == "User"
 

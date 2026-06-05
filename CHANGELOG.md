@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.22.0] - 2026-06-05
+
+### Added
+- **Tree-sitter walkers now capture field types**, so class diagrams render
+  typed fields (`+<type> <name>`) for all 10 typed OO languages — Go, Rust,
+  Java, C#, C/C++, TypeScript, Kotlin, Swift, Scala, PHP — matching Python.
+  Each field stores `name: type` (was names only); JavaScript and Ruby fields
+  stay untyped (the grammars expose no type). The type is reached via the
+  declaration's `type` field, a `type_annotation` child (Swift), or a wrapping
+  `variable_declaration` (C#/Kotlin); annotation colons are stripped while a
+  type's own punctuation (e.g. C++ `::std::string`) is kept. Types over 60
+  chars or with unsafe characters fall back to name-only at render time, so an
+  exotic annotation can never break the Mermaid parse. Requires a re-index.
+
 ## [0.21.2] - 2026-06-05
 
 ### Added

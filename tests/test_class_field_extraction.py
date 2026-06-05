@@ -203,6 +203,104 @@ def test_ruby_nested_class_ivars_not_leaked_into_outer() -> None:
     assert "inner_field" not in names
 
 
+def _attrs(src: str, fp: str, lang: str) -> list[str]:
+    chunks, _ = TreeSitterChunker().chunk_with_edges(src, fp, lang)
+    cls = next(c for c in chunks if c.chunk_type == "class")
+    return cls.attributes or []
+
+
+# (lang, grammar, file, src, expected "name: type" entries)
+TYPED_CASES = [
+    (
+        "go",
+        "tree_sitter_go",
+        "a.go",
+        "package p\ntype A struct {\n  owner string\n}\n",
+        "owner: string",
+    ),
+    ("rust", "tree_sitter_rust", "a.rs", "struct A {\n  balance: i32,\n}\n", "balance: i32"),
+    ("java", "tree_sitter_java", "A.java", "class A {\n  int balance;\n}\n", "balance: int"),
+    (
+        "csharp",
+        "tree_sitter_c_sharp",
+        "A.cs",
+        "class A {\n  private int balance;\n}\n",
+        "balance: int",
+    ),
+    ("cpp", "tree_sitter_cpp", "A.cpp", "class A {\n  int balance;\n};\n", "balance: int"),
+    (
+        "typescript",
+        "tree_sitter_typescript",
+        "A.ts",
+        "class A {\n  balance: number;\n}\n",
+        "balance: number",
+    ),
+    (
+        "kotlin",
+        "tree_sitter_kotlin",
+        "A.kt",
+        'class A {\n  val owner: String = ""\n}\n',
+        "owner: String",
+    ),
+    (
+        "swift",
+        "tree_sitter_swift",
+        "A.swift",
+        "class A {\n  let balance: Int = 0\n}\n",
+        "balance: Int",
+    ),
+    (
+        "scala",
+        "tree_sitter_scala",
+        "A.scala",
+        'class A {\n  val owner: String = ""\n}\n',
+        "owner: String",
+    ),
+    (
+        "php",
+        "tree_sitter_php",
+        "A.php",
+        "<?php\nclass A {\n  private int $balance;\n}\n",
+        "balance: int",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "lang,grammar,fp,src,expected", TYPED_CASES, ids=[c[0] for c in TYPED_CASES]
+)
+def test_field_type_captured(lang, grammar, fp, src, expected) -> None:
+    pytest.importorskip(grammar)
+    assert expected in _attrs(src, fp, lang)
+
+
+def test_go_multiname_field_shares_type() -> None:
+    pytest.importorskip("tree_sitter_go")
+    attrs = _attrs("package p\ntype A struct {\n  a, b int\n}\n", "a.go", "go")
+    assert "a: int" in attrs and "b: int" in attrs
+
+
+def test_javascript_field_has_no_type() -> None:
+    # JS fields are untyped; the entry stays a bare name (no trailing ": ...").
+    pytest.importorskip("tree_sitter_javascript")
+    assert _attrs("class A {\n  balance = 0;\n}\n", "A.js", "javascript") == ["balance"]
+
+
+def test_cpp_global_namespace_qualifier_preserved() -> None:
+    # The leading '::' of a global-namespace type is part of the type, not an
+    # annotation colon, so it must survive (only ': T' annotation forms strip).
+    pytest.importorskip("tree_sitter_cpp")
+    attrs = _attrs("class A {\n  ::std::string owner;\n};\n", "A.cpp", "cpp")
+    assert "owner: ::std::string" in attrs
+
+
+def test_kotlin_nullable_and_generic_types_captured() -> None:
+    pytest.importorskip("tree_sitter_kotlin")
+    src = "class A {\n  val a: String? = null\n  val b: Map<String, Int> = mapOf()\n}\n"
+    attrs = _attrs(src, "A.kt", "kotlin")
+    assert "a: String?" in attrs and "b: Map<String, Int>" in attrs
+
+
 def test_nested_class_fields_not_leaked_into_outer() -> None:
     pytest.importorskip("tree_sitter_java")
     src = "class Outer {\n  int outerField;\n  class Inner {\n    int innerField;\n  }\n}\n"
