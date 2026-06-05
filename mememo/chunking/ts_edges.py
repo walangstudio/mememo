@@ -161,11 +161,16 @@ def _field_names(node, code_bytes: bytes) -> list[str]:
     return names
 
 
-# Type nodes a wrapper (C# / Kotlin ``variable_declaration``) can hold when it
-# exposes no ``type`` field of its own.
-_TYPE_CHILD_NODES = frozenset(
-    {"user_type", "type_identifier", "nullable_type", "generic_type", "qualified_name"}
-)
+# Kotlin's ``variable_declaration`` wrapper exposes no ``type`` field; its type
+# child is a ``user_type`` (``Map<..>``, ``foo.Bar``) or ``nullable_type``
+# (``String?``). C# uses the ``type`` field, so it doesn't need this set.
+_TYPE_CHILD_NODES = frozenset({"user_type", "nullable_type"})
+
+
+def _field_entry(name: str, type_text: str | None) -> str:
+    """One stored attribute: ``"name"`` or ``"name: type"`` (the format the class
+    diagram parses back). Single source for both field collectors below."""
+    return f"{name}: {type_text}" if type_text else name
 
 
 def _decl_type_text(node, code_bytes: bytes) -> str | None:
@@ -174,11 +179,13 @@ def _decl_type_text(node, code_bytes: bytes) -> str | None:
     Reaches the type via, in order: a ``type`` field (java/c/c++/c#-property/
     rust/scala/php/go, and typescript's ``type_annotation``); a ``type_annotation``
     child (swift); or a wrapping ``variable_declaration`` (c#-field / kotlin).
-    Strips a leading ``:`` (type annotations carry one), collapses whitespace,
-    and drops anything over 60 chars. Returns None when the grammar exposes no
-    type (javascript, ruby) or none is found — the caller then stores a bare
-    name. The class diagram independently gates the type against a safe charset,
-    so a messy type here can never break rendering.
+    A ``type_annotation`` carries a leading ``:`` which is dropped; a bare type
+    node keeps its own punctuation (e.g. C++ ``::std::string`` global-namespace
+    qualifier). Whitespace is collapsed; anything over 60 chars is dropped.
+    Returns None when the grammar exposes no type (javascript, ruby) or none is
+    found — the caller then stores a bare name. The class diagram independently
+    gates the type against a safe charset, so a messy type here can never break
+    rendering.
     """
     t = node.child_by_field_name("type")
     if t is None:
@@ -194,7 +201,9 @@ def _decl_type_text(node, code_bytes: bytes) -> str | None:
                     break
     if t is None:
         return None
-    txt = " ".join(_text(t, code_bytes).split()).lstrip(": ").strip()
+    txt = " ".join(_text(t, code_bytes).split())
+    if t.type == "type_annotation":  # only the annotation form carries a leading ':'
+        txt = txt[1:].strip()
     return txt if txt and len(txt) <= 60 else None
 
 
@@ -219,7 +228,7 @@ def _class_fields(class_node, code_bytes: bytes) -> list[str]:
                 for nm in _field_names(ch, code_bytes):
                     if nm and nm not in seen:
                         seen.add(nm)
-                        entries.append(f"{nm}: {type_text}" if type_text else nm)
+                        entries.append(_field_entry(nm, type_text))
             walk(ch)
 
     walk(class_node)
@@ -253,7 +262,7 @@ def _go_struct_fields(struct_type_node, code_bytes: bytes) -> list[str]:
                 nm = _text(ch, code_bytes)
                 if nm and nm not in seen:
                     seen.add(nm)
-                    entries.append(f"{nm}: {type_text}" if type_text else nm)
+                    entries.append(_field_entry(nm, type_text))
     return entries[:30]
 
 

@@ -286,6 +286,21 @@ def test_javascript_field_has_no_type() -> None:
     assert _attrs("class A {\n  balance = 0;\n}\n", "A.js", "javascript") == ["balance"]
 
 
+def test_cpp_global_namespace_qualifier_preserved() -> None:
+    # The leading '::' of a global-namespace type is part of the type, not an
+    # annotation colon, so it must survive (only ': T' annotation forms strip).
+    pytest.importorskip("tree_sitter_cpp")
+    attrs = _attrs("class A {\n  ::std::string owner;\n};\n", "A.cpp", "cpp")
+    assert "owner: ::std::string" in attrs
+
+
+def test_kotlin_nullable_and_generic_types_captured() -> None:
+    pytest.importorskip("tree_sitter_kotlin")
+    src = "class A {\n  val a: String? = null\n  val b: Map<String, Int> = mapOf()\n}\n"
+    attrs = _attrs(src, "A.kt", "kotlin")
+    assert "a: String?" in attrs and "b: Map<String, Int>" in attrs
+
+
 def test_nested_class_fields_not_leaked_into_outer() -> None:
     pytest.importorskip("tree_sitter_java")
     src = "class Outer {\n  int outerField;\n  class Inner {\n    int innerField;\n  }\n}\n"
