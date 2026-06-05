@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.21.0] - 2026-06-05
+
+### Added
+- **Class fields and diagrams now cover Go and Ruby — completing every chunked
+  language.** Go `struct` types are now emitted as class chunks (with their
+  named fields; anonymous embedded fields are skipped), and Go methods carry
+  `class_name = receiver struct` so the class diagram attaches them and the
+  method's `module.Struct.method` qualname matches its edge source (intra-method
+  calls now resolve, mirroring the other OO walkers). Ruby classes/modules
+  extract their `@instance_variables` (assigned in `initialize` or any method)
+  as fields, stripping the `@` and excluding nested class/module bodies. This
+  closes the field-extraction arc started in v0.20.0. Requires a re-index.
+
 ## [0.20.2] - 2026-06-04
 
 ### Added
