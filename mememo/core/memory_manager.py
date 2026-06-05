@@ -16,7 +16,9 @@ from uuid import uuid4
 
 from ..embeddings import Embedder
 from ..types import (
+    BranchContext,
     CreateMemoryParams,
+    GitContext,
     Memory,
     MemoryContent,
     MemoryEvent,
@@ -24,6 +26,7 @@ from ..types import (
     MemoryMetadata,
     MemoryRelationships,
     MemorySummary,
+    RepoContext,
     SearchParams,
     SearchResult,
     coerce_sha,
@@ -388,7 +391,15 @@ class MemoryManager:
         Returns:
             List of search results with similarity scores
         """
-        context = await self.git_manager.detect_context(cwd)
+        # An explicit repo_id targets a specific lane (e.g. the GLOBAL lane for
+        # cross-project recall) instead of the ambient git context.
+        if params.repo_id:
+            context = GitContext(
+                repo=RepoContext(id=params.repo_id, name="", path="", remote_url=None),
+                branch=BranchContext(name=params.branch or "main", commit_hash=""),
+            )
+        else:
+            context = await self.git_manager.detect_context(cwd)
 
         # Generate embedding for query
         logger.debug(f"Generating embedding for query: {params.query[:50]}...")

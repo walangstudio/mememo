@@ -209,6 +209,38 @@ async def test_hybrid_lexical_surfaces_exact_term_below_vector_floor(test_env):
 
 
 @pytest.mark.asyncio
+async def test_search_similar_repo_id_override_targets_lane(test_env):
+    """An explicit SearchParams.repo_id searches that lane instead of the ambient
+    git context — the mechanism the inject hook uses to reach the GLOBAL lane."""
+    memory_manager = test_env
+    ctx = await memory_manager.git_manager.detect_context(None)
+
+    m = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Quarterly OKR planning ritual.",
+            type="context",
+            relationships=MemoryRelationships(),
+        )
+    )
+    # Found when targeting the memory's own lane explicitly.
+    hits = await memory_manager.search_similar(
+        SearchParams(
+            query="OKR planning",
+            top_k=5,
+            min_similarity=0.0,
+            repo_id=ctx.repo.id,
+            branch=ctx.branch.name,
+        )
+    )
+    assert m.id in {r.memory.id for r in hits}
+    # A different lane sees nothing (load_memories is scoped by repo_id/branch).
+    other = await memory_manager.search_similar(
+        SearchParams(query="OKR planning", top_k=5, min_similarity=0.0, repo_id="some-other-lane")
+    )
+    assert m.id not in {r.memory.id for r in other}
+
+
+@pytest.mark.asyncio
 async def test_search_fts_scopes_and_matches(test_env):
     """search_fts returns ids whose content matches, scoped to (repo_id, branch)."""
     memory_manager = test_env

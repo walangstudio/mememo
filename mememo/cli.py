@@ -308,14 +308,30 @@ async def cmd_inject() -> None:
 
     # Two-stage filtering: broad search floor fetches candidates, inject_min_similarity
     # filters the final block. Keeps high-recall search without polluting the budget.
-    search_params = SearchParams(
-        query=user_prompt,
-        top_k=20,
-        min_similarity=cfg.hook.inject_search_floor,
-        include_stale=False,
-        hybrid=True,
-    )
-    results = await srv.memory_manager.search_similar(search_params)
+    # Search the ambient repo lane AND the GLOBAL lane, so cross-project memories
+    # (decisions, project notes) surface per prompt — not just the current repo's.
+    from .types.memory import GLOBAL_REPO_ID
+
+    def _params(repo_id=None):
+        return SearchParams(
+            query=user_prompt,
+            top_k=20,
+            min_similarity=cfg.hook.inject_search_floor,
+            include_stale=False,
+            hybrid=True,
+            repo_id=repo_id,
+        )
+
+    ambient = await srv.memory_manager.search_similar(_params())
+    global_hits = await srv.memory_manager.search_similar(_params(repo_id=GLOBAL_REPO_ID))
+    # Merge lanes: dedup by id (an id can appear in both if the ambient lane IS
+    # global), keep the higher similarity, rank by similarity desc.
+    by_id: dict[str, object] = {}
+    for r in ambient + global_hits:
+        cur = by_id.get(r.memory.id)
+        if cur is None or r.similarity > cur.similarity:
+            by_id[r.memory.id] = r
+    results = sorted(by_id.values(), key=lambda r: r.similarity, reverse=True)
 
     if cfg.hook.smart_context_enabled:
         block, inject_meta = _smart_context_build(results, user_prompt, cfg, srv)

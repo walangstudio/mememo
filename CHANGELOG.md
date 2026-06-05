@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.24.0] - 2026-06-06
+
+### Added
+- **Per-prompt recall now surfaces cross-project (GLOBAL-lane) memories.** The
+  UserPromptSubmit inject hook searched only the ambient repo's lane, so the
+  accumulated global knowledge base (decisions, project notes) never appeared
+  unless you were inside the exact repo that owned it. The hook now searches the
+  ambient lane **and** the GLOBAL lane and merges the results (dedup by id,
+  ranked by similarity). This is the main reason per-prompt recall felt empty.
+- `SearchParams.repo_id` / `branch` are now honored by `search_similar` as an
+  explicit lane override (they were previously dead fields) — the mechanism the
+  hook uses to reach the GLOBAL lane without per-prompt workspace discovery.
+
 ## [0.23.0] - 2026-06-05
 
 ### Added
