@@ -316,6 +316,11 @@ class SearchParams(BaseModel):
     branch: str | None = Field(None, description="Filter by branch")
     include_stale: bool = Field(default=False, description="Include stale memories in results")
     tags: list[str] | None = Field(None, description="Filter by tags (AND logic, all must match)")
+    hybrid: bool = Field(
+        default=True,
+        description="Fuse lexical (BM25) signal with vector search to rank exact "
+        "identifiers/jargon. Falls back to pure vector when no lexical match.",
+    )
 
 
 class SummarizeParams(BaseModel):

@@ -30,10 +30,18 @@ from ..types import (
 )
 from ..utils import SecretsDetector, calculate_checksum, count_tokens, truncate_to_tokens
 from .git_manager import GitManager
+from .hybrid import reciprocal_rank_fusion
 from .storage_manager import StorageManager
 from .vector_index import VectorIndex
 
 logger = logging.getLogger(__name__)
+
+# Hybrid retrieval (search_similar): how many vector candidates to pool before
+# fusing the lexical signal (large enough to cover a small store's whole lane,
+# so lexical can reorder rather than only re-score the top few), and how many
+# top lexical hits may bypass the vector similarity floor.
+HYBRID_POOL_K = 100
+HYBRID_LEXICAL_BYPASS = 10
 
 
 class MemoryManager:
@@ -386,36 +394,61 @@ class MemoryManager:
         logger.debug(f"Generating embedding for query: {params.query[:50]}...")
         query_embedding = self.embedder.embed_query(params.query)
 
-        # Search vector index (resolved per repo/branch)
+        # Search vector index (resolved per repo/branch). When hybrid is on we
+        # pool more candidates than requested so the lexical signal has room to
+        # promote a low-vector-ranked-but-exact match into the final top_k.
         vi = self._get_vector_index(context.repo.id, context.branch.name)
         top_k = params.top_k
+        pool_k = max(top_k, HYBRID_POOL_K) if params.hybrid else top_k
         distances, memory_ids = vi.search(
             query_embedding=query_embedding.tolist(),
-            top_k=top_k,
+            top_k=pool_k,
         )
 
-        # Convert L2 distances to similarity scores (0-1 range)
-        # Lower distance = higher similarity
-        # Using exponential decay: similarity = exp(-distance)
+        # Convert L2 distances to similarity scores via exponential decay
+        # (lower distance = higher similarity). Honest similarity for every
+        # pooled id, so the min_similarity threshold means the same with or
+        # without the lexical pass.
         import math
 
-        candidates: list[tuple[str, float]] = []
-        for memory_id, distance in zip(memory_ids, distances):
-            similarity = math.exp(-distance)
-            if similarity < params.min_similarity:
-                continue
-            candidates.append((memory_id, similarity))
+        vec_order = list(memory_ids)
+        sim_by_id = {mid: math.exp(-d) for mid, d in zip(memory_ids, distances)}
 
-        if not candidates:
+        # Vector candidates clearing the floor (the pre-hybrid behavior).
+        candidate_ids = [m for m in vec_order if sim_by_id[m] >= params.min_similarity]
+        order_score: dict[str, float] = {m: sim_by_id[m] for m in vec_order}
+
+        if params.hybrid:
+            # Lexical hits matching exact identifiers/jargon the embedder blurs.
+            # Only those already in the (generous) vector pool carry an honest
+            # similarity; a hit outside the pool is dropped rather than shown
+            # with a fabricated score.
+            lex_order = self.storage_manager.search_fts(
+                params.query, context.repo.id, context.branch.name, pool_k
+            )
+            lex_in_pool = [m for m in lex_order if m in sim_by_id]
+            if len(memory_ids) >= pool_k and len(lex_in_pool) < len(lex_order):
+                logger.debug(
+                    "hybrid: %d lexical hit(s) outside the vector pool dropped",
+                    len(lex_order) - len(lex_in_pool),
+                )
+            # Reorder by fusing the two ranked lists; a strong lexical match may
+            # bypass the vector floor (an exact term hit is itself evidence),
+            # capped so lexical noise can't flood the budget.
+            order_score = reciprocal_rank_fusion([vec_order, lex_in_pool])
+            keep = set(candidate_ids) | set(lex_in_pool[:HYBRID_LEXICAL_BYPASS])
+            candidate_ids = sorted(keep, key=lambda m: order_score.get(m, 0.0), reverse=True)
+
+        candidate_ids = candidate_ids[:top_k]
+        if not candidate_ids:
             logger.info("Found 0 similar memories")
             return []
 
         memories = await self.storage_manager.load_memories(
-            [mid for mid, _ in candidates], context, content_types=content_types
+            candidate_ids, context, content_types=content_types
         )
-        sim_by_id = dict(candidates)
         loaded_ids = {m.id for m in memories}
-        for mid, _ in candidates:
+        for mid in candidate_ids:
             if mid not in loaded_ids:
                 logger.warning(f"Memory {mid} not found in storage")
 
@@ -431,6 +464,9 @@ class MemoryManager:
                     continue
             results.append(SearchResult(memory=memory, similarity=sim_by_id[memory.id]))
 
+        # Rank by fused score (hybrid) or similarity (vector-only); load order
+        # from the batch loader is not relevance order.
+        results.sort(key=lambda r: order_score.get(r.memory.id, r.similarity), reverse=True)
         logger.info(f"Found {len(results)} similar memories")
         return results
 

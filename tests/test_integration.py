@@ -177,6 +177,56 @@ async def test_search_similar(test_env):
 
 
 @pytest.mark.asyncio
+async def test_hybrid_lexical_surfaces_exact_term_below_vector_floor(test_env):
+    """A rare exact identifier the embedder can't match should still surface via
+    the lexical (BM25) pass, even when the vector similarity is under the floor.
+    With hybrid off and a strict floor, the same query finds nothing."""
+    memory_manager = test_env
+
+    target = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Zylqphrum subsystem owns the nightly reconciliation decisions.",
+            type="context",
+            relationships=MemoryRelationships(),
+        )
+    )
+    for filler in ("Notes about the weather today.", "A grocery shopping list."):
+        await memory_manager.create_memory(
+            CreateMemoryParams(content=filler, type="context", relationships=MemoryRelationships())
+        )
+
+    # Pure vector at a strict floor: the made-up token has no semantic anchor.
+    vec_only = await memory_manager.search_similar(
+        SearchParams(query="Zylqphrum", top_k=5, min_similarity=0.7, hybrid=False)
+    )
+    assert target.id not in {r.memory.id for r in vec_only}
+
+    # Hybrid: the exact lexical hit bypasses the vector floor and ranks first.
+    hybrid = await memory_manager.search_similar(
+        SearchParams(query="Zylqphrum", top_k=5, min_similarity=0.7, hybrid=True)
+    )
+    assert hybrid and hybrid[0].memory.id == target.id
+
+
+@pytest.mark.asyncio
+async def test_search_fts_scopes_and_matches(test_env):
+    """search_fts returns ids whose content matches, scoped to (repo_id, branch)."""
+    memory_manager = test_env
+    ctx = await memory_manager.git_manager.detect_context(None)
+    m = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Kubernetes ingress routing playbook.",
+            type="context",
+            relationships=MemoryRelationships(),
+        )
+    )
+    sm = memory_manager.storage_manager
+    assert m.id in sm.search_fts("kubernetes ingress", ctx.repo.id, ctx.branch.name, 10)
+    assert m.id not in sm.search_fts("kubernetes", ctx.repo.id, "nonexistent-branch", 10)
+    assert sm.search_fts("?!?", ctx.repo.id, ctx.branch.name, 10) == []  # no usable terms
+
+
+@pytest.mark.asyncio
 async def test_list_with_filters(test_env):
     """Test listing memories with filters."""
     memory_manager = test_env
