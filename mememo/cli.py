@@ -308,39 +308,18 @@ async def cmd_inject() -> None:
 
     # Two-stage filtering: broad search floor fetches candidates, inject_min_similarity
     # filters the final block. Keeps high-recall search without polluting the budget.
-    # Search the ambient repo lane AND the GLOBAL lane, so cross-project memories
+    # Recall the ambient repo lane AND the GLOBAL lane, so cross-project memories
     # (decisions, project notes) surface per prompt — not just the current repo's.
-    from .types.memory import GLOBAL_REPO_ID, SearchResult
-
-    mm = srv.memory_manager
-    ctx = await mm.git_manager.detect_context(None)
-    query_embedding = mm.embedder.embed_query(user_prompt).tolist()  # embed once, reuse per lane
-
-    # (repo_id, branch) lanes to search: the ambient lane on its real branch, plus
-    # the GLOBAL lane — unless the ambient lane already IS global (non-repo cwd).
-    lanes = [(ctx.repo.id, ctx.branch.name)]
-    if cfg.hook.inject_global_lane and ctx.repo.id != GLOBAL_REPO_ID:
-        lanes.append((GLOBAL_REPO_ID, "main"))
-
-    def _params(repo_id, branch):
-        return SearchParams(
+    results = await srv.memory_manager.recall_relevant(
+        SearchParams(
             query=user_prompt,
             top_k=20,
             min_similarity=cfg.hook.inject_search_floor,
             include_stale=False,
             hybrid=True,
-            repo_id=repo_id,
-            branch=branch,
-        )
-
-    # Merge lanes: dedup by id, keep the higher similarity, rank by similarity desc.
-    by_id: dict[str, SearchResult] = {}
-    for repo_id, branch in lanes:
-        for r in await mm.search_similar(_params(repo_id, branch), query_embedding=query_embedding):
-            cur = by_id.get(r.memory.id)
-            if cur is None or r.similarity > cur.similarity:
-                by_id[r.memory.id] = r
-    results = sorted(by_id.values(), key=lambda r: r.similarity, reverse=True)
+        ),
+        include_global=cfg.hook.inject_global_lane,
+    )
 
     if cfg.hook.smart_context_enabled:
         block, inject_meta = _smart_context_build(results, user_prompt, cfg, srv)

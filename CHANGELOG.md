@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.25.0] - 2026-06-06
+
+### Added
+- **`recall_context` now surfaces cross-project (GLOBAL-lane) memories too.** The
+  explicit recall tool had the same blind spot the inject hook just lost — it
+  searched only the ambient repo's lane, so an agent asking for relevant context
+  never saw global decisions/notes. Both now go through a shared
+  `MemoryManager.recall_relevant` (ambient lane + GLOBAL lane, query embedded
+  once, merged by similarity), which also removes the duplicated two-lane merge
+  the inject hook had inlined.
+
 ## [0.24.0] - 2026-06-06
 
 ### Added
