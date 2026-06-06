@@ -241,6 +241,42 @@ async def test_search_similar_repo_id_override_targets_lane(test_env):
 
 
 @pytest.mark.asyncio
+async def test_recall_relevant_unions_global_lane(test_env):
+    """recall_relevant returns ambient-lane AND GLOBAL-lane memories; with
+    include_global=False it returns only the ambient lane."""
+    memory_manager = test_env
+
+    ambient = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Local repo decision about the build pipeline.",
+            type="context",
+            relationships=MemoryRelationships(),
+        )
+    )
+    glob = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Global decision about the build pipeline across projects.",
+            type="context",
+            relationships=MemoryRelationships(),
+        ),
+        force_global=True,
+    )
+
+    both = await memory_manager.recall_relevant(
+        SearchParams(query="build pipeline decision", top_k=10, min_similarity=0.0)
+    )
+    ids = {r.memory.id for r in both}
+    assert ambient.id in ids and glob.id in ids
+
+    ambient_only = await memory_manager.recall_relevant(
+        SearchParams(query="build pipeline decision", top_k=10, min_similarity=0.0),
+        include_global=False,
+    )
+    only_ids = {r.memory.id for r in ambient_only}
+    assert ambient.id in only_ids and glob.id not in only_ids
+
+
+@pytest.mark.asyncio
 async def test_search_fts_scopes_and_matches(test_env):
     """search_fts returns ids whose content matches, scoped to (repo_id, branch)."""
     memory_manager = test_env

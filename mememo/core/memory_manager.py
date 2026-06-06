@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from ..embeddings import Embedder
 from ..types import (
+    GLOBAL_REPO_ID,
     BranchContext,
     CreateMemoryParams,
     GitContext,
@@ -482,6 +483,44 @@ class MemoryManager:
         results.sort(key=lambda r: rank_score[r.memory.id], reverse=True)
         logger.info(f"Found {len(results)} similar memories")
         return results[:top_k]
+
+    async def recall_relevant(
+        self,
+        params: SearchParams,
+        cwd: str | None = None,
+        content_types: list[str] | set[str] | None = None,
+        include_global: bool = True,
+    ) -> list[SearchResult]:
+        """Search the ambient lane plus the GLOBAL (cross-project) lane.
+
+        Embeds the query once and runs :meth:`search_similar` per lane, then
+        merges by id (keeping the higher similarity) ranked by similarity desc.
+        This is the recall surface for callers that want *all* relevant memory,
+        not just the current repo's — the per-prompt inject hook and
+        ``recall_context``. A caller that wants one explicit lane should use
+        ``search_similar`` with ``params.repo_id`` directly.
+        """
+        if params.repo_id:
+            ambient_id, ambient_branch = params.repo_id, (params.branch or "main")
+        else:
+            ctx = await self.git_manager.detect_context(cwd)
+            ambient_id, ambient_branch = ctx.repo.id, ctx.branch.name
+
+        query_embedding = self.embedder.embed_query(params.query).tolist()
+        lanes = [(ambient_id, ambient_branch)]
+        if include_global and ambient_id != GLOBAL_REPO_ID:
+            lanes.append((GLOBAL_REPO_ID, "main"))
+
+        by_id: dict[str, SearchResult] = {}
+        for repo_id, branch in lanes:
+            lane_params = params.model_copy(update={"repo_id": repo_id, "branch": branch})
+            for r in await self.search_similar(
+                lane_params, content_types=content_types, query_embedding=query_embedding
+            ):
+                cur = by_id.get(r.memory.id)
+                if cur is None or r.similarity > cur.similarity:
+                    by_id[r.memory.id] = r
+        return sorted(by_id.values(), key=lambda r: r.similarity, reverse=True)
 
     async def delete_memory(self, memory_id: str, cwd: str | None = None) -> None:
         """
