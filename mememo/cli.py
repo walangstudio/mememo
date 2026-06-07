@@ -308,13 +308,18 @@ async def cmd_inject() -> None:
 
     # Two-stage filtering: broad search floor fetches candidates, inject_min_similarity
     # filters the final block. Keeps high-recall search without polluting the budget.
-    search_params = SearchParams(
-        query=user_prompt,
-        top_k=20,
-        min_similarity=cfg.hook.inject_search_floor,
-        include_stale=False,
+    # Recall the ambient repo lane AND the GLOBAL lane, so cross-project memories
+    # (decisions, project notes) surface per prompt — not just the current repo's.
+    results = await srv.memory_manager.recall_relevant(
+        SearchParams(
+            query=user_prompt,
+            top_k=20,
+            min_similarity=cfg.hook.inject_search_floor,
+            include_stale=False,
+            hybrid=True,
+        ),
+        include_global=cfg.hook.inject_global_lane,
     )
-    results = await srv.memory_manager.search_similar(search_params)
 
     if cfg.hook.smart_context_enabled:
         block, inject_meta = _smart_context_build(results, user_prompt, cfg, srv)

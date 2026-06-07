@@ -30,7 +30,7 @@ clients (Cursor, Windsurf, Cline, etc.) see [Installation](#-installation).
 - **📂 Git-Aware**: Automatic branch isolation + linked-worktree-canonical `repo_id` (v0.6)
 - **⏱ Commit-Aware** *(v0.4)*: Every memory carries the SHA it was minted at; append-only event log enables time-travel recall and branch-merge unions
 - **🕸 Memory Graph** *(v0.5)*: Typed edges (`IMPORTS` / `CALLS` / `EXTENDS` / `IMPLEMENTS` / `USES` / `DECORATED_BY`) across Python and all 13 tree-sitter languages; intra-class `self`/`this` calls resolve to the owning method (v0.16+); Louvain communities; symbol resolver with bounded fuzzy match
-- **📐 Diagrams** *(v0.13+)*: `generate_diagram` emits Mermaid straight from the code graph — deterministic class / call / module diagrams, plus LLM-synthesized sequence / use-case / state / ERD (passthrough-aware, rendered in chat). Also a `/diagram` panel in the web UI
+- **📐 Diagrams** *(v0.13+)*: `generate_diagram` emits Mermaid straight from the code graph — deterministic class / call / module / overview diagrams, plus LLM-synthesized sequence / use-case / state / ERD / flow (passthrough-aware, rendered in chat). Also a `/diagram` panel in the web UI
 - **🌐 Web UI** *(v0.6, optional)*: Localhost-only D3-force graph + paginated table + time-travel slider via `mememo serve`
 - **⚡ Incremental**: Only re-index changed files (Merkle DAG)
 - **🤖 Passive Hooks**: Auto-capture memories, inject context, and (v0.6) augment Grep/Glob/Bash results — no manual invocation
@@ -90,7 +90,9 @@ All tree-sitter languages emit the typed-edge graph (CALLS / EXTENDS / IMPLEMENT
 | `class` | deterministic (graph) | chat + web `/diagram` |
 | `call` | deterministic (graph) | chat + web `/diagram` |
 | `module` | deterministic (graph) | chat + web `/diagram` |
+| `overview` | deterministic (graph) — subsystem flowchart for non-devs | chat + web `/diagram` |
 | `sequence` / `usecase` / `state` / `erd` | LLM-synthesized from the graph + source | chat (passthrough-aware) |
+| `flow` | LLM-synthesized — plain-English end-to-end flow for non-devs | chat (passthrough-aware) |
 
 ```
 generate_diagram(type="class", scope="auth/service.py")   # class diagram for a file
@@ -226,7 +228,10 @@ Set environment variables (optional):
 export MEMEMO_STORAGE_DIR="$HOME/.mememo"
 
 # Embedding model (default: minilm)
-export MEMEMO_EMBEDDING_MODEL="minilm"  # or "gemma"
+# minilm = 384-dim, fast, default; qwen3 = 1024-dim, highest quality, Apache-2.0,
+# instruction-aware; gemma = 768-dim, experimental (gated download).
+# Switching model requires a re-index (the vector dimension changes).
+export MEMEMO_EMBEDDING_MODEL="minilm"  # or "qwen3" / "gemma"
 
 # Device (default: auto-detect)
 export MEMEMO_EMBEDDING_DEVICE="auto"  # or "cuda", "mps", "cpu"

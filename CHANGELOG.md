@@ -1,5 +1,157 @@
 # Changelog
 
+## [0.27.0] - 2026-06-07
+
+### Added
+- **`overview` diagram type** (deterministic, Phase 1): subsystem/architecture flowchart
+  for non-developers. Groups files by the first N path segments into subsystems, aggregates
+  cross-subsystem IMPORTS edges, emits a `flowchart TD` with edge-count labels. Available
+  in chat (`generate_diagram`), web UI `/diagram` panel, and `mememo diagram overview` CLI.
+- **`flow` diagram type** (LLM/passthrough, Phase 2): plain-English end-to-end flowchart
+  aimed at product/business readers. Grounds the prompt with the `overview` skeleton plus
+  public entry points, prepends up to 2000 chars of README for plain-language context.
+
+## [0.26.0] - 2026-06-07
+
+### Added
+- **Qwen3-Embedding-0.6B as an opt-in higher-quality embedding model**
+  (`MEMEMO_EMBEDDING_MODEL=qwen3`). 1024-dim, 32k context, Apache-2.0 (no gated
+  HuggingFace download, unlike `gemma`), and top of the small-model MTEB rankings —
+  the recall lever for semantic / non-exact jargon that BM25 can't catch. Default
+  stays `minilm`, so nothing is forced to re-index.
+- **Asymmetric query encoding.** Instruction-tuned models embed queries with a
+  prompt prefix but documents bare; `Embedder.embed_query` now applies the model's
+  `query` prompt (registry `query_prompt_name`) while `embed`/`embed_batch` keep
+  encoding stored documents bare. A registry hint the loaded model doesn't define
+  degrades to a bare encode instead of raising. No-op for symmetric `minilm`.
+
+### Changed
+- `MemoryManager.create_memory` now embeds stored content with `embed()` (document
+  side) instead of `embed_query()`, matching the batch path and keeping the
+  query/document sides aligned for asymmetric models. Identical output for `minilm`.
+
+### Fixed
+- Switching embedding models without re-indexing now raises an actionable
+  "dimension mismatch — re-index this repo/branch" error instead of an opaque FAISS
+  assertion from deep inside add()/search().
+
+## [0.25.0] - 2026-06-06
+
+### Added
+- **`recall_context` now surfaces cross-project (GLOBAL-lane) memories too.** The
+  explicit recall tool had the same blind spot the inject hook just lost — it
+  searched only the ambient repo's lane, so an agent asking for relevant context
+  never saw global decisions/notes. Both now go through a shared
+  `MemoryManager.recall_relevant` (ambient lane + GLOBAL lane, query embedded
+  once, merged by similarity), which also removes the duplicated two-lane merge
+  the inject hook had inlined.
+
+## [0.24.0] - 2026-06-06
+
+### Added
+- **Per-prompt recall now surfaces cross-project (GLOBAL-lane) memories.** The
+  UserPromptSubmit inject hook searched only the ambient repo's lane, so the
+  accumulated global knowledge base (decisions, project notes) never appeared
+  unless you were inside the exact repo that owned it. The hook now searches the
+  ambient lane **and** the GLOBAL lane and merges the results (dedup by id,
+  ranked by similarity). This is the main reason per-prompt recall felt empty.
+- `SearchParams.repo_id` / `branch` are now honored by `search_similar` as an
+  explicit lane override (they were previously dead fields) — the mechanism the
+  hook uses to reach the GLOBAL lane without per-prompt workspace discovery.
+- The query is embedded once and reused across both lanes (new
+  `search_similar(query_embedding=...)`), and the GLOBAL search is skipped when
+  the ambient lane already is global — so the two-lane recall adds no extra
+  embedding cost. Opt out with `MEMEMO_HOOK_INJECT_GLOBAL_LANE=false`.
+
+## [0.23.0] - 2026-06-05
+
+### Added
+- **Hybrid lexical+vector recall.** The `memories_fts` FTS5 table was populated
+  but unused; `search_similar` can now fuse a BM25 lexical pass with the vector
+  candidate pool via Reciprocal Rank Fusion (`mememo/core/hybrid.py`), so exact
+  identifiers and terse jargon the embedder blurs (project names, function
+  names) rank correctly. Verified on the real store: "business idea validation"
+  now ranks the right memory first instead of an unrelated note. Falls back to
+  pure vector when there's no lexical match.
+- Opt-in via `SearchParams.hybrid` (default **off**). Enabled on the recall
+  surfaces — the per-prompt inject hook, `recall_context`, and `search_similar`
+  — and deliberately **off** for callers that use `min_similarity` as a hard
+  gate (capture dedup, pre-tool hook, `recall_at_commit`), since a strong
+  lexical hit may bypass the similarity floor.
+
+### Fixed
+- `search_similar` now applies stale/type/tag filtering **before** truncating to
+  `top_k`, so a filtered-out hit no longer steals a slot from a valid one
+  further down the ranking.
+
+### Notes
+- SessionStart `recall_workspace` still uses its own vector-only path; extending
+  hybrid fusion there is a follow-up.
+
+## [0.22.0] - 2026-06-05
+
+### Added
+- **Tree-sitter walkers now capture field types**, so class diagrams render
+  typed fields (`+<type> <name>`) for all 10 typed OO languages — Go, Rust,
+  Java, C#, C/C++, TypeScript, Kotlin, Swift, Scala, PHP — matching Python.
+  Each field stores `name: type` (was names only); JavaScript and Ruby fields
+  stay untyped (the grammars expose no type). The type is reached via the
+  declaration's `type` field, a `type_annotation` child (Swift), or a wrapping
+  `variable_declaration` (C#/Kotlin); annotation colons are stripped while a
+  type's own punctuation (e.g. C++ `::std::string`) is kept. Types over 60
+  chars or with unsafe characters fall back to name-only at render time, so an
+  exotic annotation can never break the Mermaid parse. Requires a re-index.
+
+## [0.21.2] - 2026-06-05
+
+### Added
+- **Class diagrams now render field types**, not just names. A stored
+  `name: type` attribute renders as `+<type> <name>` (UML order); generics are
+  rewritten to Mermaid's `~ … ~` syntax (`List[str]` → `+List~str~ items`).
+  Types that don't map to a safe token (unions like `Foo | None`, nested
+  generics, callables) fall back to name-only so an exotic annotation can never
+  break the Mermaid parse. Types are currently available for Python fields; the
+  tree-sitter languages store names only (rendered as `+<name>`).
+
+## [0.21.1] - 2026-06-05
+
+### Fixed
+- **Go intra-struct method calls now resolve.** A call on a method's own
+  receiver (`a.validate()`) was emitted with the receiver var verbatim
+  (`a.validate`), which matched no symbol, so every call between methods of the
+  same struct was dropped from the graph (Go's receiver is a named var, not
+  `self`, so the resolver's self-receiver rebind couldn't catch it). The Go
+  walker now rewrites a receiver call to the struct's fully-qualified
+  `module.Struct.method`, which the resolver binds exactly. Calls on other
+  variables and bare functions are unaffected. Improves Go call graphs and
+  `graph_neighbors`/`graph_impact`. Requires a re-index.
+
+## [0.21.0] - 2026-06-05
+
+### Added
+- **Class fields and diagrams now cover Go and Ruby — completing every chunked
+  language.** Go `struct` types are now emitted as class chunks (with their
+  named fields; anonymous embedded fields are skipped), and Go methods carry
+  `class_name = receiver struct` so the class diagram attaches them and the
+  method's `module.Struct.method` qualname matches its edge source (intra-method
+  calls now resolve, mirroring the other OO walkers). Ruby classes/modules
+  extract their `@instance_variables` (assigned in `initialize` or any method)
+  as fields, stripping the `@` and excluding nested class/module bodies. This
+  closes the field-extraction arc started in v0.20.0. Requires a re-index.
+
+## [0.20.2] - 2026-06-04
+
+### Added
+- **Class fields now also cover Kotlin, Swift, Scala, and PHP** — completing the
+  declared-field tree-sitter languages (Java/C#/C++/TS/JS/Rust shipped in
+  v0.20.1). Handles Kotlin `val`/`var` properties, Swift `let`/`var` (and
+  computed/observed-property accessors), Scala `val`/`var` definitions, and PHP
+  `$`-prefixed properties (multiple per declaration). The field walk skips
+  property-accessor and method bodies so locals (Scala/Swift/Kotlin reuse the
+  field node for locals) and accessor locals aren't mistaken for fields. Go
+  (structs aren't chunked as classes) and Ruby (`@x` in `initialize`, no
+  declarations) remain a follow-up. Requires a re-index.
+
 ## [0.20.1] - 2026-06-04
 
 ### Added

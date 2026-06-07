@@ -114,14 +114,16 @@ def test_t016_typescript_method_qualname_includes_class(
     assert all(m.class_name == "UserService" for m in methods)
 
 
-def test_t018_go_method_keeps_class_name_none(chunker: TreeSitterChunker) -> None:
-    # Go pushes only the function name onto the scope stack (no class scope), so
-    # the edge source is module.method; the method chunk must keep class_name
-    # None so its qualname matches and Go calls keep resolving.
+def test_t018_go_method_binds_to_receiver_struct(chunker: TreeSitterChunker) -> None:
+    # The receiver struct becomes a class chunk and its methods carry
+    # class_name = struct, so the class diagram attaches them and the method's
+    # module.Struct.method qualname matches the edge source.
     chunks, _ = chunker.chunk_with_edges(GO_SAMPLE, "main.go", "go")
-    methods = [c for c in chunks if c.chunk_type == "method"]
-    assert methods
-    assert all(m.class_name is None for m in methods)
+    struct = next((c for c in chunks if c.chunk_type == "class"), None)
+    assert struct is not None and struct.class_name == "User"
+    assert struct.attributes == ["Name: string"]
+    greet = next(c for c in chunks if c.chunk_type == "method" and c.function_name == "Greet")
+    assert greet.class_name == "User"
 
 
 # ---------- T017: JavaScript ------------------------------------------------
@@ -197,6 +199,34 @@ def test_t018_go_method_receiver_emits_uses(chunker: TreeSitterChunker) -> None:
     _, edges = chunker.chunk_with_edges(GO_SAMPLE, "main.go", "go")
     uses = [e for e in edges if e.edge_type == "USES"]
     assert any(e.target_label == "User" for e in uses)
+
+
+def test_t018_go_receiver_call_qualified_to_struct(chunker: TreeSitterChunker) -> None:
+    # A call on the method's own receiver var (a.validate) is rewritten to the
+    # struct's fully-qualified method so the resolver can bind it.
+    src = (
+        "package bank\n"
+        "type Account struct {\n  Balance int\n}\n"
+        "func (a *Account) Deposit(n int) {\n  a.validate(n)\n}\n"
+        "func (a *Account) validate(n int) {}\n"
+    )
+    _, edges = chunker.chunk_with_edges(src, "bank.go", "go")
+    calls = {e.target_label for e in edges if e.edge_type == "CALLS"}
+    assert "bank.Account.validate" in calls
+    assert "a.validate" not in calls
+
+
+def test_t018_go_non_receiver_call_not_rewritten(chunker: TreeSitterChunker) -> None:
+    # Only the receiver var is rewritten; calls on other vars / bare funcs stay.
+    src = (
+        "package bank\n"
+        "type Account struct {}\n"
+        "func (a *Account) Run(o *Other) {\n  o.foo()\n  bar()\n}\n"
+    )
+    _, edges = chunker.chunk_with_edges(src, "bank.go", "go")
+    calls = {e.target_label for e in edges if e.edge_type == "CALLS"}
+    assert "o.foo" in calls
+    assert "bar" in calls
 
 
 def test_t018_go_method_chunk_carries_receiver_as_parent_class(

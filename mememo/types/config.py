@@ -33,8 +33,13 @@ class StorageConfig(BaseModel):
 class EmbeddingConfig(BaseModel):
     """Embedding model configuration."""
 
-    model_name: Literal["minilm", "gemma"] = Field(
-        default="minilm", description="Embedding model: minilm (384-dim) or gemma (768-dim)"
+    model_name: Literal["minilm", "qwen3", "gemma"] = Field(
+        default="minilm",
+        description=(
+            "Embedding model: minilm (384-dim, default), qwen3 (1024-dim, highest "
+            "quality, Apache-2.0), or gemma (768-dim, experimental). Switching model "
+            "requires a re-index."
+        ),
     )
     device: Literal["auto", "cpu", "cuda", "mps"] = Field(
         default="auto", description="Device for embeddings: auto, cpu, cuda, or mps"
@@ -140,6 +145,11 @@ class HookConfig(BaseModel):
     )
     capture_enabled: bool = Field(default=True, description="Enable Stop hook capture")
     inject_enabled: bool = Field(default=True, description="Enable UserPromptSubmit injection")
+    inject_global_lane: bool = Field(
+        default=True,
+        description="Also search the GLOBAL (cross-project) lane on each prompt, "
+        "not just the ambient repo's lane.",
+    )
 
     # Smart context selection
     smart_context_enabled: bool = Field(
@@ -262,6 +272,8 @@ class Config(BaseModel):
                 inject_token_budget=int(os.getenv("MEMEMO_HOOK_INJECT_TOKEN_BUDGET", "800")),
                 inject_min_similarity=float(os.getenv("MEMEMO_HOOK_INJECT_MIN_SIMILARITY", "0.25")),
                 inject_search_floor=float(os.getenv("MEMEMO_HOOK_INJECT_SEARCH_FLOOR", "0.2")),
+                inject_global_lane=os.getenv("MEMEMO_HOOK_INJECT_GLOBAL_LANE", "true").lower()
+                == "true",
                 capture_transcript_lines=int(os.getenv("MEMEMO_HOOK_CAPTURE_LINES", "100")),
                 capture_enabled=os.getenv("MEMEMO_HOOK_CAPTURE_ENABLED", "true").lower() == "true",
                 inject_enabled=os.getenv("MEMEMO_HOOK_INJECT_ENABLED", "true").lower() == "true",

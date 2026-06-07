@@ -281,8 +281,8 @@ def create_app(storage_getter=None) -> FastAPI:
             "alive_memory_ids": sorted(alive),
         }
 
-    _diagram_types = {"class", "call", "module"}
-    _llm_diagram_types = {"sequence", "usecase", "state", "erd"}
+    _diagram_types = {"class", "call", "module", "overview"}
+    _llm_diagram_types = {"sequence", "usecase", "state", "erd", "flow"}
 
     @app.get("/diagram")
     def get_diagram(
@@ -300,7 +300,7 @@ def create_app(storage_getter=None) -> FastAPI:
             )
         storage = _storage()
         conn = storage.conn
-        from ..diagrams import call_graph, class_diagram, module_dependency
+        from ..diagrams import call_graph, class_diagram, module_dependency, overview_diagram
 
         resolved_repo = repo_id or ""
         resolved_branch = branch or ""
@@ -365,6 +365,11 @@ def create_app(storage_getter=None) -> FastAPI:
             truncated = False
         elif type == "module":
             mermaid = module_dependency(conn, resolved_repo, resolved_branch, max_nodes=max_nodes)
+            truncated = "%% truncated" in mermaid
+        elif type == "overview":
+            mermaid = overview_diagram(
+                conn, resolved_repo, resolved_branch, max_nodes=max_nodes, depth=depth
+            )
             truncated = "%% truncated" in mermaid
         else:  # call
             if not scope:

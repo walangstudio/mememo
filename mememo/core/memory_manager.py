@@ -16,7 +16,10 @@ from uuid import uuid4
 
 from ..embeddings import Embedder
 from ..types import (
+    GLOBAL_REPO_ID,
+    BranchContext,
     CreateMemoryParams,
+    GitContext,
     Memory,
     MemoryContent,
     MemoryEvent,
@@ -24,16 +27,25 @@ from ..types import (
     MemoryMetadata,
     MemoryRelationships,
     MemorySummary,
+    RepoContext,
     SearchParams,
     SearchResult,
     coerce_sha,
 )
 from ..utils import SecretsDetector, calculate_checksum, count_tokens, truncate_to_tokens
 from .git_manager import GitManager
+from .hybrid import reciprocal_rank_fusion
 from .storage_manager import StorageManager
 from .vector_index import VectorIndex
 
 logger = logging.getLogger(__name__)
+
+# Hybrid retrieval (search_similar): how many vector candidates to pool before
+# fusing the lexical signal (large enough to cover a small store's whole lane,
+# so lexical can reorder rather than only re-score the top few), and how many
+# top lexical hits may bypass the vector similarity floor.
+HYBRID_POOL_K = 100
+HYBRID_LEXICAL_BYPASS = 10
 
 
 class MemoryManager:
@@ -162,9 +174,12 @@ class MemoryManager:
             self._generate_detailed_summary(validated_content) if token_count > 200 else None
         )
 
-        # 7. Generate embedding
+        # 7. Generate embedding (document side — stored content, not a query, so
+        # asymmetric models like Qwen3 don't prepend the query instruction; this
+        # matches the batch path's embed() and is identical to embed_query for
+        # symmetric models like MiniLM).
         logger.debug(f"Generating embedding for memory {memory_id}")
-        embedding = self.embedder.embed_query(validated_content)
+        embedding = self.embedder.embed(validated_content)[0]
 
         # 8. Create memory object
         now = datetime.now()
@@ -367,6 +382,7 @@ class MemoryManager:
         params: SearchParams,
         cwd: str | None = None,
         content_types: list[str] | set[str] | None = None,
+        query_embedding: list[float] | None = None,
     ) -> list[SearchResult]:
         """
         Search for similar memories using vector similarity.
@@ -376,46 +392,80 @@ class MemoryManager:
             cwd: Working directory for git context detection
             content_types: Optional set of content types to keep. Pushed into the
                 batch loader so the JSON blob is never read for filtered rows.
+            query_embedding: Precomputed query embedding. Pass it when searching
+                several lanes for the same query (e.g. ambient + GLOBAL) so the
+                embedder runs once instead of per lane.
 
         Returns:
             List of search results with similarity scores
         """
-        context = await self.git_manager.detect_context(cwd)
+        # An explicit repo_id targets a specific lane (e.g. the GLOBAL lane for
+        # cross-project recall) instead of the ambient git context.
+        if params.repo_id:
+            context = GitContext(
+                repo=RepoContext(id=params.repo_id, name="", path="", remote_url=None),
+                branch=BranchContext(name=params.branch or "main", commit_hash=""),
+            )
+        else:
+            context = await self.git_manager.detect_context(cwd)
 
-        # Generate embedding for query
-        logger.debug(f"Generating embedding for query: {params.query[:50]}...")
-        query_embedding = self.embedder.embed_query(params.query)
+        # Generate embedding for query (unless the caller precomputed it).
+        if query_embedding is None:
+            logger.debug(f"Generating embedding for query: {params.query[:50]}...")
+            query_embedding = self.embedder.embed_query(params.query).tolist()
 
-        # Search vector index (resolved per repo/branch)
+        # Search vector index (resolved per repo/branch). When hybrid is on we
+        # pool more candidates than requested so the lexical signal has room to
+        # promote a low-vector-ranked-but-exact match into the final top_k.
         vi = self._get_vector_index(context.repo.id, context.branch.name)
         top_k = params.top_k
+        pool_k = max(top_k, HYBRID_POOL_K) if params.hybrid else top_k
         distances, memory_ids = vi.search(
-            query_embedding=query_embedding.tolist(),
-            top_k=top_k,
+            query_embedding=query_embedding,
+            top_k=pool_k,
         )
 
-        # Convert L2 distances to similarity scores (0-1 range)
-        # Lower distance = higher similarity
-        # Using exponential decay: similarity = exp(-distance)
+        # Convert L2 distances to similarity scores via exponential decay
+        # (lower distance = higher similarity). Honest similarity for every
+        # pooled id, so the min_similarity threshold means the same with or
+        # without the lexical pass.
         import math
 
-        candidates: list[tuple[str, float]] = []
-        for memory_id, distance in zip(memory_ids, distances):
-            similarity = math.exp(-distance)
-            if similarity < params.min_similarity:
-                continue
-            candidates.append((memory_id, similarity))
+        vec_order = list(memory_ids)
+        sim_by_id = {mid: math.exp(-d) for mid, d in zip(memory_ids, distances)}
 
-        if not candidates:
+        # Ranked candidate ids (best-first) and the score to sort the final
+        # results by — vector similarity in the plain path, RRF score in hybrid.
+        # NOT truncated to top_k yet: stale/type/tag filtering happens first, so
+        # filtered-out hits don't steal a top_k slot from valid ones further down.
+        candidate_ids = [m for m in vec_order if sim_by_id[m] >= params.min_similarity]
+        rank_score: dict[str, float] = dict(sim_by_id)
+
+        if params.hybrid:
+            # Lexical hits matching exact identifiers/jargon the embedder blurs.
+            # Only those already in the (generous) vector pool carry an honest
+            # similarity; a hit outside the pool is dropped rather than shown
+            # with a fabricated score.
+            lex_order = self.storage_manager.search_fts(
+                params.query, context.repo.id, context.branch.name, pool_k
+            )
+            lex_in_pool = [m for m in lex_order if m in sim_by_id]
+            # Fuse the two ranked lists; a strong lexical match may bypass the
+            # vector floor (an exact term hit is itself evidence), capped so
+            # lexical noise can't flood the budget.
+            rank_score = reciprocal_rank_fusion([vec_order, lex_in_pool])
+            keep = set(candidate_ids) | set(lex_in_pool[:HYBRID_LEXICAL_BYPASS])
+            candidate_ids = sorted(keep, key=lambda m: rank_score[m], reverse=True)
+
+        if not candidate_ids:
             logger.info("Found 0 similar memories")
             return []
 
         memories = await self.storage_manager.load_memories(
-            [mid for mid, _ in candidates], context, content_types=content_types
+            candidate_ids, context, content_types=content_types
         )
-        sim_by_id = dict(candidates)
         loaded_ids = {m.id for m in memories}
-        for mid, _ in candidates:
+        for mid in candidate_ids:
             if mid not in loaded_ids:
                 logger.warning(f"Memory {mid} not found in storage")
 
@@ -431,8 +481,49 @@ class MemoryManager:
                     continue
             results.append(SearchResult(memory=memory, similarity=sim_by_id[memory.id]))
 
+        # Rank by the chosen score (load order from the batch loader is not
+        # relevance order), then cap to the requested top_k after filtering.
+        results.sort(key=lambda r: rank_score[r.memory.id], reverse=True)
         logger.info(f"Found {len(results)} similar memories")
-        return results
+        return results[:top_k]
+
+    async def recall_relevant(
+        self,
+        params: SearchParams,
+        cwd: str | None = None,
+        content_types: list[str] | set[str] | None = None,
+        include_global: bool = True,
+    ) -> list[SearchResult]:
+        """Search the ambient lane plus the GLOBAL (cross-project) lane.
+
+        Embeds the query once and runs :meth:`search_similar` per lane, then
+        merges by id (keeping the higher similarity) ranked by similarity desc.
+        This is the recall surface for callers that want *all* relevant memory,
+        not just the current repo's — the per-prompt inject hook and
+        ``recall_context``. A caller that wants one explicit lane should use
+        ``search_similar`` with ``params.repo_id`` directly.
+        """
+        if params.repo_id:
+            ambient_id, ambient_branch = params.repo_id, (params.branch or "main")
+        else:
+            ctx = await self.git_manager.detect_context(cwd)
+            ambient_id, ambient_branch = ctx.repo.id, ctx.branch.name
+
+        query_embedding = self.embedder.embed_query(params.query).tolist()
+        lanes = [(ambient_id, ambient_branch)]
+        if include_global and ambient_id != GLOBAL_REPO_ID:
+            lanes.append((GLOBAL_REPO_ID, "main"))
+
+        by_id: dict[str, SearchResult] = {}
+        for repo_id, branch in lanes:
+            lane_params = params.model_copy(update={"repo_id": repo_id, "branch": branch})
+            for r in await self.search_similar(
+                lane_params, content_types=content_types, query_embedding=query_embedding
+            ):
+                cur = by_id.get(r.memory.id)
+                if cur is None or r.similarity > cur.similarity:
+                    by_id[r.memory.id] = r
+        return sorted(by_id.values(), key=lambda r: r.similarity, reverse=True)
 
     async def delete_memory(self, memory_id: str, cwd: str | None = None) -> None:
         """

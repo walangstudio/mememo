@@ -48,7 +48,8 @@ class VectorIndex:
             base_path: Base directory for all indices
             repo_id: Repository ID
             branch: Branch name
-            dimension: Embedding dimension (384 for MiniLM, 768 for Gemma)
+            dimension: Embedding dimension; varies by model (e.g. 384 MiniLM,
+                1024 Qwen3, 768 Gemma)
         """
         self.base_path = Path(base_path)
         self.repo_id = repo_id
@@ -138,6 +139,19 @@ class VectorIndex:
         if shard_path.exists():
             logger.debug(f"Loading shard {shard_id} from {shard_path}")
             index = faiss.read_index(str(shard_path))
+            if index.d != self.dimension:
+                # The embedding model changed (different dimension) but the on-disk
+                # index was built with the old one. Without this check FAISS raises
+                # an opaque assertion deep in add()/search(); surface an actionable
+                # error instead.
+                raise ValueError(
+                    f"Vector index dimension mismatch for shard {shard_id}: stored "
+                    f"index is {index.d}-dim but the configured embedding model "
+                    f"expects {self.dimension}-dim. The embedding model changed — "
+                    f"delete the stale index dir ({self.index_dir}) and re-index "
+                    f"this repo/branch (index_repository appends, so re-indexing "
+                    f"without deleting first hits this same error)."
+                )
         else:
             logger.debug(f"Creating new shard {shard_id}")
             index = faiss.IndexFlatL2(self.dimension)

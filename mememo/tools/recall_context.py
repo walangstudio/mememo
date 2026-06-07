@@ -32,8 +32,11 @@ async def recall_context(
             min_similarity=params.min_similarity,
             include_stale=False,
             tags=params.tags,
+            hybrid=True,
         )
-        results = await memory_manager.search_similar(
+        # Union the ambient lane with the GLOBAL lane so cross-project context
+        # (decisions, project notes) is recalled, not just the current repo's.
+        results = await memory_manager.recall_relevant(
             search_params, cwd=params.repo_path, content_types=RECALL_TYPES
         )
         results = results[: params.top_k]

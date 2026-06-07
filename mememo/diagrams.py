@@ -57,6 +57,33 @@ def _attr_name(attr: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "", name)
 
 
+# A type token is rendered only when it maps to this safe charset (after the
+# bracket→``~`` generic rewrite): letters/digits/_/./~, plus commas and spaces
+# for multi-arg generics. Anything else (unions ``|``, callables, quotes) is
+# dropped so an exotic annotation can never break the Mermaid parse.
+_SAFE_TYPE_RE = re.compile(r"^[A-Za-z0-9_~., ]+$")
+
+
+def _attr_member(attr: str, name: str) -> str:
+    """Mermaid class-body line for one field, ``+<type> <name>`` (UML order).
+
+    The stored attribute is ``"name"`` or ``"name: type"``. When a type is
+    present and renders to a Mermaid-safe token — generics ``[]``/``<>`` become
+    ``~ … ~`` (Mermaid's generic syntax) — it's shown before the name; otherwise
+    we fall back to ``+<name>`` so the diagram never fails to parse.
+    """
+    _, sep, raw_type = attr.partition(":")
+    if sep:
+        t = raw_type.strip()
+        for op, cl in (("[", "]"), ("<", ">"), ("(", ")"), ("{", "}")):
+            t = t.replace(op, "~").replace(cl, "~")
+        # ``~~`` (from nested generics) or unbalanced markers render oddly, so
+        # only accept a single, balanced level of generic nesting.
+        if t and "~~" not in t and t.count("~") % 2 == 0 and _SAFE_TYPE_RE.match(t):
+            return f"    +{t} {name}"
+    return f"    +{name}"
+
+
 def _load_attributes(base_dir: Path | None, content_ref: str | None) -> list[str]:
     """Read a class memory's ``attributes`` list from its content blob.
 
@@ -165,15 +192,15 @@ def class_diagram(
         # Cap blob reads so a huge whole-repo diagram doesn't do one file read
         # per class (the diagram is already unusable past a few dozen classes).
         seen_attrs: set[str] = set()
-        attr_names: list[str] = []
+        attr_lines: list[str] = []
         attr_src = _load_attributes(base_dir, info.get("content_ref")) if idx < 80 else []
         for a in attr_src:
             n = _attr_name(a)
             if n and n not in seen_attrs:
                 seen_attrs.add(n)
-                attr_names.append(n)
+                attr_lines.append(_attr_member(a, n))
 
-        body = [f"    +{n}" for n in attr_names] + [f"    +{m}()" for m in methods]
+        body = attr_lines + [f"    +{m}()" for m in methods]
         if body:
             lines.append(f"class {mmid} {{\n" + "\n".join(body) + "\n}")
         else:
@@ -367,5 +394,95 @@ def module_dependency(
         s_lbl = _esc(_basename(src_file))
         t_lbl = _esc(_basename(tgt_file))
         lines.append(f'    {s_mmid}["{s_lbl}"] --> {t_mmid}["{t_lbl}"]')
+
+    return "\n".join(lines)
+
+
+def _subsystem(file_path: str, depth: int) -> str:
+    """Return the subsystem label for a file_path at the given segment depth.
+
+    Normalises ``\\`` to ``/``, drops the filename, then takes the first
+    ``depth`` directory segments. A file with no directory part (e.g.
+    ``setup.py``) returns ``(root)``. Dropping the filename first means a file
+    one level under a package (``mememo/cli.py`` at depth 2) groups under its
+    real directory (``mememo``) instead of collapsing into ``(root)``.
+    """
+    dir_parts = file_path.replace("\\", "/").split("/")[:-1]
+    if not dir_parts:
+        return "(root)"
+    return "/".join(dir_parts[:depth])
+
+
+def overview_diagram(
+    conn: sqlite3.Connection,
+    repo_id: str,
+    branch: str,
+    max_nodes: int = 40,
+    depth: int = 2,
+) -> str:
+    """Mermaid ``flowchart TD`` grouping files into subsystems by path prefix.
+
+    Files are bucketed into subsystems using the first ``depth`` path segments
+    (e.g. ``mememo/core/foo.py`` -> ``mememo/core``; top-level files -> ``(root)``).
+    IMPORTS relations are aggregated to subsystem->subsystem edges; self-edges
+    (same subsystem) are dropped. The edge label shows the count of file-level
+    imports that cross that boundary.
+
+    Returns ``"flowchart TD\\n%% no data"`` when there are no cross-subsystem edges.
+    Caps distinct subsystem nodes at ``max_nodes`` (a ``%% truncated at N nodes``
+    comment is added when the cap is hit). Output is deterministic (edges sorted by
+    src then tgt).
+    """
+    rows = conn.execute(
+        "SELECT sm.file_path AS src_file, tm.file_path AS tgt_file "
+        "FROM relations r "
+        "LEFT JOIN memories sm ON sm.id = r.source_memory_id "
+        "LEFT JOIN memories tm ON tm.id = r.target_memory_id "
+        "WHERE r.repo_id = ? AND r.branch = ? AND r.type = 'IMPORTS' AND r.stale = 0",
+        (repo_id, branch),
+    ).fetchall()
+
+    # Aggregate file-level imports into subsystem->subsystem counts.
+    edge_counts: dict[tuple[str, str], int] = {}
+    for row in rows:
+        src_file = row["src_file"] or ""
+        tgt_file = row["tgt_file"] or ""
+        if not src_file or not tgt_file:
+            continue
+        src_sys = _subsystem(src_file, depth)
+        tgt_sys = _subsystem(tgt_file, depth)
+        if src_sys == tgt_sys:
+            continue  # same subsystem — skip self-edges
+        key = (src_sys, tgt_sys)
+        edge_counts[key] = edge_counts.get(key, 0) + 1
+
+    if not edge_counts:
+        return "flowchart TD\n%% no data"
+
+    # Collect nodes and apply the max_nodes cap (by sorted order for determinism).
+    all_nodes: set[str] = set()
+    for src_sys, tgt_sys in edge_counts:
+        all_nodes.add(src_sys)
+        all_nodes.add(tgt_sys)
+
+    truncated = len(all_nodes) > max_nodes
+    kept_nodes: set[str] = set(sorted(all_nodes)[:max_nodes])
+
+    lines = ["flowchart TD"]
+    if truncated:
+        lines.append(f"%% truncated at {max_nodes} nodes")
+
+    for (src_sys, tgt_sys), count in sorted(edge_counts.items()):
+        if src_sys not in kept_nodes or tgt_sys not in kept_nodes:
+            continue
+        s_mmid = _mmid(src_sys)
+        t_mmid = _mmid(tgt_sys)
+        s_lbl = _esc(src_sys)
+        t_lbl = _esc(tgt_sys)
+        lines.append(f'    {s_mmid}["{s_lbl}"] -->|{count}| {t_mmid}["{t_lbl}"]')
+
+    # If all edges were filtered (every node capped out), treat as empty.
+    if len(lines) == 1 or (len(lines) == 2 and lines[1].startswith("%%")):
+        return "flowchart TD\n%% no data"
 
     return "\n".join(lines)

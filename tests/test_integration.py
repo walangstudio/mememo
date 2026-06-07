@@ -177,6 +177,124 @@ async def test_search_similar(test_env):
 
 
 @pytest.mark.asyncio
+async def test_hybrid_lexical_surfaces_exact_term_below_vector_floor(test_env):
+    """A rare exact identifier the embedder can't match should still surface via
+    the lexical (BM25) pass, even when the vector similarity is under the floor.
+    With hybrid off and a strict floor, the same query finds nothing."""
+    memory_manager = test_env
+
+    target = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Zylqphrum subsystem owns the nightly reconciliation decisions.",
+            type="context",
+            relationships=MemoryRelationships(),
+        )
+    )
+    for filler in ("Notes about the weather today.", "A grocery shopping list."):
+        await memory_manager.create_memory(
+            CreateMemoryParams(content=filler, type="context", relationships=MemoryRelationships())
+        )
+
+    # Pure vector at a strict floor: the made-up token has no semantic anchor.
+    vec_only = await memory_manager.search_similar(
+        SearchParams(query="Zylqphrum", top_k=5, min_similarity=0.7, hybrid=False)
+    )
+    assert target.id not in {r.memory.id for r in vec_only}
+
+    # Hybrid: the exact lexical hit bypasses the vector floor and ranks first.
+    hybrid = await memory_manager.search_similar(
+        SearchParams(query="Zylqphrum", top_k=5, min_similarity=0.7, hybrid=True)
+    )
+    assert hybrid and hybrid[0].memory.id == target.id
+
+
+@pytest.mark.asyncio
+async def test_search_similar_repo_id_override_targets_lane(test_env):
+    """An explicit SearchParams.repo_id searches that lane instead of the ambient
+    git context — the mechanism the inject hook uses to reach the GLOBAL lane."""
+    memory_manager = test_env
+    ctx = await memory_manager.git_manager.detect_context(None)
+
+    m = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Quarterly OKR planning ritual.",
+            type="context",
+            relationships=MemoryRelationships(),
+        )
+    )
+    # Found when targeting the memory's own lane explicitly.
+    hits = await memory_manager.search_similar(
+        SearchParams(
+            query="OKR planning",
+            top_k=5,
+            min_similarity=0.0,
+            repo_id=ctx.repo.id,
+            branch=ctx.branch.name,
+        )
+    )
+    assert m.id in {r.memory.id for r in hits}
+    # A different lane sees nothing (load_memories is scoped by repo_id/branch).
+    other = await memory_manager.search_similar(
+        SearchParams(query="OKR planning", top_k=5, min_similarity=0.0, repo_id="some-other-lane")
+    )
+    assert m.id not in {r.memory.id for r in other}
+
+
+@pytest.mark.asyncio
+async def test_recall_relevant_unions_global_lane(test_env):
+    """recall_relevant returns ambient-lane AND GLOBAL-lane memories; with
+    include_global=False it returns only the ambient lane."""
+    memory_manager = test_env
+
+    ambient = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Local repo decision about the build pipeline.",
+            type="context",
+            relationships=MemoryRelationships(),
+        )
+    )
+    glob = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Global decision about the build pipeline across projects.",
+            type="context",
+            relationships=MemoryRelationships(),
+        ),
+        force_global=True,
+    )
+
+    both = await memory_manager.recall_relevant(
+        SearchParams(query="build pipeline decision", top_k=10, min_similarity=0.0)
+    )
+    ids = {r.memory.id for r in both}
+    assert ambient.id in ids and glob.id in ids
+
+    ambient_only = await memory_manager.recall_relevant(
+        SearchParams(query="build pipeline decision", top_k=10, min_similarity=0.0),
+        include_global=False,
+    )
+    only_ids = {r.memory.id for r in ambient_only}
+    assert ambient.id in only_ids and glob.id not in only_ids
+
+
+@pytest.mark.asyncio
+async def test_search_fts_scopes_and_matches(test_env):
+    """search_fts returns ids whose content matches, scoped to (repo_id, branch)."""
+    memory_manager = test_env
+    ctx = await memory_manager.git_manager.detect_context(None)
+    m = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content="Kubernetes ingress routing playbook.",
+            type="context",
+            relationships=MemoryRelationships(),
+        )
+    )
+    sm = memory_manager.storage_manager
+    assert m.id in sm.search_fts("kubernetes ingress", ctx.repo.id, ctx.branch.name, 10)
+    assert m.id not in sm.search_fts("kubernetes", ctx.repo.id, "nonexistent-branch", 10)
+    assert sm.search_fts("?!?", ctx.repo.id, ctx.branch.name, 10) == []  # no usable terms
+
+
+@pytest.mark.asyncio
 async def test_list_with_filters(test_env):
     """Test listing memories with filters."""
     memory_manager = test_env
