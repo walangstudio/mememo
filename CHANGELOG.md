@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.26.0] - 2026-06-07
+
+### Added
+- **Qwen3-Embedding-0.6B as an opt-in higher-quality embedding model**
+  (`MEMEMO_EMBEDDING_MODEL=qwen3`). 1024-dim, 32k context, Apache-2.0 (no gated
+  HuggingFace download, unlike `gemma`), and top of the small-model MTEB rankings —
+  the recall lever for semantic / non-exact jargon that BM25 can't catch. Default
+  stays `minilm`, so nothing is forced to re-index.
+- **Asymmetric query encoding.** Instruction-tuned models embed queries with a
+  prompt prefix but documents bare; `Embedder.embed_query` now applies the model's
+  `query` prompt (registry `query_prompt_name`) while `embed`/`embed_batch` keep
+  encoding stored documents bare. A registry hint the loaded model doesn't define
+  degrades to a bare encode instead of raising. No-op for symmetric `minilm`.
+
+### Changed
+- `MemoryManager.create_memory` now embeds stored content with `embed()` (document
+  side) instead of `embed_query()`, matching the batch path and keeping the
+  query/document sides aligned for asymmetric models. Identical output for `minilm`.
+
+### Fixed
+- Switching embedding models without re-indexing now raises an actionable
+  "dimension mismatch — re-index this repo/branch" error instead of an opaque FAISS
+  assertion from deep inside add()/search().
+
 ## [0.25.0] - 2026-06-06
 
 ### Added
