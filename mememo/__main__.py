@@ -346,7 +346,7 @@ def _cmd_diagram(args: list[str]) -> int:
     from pathlib import Path
 
     ap = argparse.ArgumentParser(prog="mememo diagram")
-    ap.add_argument("type", choices=["class", "call", "module"], help="Diagram type")
+    ap.add_argument("type", choices=["class", "call", "module", "overview"], help="Diagram type")
     ap.add_argument("--scope", default=None, help="class: file/class; call: function/memory_id")
     ap.add_argument(
         "--repo", default=None, help="Repo path to pick repo_id/branch (default: busiest)"
@@ -357,7 +357,7 @@ def _cmd_diagram(args: list[str]) -> int:
 
     from .core.storage_manager import StorageManager
     from .diagram_html import write_html
-    from .diagrams import call_graph, class_diagram, module_dependency
+    from .diagrams import call_graph, class_diagram, module_dependency, overview_diagram
     from .types.config import MemoConfig
 
     storage = StorageManager(base_dir=MemoConfig.from_env().storage.base_dir)
@@ -372,6 +372,8 @@ def _cmd_diagram(args: list[str]) -> int:
         mermaid = class_diagram(conn, repo_id, branch, scope=ns.scope, base_dir=storage.base_dir)
     elif ns.type == "module":
         mermaid = module_dependency(conn, repo_id, branch)
+    elif ns.type == "overview":
+        mermaid = overview_diagram(conn, repo_id, branch)
     else:  # call
         from .tools.generate_diagram import resolve_call_root
 

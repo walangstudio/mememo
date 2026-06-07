@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 from mememo.core.storage_manager import StorageManager
-from mememo.diagrams import call_graph, class_diagram, module_dependency
+from mememo.diagrams import (
+    call_graph,
+    class_diagram,
+    is_empty_diagram,
+    module_dependency,
+    overview_diagram,
+)
 
 SHA = "a" * 40
 REPO = "test-repo"
@@ -745,3 +751,308 @@ def test_scope_member_ids_escapes_like_wildcards(store: StorageManager) -> None:
     ids = _scope_member_ids(store.conn, REPO, BRANCH, "util_", only_classes=False)
     assert "u2" in ids
     assert "u1" not in ids
+
+
+# ---------- overview_diagram ---------------------------------------------------
+
+
+def _seed_subsystems(storage: StorageManager) -> None:
+    """Seed memories in two subsystems with a cross-subsystem IMPORTS edge.
+
+    Files:
+      pkg/a/x.py  (subsystem pkg/a)
+      pkg/b/y.py  (subsystem pkg/b)
+      top.py      (subsystem (root), top-level file)
+
+    Relations:
+      pkg/a/x.py IMPORTS pkg/b/y.py  (cross-subsystem)
+      pkg/a/x.py IMPORTS pkg/a/z.py  (same subsystem — should NOT appear)
+    """
+    storage.conn.executemany(
+        "INSERT INTO memories (id, repo_id, branch_name, content_type, "
+        "  file_path, function_name, class_name, language, chunk_type, "
+        "  checksum, content_ref, token_count, created_at, updated_at, stale) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 0)",
+        [
+            (
+                "ov-ax",
+                REPO,
+                BRANCH,
+                "code_snippet",
+                "pkg/a/x.py",
+                "do_thing",
+                None,
+                "python",
+                "function",
+                "ca1",
+                "ra1",
+                5,
+            ),
+            (
+                "ov-by",
+                REPO,
+                BRANCH,
+                "code_snippet",
+                "pkg/b/y.py",
+                "helper",
+                None,
+                "python",
+                "function",
+                "ca2",
+                "ra2",
+                5,
+            ),
+            (
+                "ov-az",
+                REPO,
+                BRANCH,
+                "code_snippet",
+                "pkg/a/z.py",
+                "internal",
+                None,
+                "python",
+                "function",
+                "ca3",
+                "ra3",
+                5,
+            ),
+            (
+                "ov-top",
+                REPO,
+                BRANCH,
+                "code_snippet",
+                "top.py",
+                "main",
+                None,
+                "python",
+                "function",
+                "ca4",
+                "ra4",
+                5,
+            ),
+        ],
+    )
+    storage.conn.executemany(
+        "INSERT INTO relations (id, repo_id, branch, source_memory_id, "
+        "  target_memory_id, target_symbol, type, confidence, created_at_sha, stale) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+        [
+            # cross-subsystem: pkg/a -> pkg/b
+            ("ov-rel-cross", REPO, BRANCH, "ov-ax", "ov-by", None, "IMPORTS", "EXTRACTED", SHA),
+            # same-subsystem: pkg/a -> pkg/a (should NOT appear in overview)
+            ("ov-rel-same", REPO, BRANCH, "ov-ax", "ov-az", None, "IMPORTS", "EXTRACTED", SHA),
+        ],
+    )
+    storage.conn.commit()
+
+
+@pytest.fixture()
+def ov_store(tmp_path: Path) -> StorageManager:
+    s = StorageManager(base_dir=tmp_path / "ov_store")
+    _seed_subsystems(s)
+    return s
+
+
+def test_overview_diagram_header(ov_store: StorageManager) -> None:
+    result = overview_diagram(ov_store.conn, REPO, BRANCH)
+    assert result.startswith("flowchart TD")
+
+
+def test_overview_diagram_cross_subsystem_edge(ov_store: StorageManager) -> None:
+    result = overview_diagram(ov_store.conn, REPO, BRANCH)
+    # Both subsystem node labels must appear.
+    assert "pkg/a" in result
+    assert "pkg/b" in result
+    # Edge with count label must appear.
+    assert "-->" in result
+    assert "|" in result  # edge label syntax -->|1|
+
+
+def test_overview_diagram_edge_count(ov_store: StorageManager) -> None:
+    # One cross-subsystem file-level import -> count = 1 on the edge label.
+    result = overview_diagram(ov_store.conn, REPO, BRANCH)
+    assert "-->|1|" in result
+
+
+def test_overview_diagram_same_subsystem_not_shown(ov_store: StorageManager) -> None:
+    # The pkg/a -> pkg/a import must NOT produce a self-edge.
+    result = overview_diagram(ov_store.conn, REPO, BRANCH)
+    lines = [ln.strip() for ln in result.splitlines()]
+    # A self-edge would have the same mmid on both sides; verify no such line exists.
+    from mememo.diagrams import _mmid
+
+    a_mmid = _mmid("pkg/a")
+    self_edge_prefix = f"{a_mmid}["
+    for line in lines:
+        if self_edge_prefix in line and f"| {a_mmid}[" in line:
+            pytest.fail(f"Self-edge found in overview: {line!r}")
+
+
+def test_overview_diagram_empty_repo(ov_store: StorageManager) -> None:
+    result = overview_diagram(ov_store.conn, "nonexistent", BRANCH)
+    assert result == "flowchart TD\n%% no data"
+    assert is_empty_diagram(result)
+
+
+def test_overview_diagram_empty_is_empty_diagram(ov_store: StorageManager) -> None:
+    from mememo.diagrams import is_empty_diagram
+
+    result = overview_diagram(ov_store.conn, "nonexistent", BRANCH)
+    assert is_empty_diagram(result)
+
+
+def test_overview_diagram_only_same_subsystem_imports(tmp_path: Path) -> None:
+    # If all IMPORTS are within the same subsystem, result must be empty.
+    s = StorageManager(base_dir=tmp_path / "same_sub")
+    s.conn.executemany(
+        "INSERT INTO memories (id, repo_id, branch_name, content_type, "
+        "  file_path, function_name, class_name, language, chunk_type, "
+        "  checksum, content_ref, token_count, created_at, updated_at, stale) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 0)",
+        [
+            (
+                "ss1",
+                REPO,
+                BRANCH,
+                "code_snippet",
+                "pkg/a/x.py",
+                "f",
+                None,
+                "python",
+                "function",
+                "c1",
+                "r1",
+                5,
+            ),
+            (
+                "ss2",
+                REPO,
+                BRANCH,
+                "code_snippet",
+                "pkg/a/y.py",
+                "g",
+                None,
+                "python",
+                "function",
+                "c2",
+                "r2",
+                5,
+            ),
+        ],
+    )
+    s.conn.execute(
+        "INSERT INTO relations (id, repo_id, branch, source_memory_id, target_memory_id, "
+        "target_symbol, type, confidence, created_at_sha, stale) "
+        "VALUES ('ss-rel', ?, ?, 'ss1', 'ss2', NULL, 'IMPORTS', 'EXTRACTED', ?, 0)",
+        (REPO, BRANCH, SHA),
+    )
+    s.conn.commit()
+    result = overview_diagram(s.conn, REPO, BRANCH)
+    from mememo.diagrams import is_empty_diagram
+
+    assert is_empty_diagram(result)
+
+
+def test_overview_diagram_deterministic(ov_store: StorageManager) -> None:
+    # Two calls must produce identical output.
+    r1 = overview_diagram(ov_store.conn, REPO, BRANCH)
+    r2 = overview_diagram(ov_store.conn, REPO, BRANCH)
+    assert r1 == r2
+
+
+def test_overview_diagram_backslash_separator(tmp_path: Path) -> None:
+    # Windows-style paths with backslashes must be normalised to the same subsystem.
+    s = StorageManager(base_dir=tmp_path / "win_store")
+    s.conn.executemany(
+        "INSERT INTO memories (id, repo_id, branch_name, content_type, "
+        "  file_path, function_name, class_name, language, chunk_type, "
+        "  checksum, content_ref, token_count, created_at, updated_at, stale) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 0)",
+        [
+            (
+                "win1",
+                REPO,
+                BRANCH,
+                "code_snippet",
+                r"pkg\a\x.py",
+                "f",
+                None,
+                "python",
+                "function",
+                "cw1",
+                "rw1",
+                5,
+            ),
+            (
+                "win2",
+                REPO,
+                BRANCH,
+                "code_snippet",
+                r"pkg\b\y.py",
+                "g",
+                None,
+                "python",
+                "function",
+                "cw2",
+                "rw2",
+                5,
+            ),
+        ],
+    )
+    s.conn.execute(
+        "INSERT INTO relations (id, repo_id, branch, source_memory_id, target_memory_id, "
+        "target_symbol, type, confidence, created_at_sha, stale) "
+        "VALUES ('win-rel', ?, ?, 'win1', 'win2', NULL, 'IMPORTS', 'EXTRACTED', ?, 0)",
+        (REPO, BRANCH, SHA),
+    )
+    s.conn.commit()
+    result = overview_diagram(s.conn, REPO, BRANCH)
+    assert "pkg/a" in result
+    assert "pkg/b" in result
+    assert "-->" in result
+
+
+# ---------- generate_diagram tool: overview (Phase 1) + flow (Phase 2) --------
+
+
+async def test_tool_overview_deterministic(ov_store: StorageManager) -> None:
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="overview", repo_id=REPO, branch=BRANCH),
+        _FakeMM(ov_store),
+        None,
+    )
+    assert resp.success is True
+    assert resp.passthrough is False
+    assert resp.mermaid.startswith("flowchart TD")
+    assert "pkg/a" in resp.mermaid
+    assert "pkg/b" in resp.mermaid
+
+
+async def test_tool_overview_empty_returns_error(ov_store: StorageManager) -> None:
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="overview", repo_id="nonexistent-repo", branch=BRANCH),
+        _FakeMM(ov_store),
+        None,
+    )
+    assert resp.success is False
+
+
+async def test_tool_flow_passthrough_returns_grounded_prompt(ov_store: StorageManager) -> None:
+    from mememo.tools.generate_diagram import GenerateDiagramParams, generate_diagram
+
+    resp = await generate_diagram(
+        GenerateDiagramParams(type="flow", repo_id=REPO, branch=BRANCH),
+        _FakeMM(ov_store),
+        _PassthroughLLM(),
+    )
+    assert resp.success is True
+    assert resp.passthrough is True
+    assert resp.mermaid == ""
+    # The prompt must contain the flow instruction and the deterministic overview skeleton.
+    assert "flowchart TD" in resp.passthrough_prompt
+    assert "NON-DEVELOPER" in resp.passthrough_prompt
+    assert "Deterministic subgraph" in resp.passthrough_prompt

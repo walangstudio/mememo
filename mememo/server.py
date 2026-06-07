@@ -1040,6 +1040,8 @@ async def generate_diagram(params: GenerateDiagramParams) -> GenerateDiagramResp
     - type="call"   : flowchart LR BFS over CALLS edges.
                       scope=memory_id or function_name sets the root.
     - type="module" : flowchart LR of cross-file IMPORTS grouped by file.
+    - type="overview": flowchart TD grouping files into subsystems (by directory)
+                       with cross-subsystem import counts — a coarse, non-dev view.
 
     LLM-synthesized (passthrough-aware) — grounded in the deterministic subgraph
     plus the scope's source:
@@ -1047,6 +1049,8 @@ async def generate_diagram(params: GenerateDiagramParams) -> GenerateDiagramResp
     - type="usecase"  : flowchart of user-facing workflows from public entry points.
     - type="state"    : stateDiagram-v2 of a class's lifecycle (scope=class).
     - type="erd"      : erDiagram of data models / entities.
+    - type="flow"     : plain-English flowchart of how the system works, for
+                        non-developers (grounded in the subsystem overview + README).
 
     For the LLM types with no provider configured, the response sets
     passthrough=True and returns passthrough_prompt for the host model to

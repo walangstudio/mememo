@@ -1,10 +1,10 @@
 """generate_diagram MCP tool.
 
 Phase 1 — deterministic Mermaid from the code graph (no LLM):
-    type in {class, call, module}.
+    type in {class, call, module, overview}.
 
 Phase 2 — LLM-synthesized, passthrough-aware:
-    type in {sequence, usecase, state, erd}.
+    type in {sequence, usecase, state, erd, flow}.
     The deterministic subgraph + the scope's source are assembled as grounding,
     then either (a) returned as a passthrough_prompt for the host model to
     synthesize the Mermaid in chat (default, no API key), or (b) completed
@@ -14,6 +14,7 @@ Phase 2 — LLM-synthesized, passthrough-aware:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
@@ -25,9 +26,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-DiagramType = Literal["class", "call", "module", "sequence", "usecase", "state", "erd"]
-_PHASE1_TYPES = frozenset({"class", "call", "module"})
-_PHASE2_TYPES = frozenset({"sequence", "usecase", "state", "erd"})
+DiagramType = Literal[
+    "class", "call", "module", "overview", "sequence", "usecase", "state", "erd", "flow"
+]
+_PHASE1_TYPES = frozenset({"class", "call", "module", "overview"})
+_PHASE2_TYPES = frozenset({"sequence", "usecase", "state", "erd", "flow"})
 
 # Grounding budget: how much scope source text to feed the model. Generous
 # enough to capture a handful of function bodies, bounded so the prompt stays
@@ -38,8 +41,8 @@ _GROUNDING_CHAR_BUDGET = 8000
 class GenerateDiagramParams(BaseModel):
     type: str = Field(
         description=(
-            "class | call | module (deterministic). "
-            "sequence | usecase | state | erd (LLM/passthrough)."
+            "class | call | module | overview (deterministic). "
+            "sequence | usecase | state | erd | flow (LLM/passthrough)."
         )
     )
     scope: str | None = Field(
@@ -83,7 +86,7 @@ async def generate_diagram(
             type=params.type,
             message=(
                 f"Unknown diagram type {params.type!r}. Choose one of: "
-                "class, call, module, sequence, usecase, state, erd."
+                "class, call, module, overview, sequence, usecase, state, erd, flow."
             ),
         )
 
@@ -118,7 +121,13 @@ async def _resolve_repo_branch(
 async def _phase1(
     params: GenerateDiagramParams, memory_manager: MemoryManager, repo_id: str, branch: str
 ) -> GenerateDiagramResponse:
-    from ..diagrams import call_graph, class_diagram, is_empty_diagram, module_dependency
+    from ..diagrams import (
+        call_graph,
+        class_diagram,
+        is_empty_diagram,
+        module_dependency,
+        overview_diagram,
+    )
 
     conn = memory_manager.storage_manager.conn
     base_dir = memory_manager.storage_manager.base_dir
@@ -129,6 +138,11 @@ async def _phase1(
         truncated = False
     elif params.type == "module":
         mermaid = module_dependency(conn, repo_id, branch, max_nodes=params.max_nodes)
+        truncated = "%% truncated" in mermaid
+    elif params.type == "overview":
+        mermaid = overview_diagram(
+            conn, repo_id, branch, max_nodes=params.max_nodes, depth=params.depth
+        )
         truncated = "%% truncated" in mermaid
     else:  # call
         root_id = await _resolve_call_root(conn, repo_id, branch, params.scope)
@@ -152,7 +166,7 @@ async def _phase1(
             type=params.type,
             message=(
                 f"No {params.type} data for scope={params.scope!r}. The repo may not be "
-                "indexed, the scope may not exist, or it has no classes/calls/imports."
+                "indexed, the scope may not exist, or it has no classes/calls/imports/subsystems."
             ),
         )
 
@@ -192,6 +206,14 @@ _PHASE2_PROMPTS = {
         "attributes are their fields with types, and relationships are the references "
         "between them (||--o{ etc.) inferred from the field types and the call/import "
         "edges. Only include entities present in the provided source."
+    ),
+    "flow": (
+        "You generate a Mermaid flowchart TD that explains end-to-end how this system "
+        "works for a NON-DEVELOPER (product or business reader). Use friendly plain-English "
+        "labels that describe what each part DOES — avoid raw function names, class names, "
+        "or technical jargon where possible. Group related steps with subgraphs. Keep the "
+        "diagram to the main happy-path flow; omit error branches and internal implementation "
+        "details. Do not invent components not present in the grounding."
     ),
 }
 
@@ -329,6 +351,13 @@ async def _gather_grounding(
             conn, repo_id, branch, scope=params.scope, base_dir=storage.base_dir
         )
         source_ids = _scope_member_ids(conn, repo_id, branch, params.scope, only_classes=True)
+    elif dtype == "flow":
+        from ..diagrams import overview_diagram
+
+        skeleton = overview_diagram(
+            conn, repo_id, branch, max_nodes=params.max_nodes, depth=params.depth
+        )
+        source_ids = _public_entry_ids(conn, repo_id, branch, params.scope)
     else:  # usecase
         skeleton = module_dependency(conn, repo_id, branch, max_nodes=params.max_nodes)
         source_ids = _public_entry_ids(conn, repo_id, branch, params.scope)
@@ -336,6 +365,17 @@ async def _gather_grounding(
     skeleton_has_data = bool(skeleton.strip()) and "%% no data" not in skeleton
 
     parts: list[str] = []
+
+    # For the flow type, prepend README context so the model has plain-language
+    # project description to derive friendly labels from.
+    if dtype == "flow" and params.repo_path:
+        try:
+            readme_path = Path(params.repo_path) / "README.md"
+            readme_text = readme_path.read_text(encoding="utf-8")
+            parts.append("# README:\n" + readme_text[:2000])
+        except (OSError, TypeError):
+            pass  # no README or unreadable — degrade gracefully
+
     if skeleton.strip():
         parts.append("# Deterministic subgraph (real symbols):\n" + skeleton)
 

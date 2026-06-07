@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.27.0] - 2026-06-07
+
+### Added
+- **`overview` diagram type** (deterministic, Phase 1): subsystem/architecture flowchart
+  for non-developers. Groups files by the first N path segments into subsystems, aggregates
+  cross-subsystem IMPORTS edges, emits a `flowchart TD` with edge-count labels. Available
+  in chat (`generate_diagram`), web UI `/diagram` panel, and `mememo diagram overview` CLI.
+- **`flow` diagram type** (LLM/passthrough, Phase 2): plain-English end-to-end flowchart
+  aimed at product/business readers. Grounds the prompt with the `overview` skeleton plus
+  public entry points, prepends up to 2000 chars of README for plain-language context.
+
 ## [0.26.0] - 2026-06-07
 
 ### Added
