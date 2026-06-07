@@ -33,8 +33,13 @@ class StorageConfig(BaseModel):
 class EmbeddingConfig(BaseModel):
     """Embedding model configuration."""
 
-    model_name: Literal["minilm", "gemma"] = Field(
-        default="minilm", description="Embedding model: minilm (384-dim) or gemma (768-dim)"
+    model_name: Literal["minilm", "qwen3", "gemma"] = Field(
+        default="minilm",
+        description=(
+            "Embedding model: minilm (384-dim, default), qwen3 (1024-dim, highest "
+            "quality, Apache-2.0), or gemma (768-dim, experimental). Switching model "
+            "requires a re-index."
+        ),
     )
     device: Literal["auto", "cpu", "cuda", "mps"] = Field(
         default="auto", description="Device for embeddings: auto, cpu, cuda, or mps"

@@ -226,7 +226,10 @@ Set environment variables (optional):
 export MEMEMO_STORAGE_DIR="$HOME/.mememo"
 
 # Embedding model (default: minilm)
-export MEMEMO_EMBEDDING_MODEL="minilm"  # or "gemma"
+# minilm = 384-dim, fast, default; qwen3 = 1024-dim, highest quality, Apache-2.0,
+# instruction-aware; gemma = 768-dim, experimental (gated download).
+# Switching model requires a re-index (the vector dimension changes).
+export MEMEMO_EMBEDDING_MODEL="minilm"  # or "qwen3" / "gemma"
 
 # Device (default: auto-detect)
 export MEMEMO_EMBEDDING_DEVICE="auto"  # or "cuda", "mps", "cpu"

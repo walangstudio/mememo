@@ -41,6 +41,18 @@ def test_search_survives_fresh_instance(tmp_path):
     assert "target" in memory_ids, "vectors added by a prior process must be searchable"
 
 
+def test_dimension_mismatch_raises_actionable_error(tmp_path):
+    # Build an index at dim 8 (simulating the old embedding model).
+    vi1 = VectorIndex(base_path=tmp_path, repo_id="r", branch="main", dimension=8)
+    vi1.add([_vec(1, dim=8)], ["m1"], ["c1"])
+
+    # A new model with a different dimension (e.g. minilm 384 -> qwen3 1024) must
+    # fail with a clear re-index message, not an opaque FAISS assertion.
+    vi2 = VectorIndex(base_path=tmp_path, repo_id="r", branch="main", dimension=16)
+    with pytest.raises(ValueError, match="dimension mismatch"):
+        vi2.search(_vec(2, dim=16), top_k=1)
+
+
 def test_incremental_adds_all_searchable_from_fresh_instance(tmp_path):
     vi1 = VectorIndex(base_path=tmp_path, repo_id="r", branch="main", dimension=8)
     ids = []

@@ -75,7 +75,7 @@ SAMPLE_RESULTS = [
     ),
     _make_mock_memory(
         "context",
-        "The embedder supports two models: minilm (384-dim, 90MB, default) and gemma (768-dim, 1200MB, experimental). Device auto-detection: CUDA > MPS > CPU.",
+        "The embedder supports three models: minilm (384-dim, 90MB, default), qwen3 (1024-dim, 1200MB, highest quality), and gemma (768-dim, 1200MB, experimental). Device auto-detection: CUDA > MPS > CPU.",
         0.50,
         15,
     ),

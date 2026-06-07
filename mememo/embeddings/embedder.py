@@ -17,23 +17,43 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Model registry
+# Model registry.
+#
+# query_prompt_name: the sentence-transformers prompt to apply to *query* text
+# (asymmetric models prepend an instruction to queries but embed documents bare).
+# None → symmetric model, encode queries and documents identically. The prompt is
+# resolved from the model's own ST config at encode time; if the loaded model
+# doesn't actually define it, embed_query() falls back to a bare encode rather
+# than raising, so a wrong registry hint degrades instead of crashing.
 MODEL_REGISTRY = {
     "minilm": {
         "name": "sentence-transformers/all-MiniLM-L6-v2",
         "dimension": 384,
         "size_mb": 90,
+        "query_prompt_name": None,
         "description": "Lightweight, fast, good quality (default)",
+    },
+    "qwen3": {
+        "name": "Qwen/Qwen3-Embedding-0.6B",
+        "dimension": 1024,
+        "size_mb": 1200,
+        "query_prompt_name": "query",
+        "description": (
+            "Highest quality, Apache-2.0, instruction-aware (1024-dim, 32k ctx). "
+            "Switching to it requires a re-index."
+        ),
     },
     "gemma": {
         "name": "google/embeddinggemma-300m",
         "dimension": 768,
         "size_mb": 1200,
-        "description": "Higher quality, larger model (experimental)",
+        "query_prompt_name": None,
+        "description": "768-dim, experimental; gated download (requires HuggingFace login)",
     },
 }
 
 DeviceType = Literal["auto", "cpu", "cuda", "mps"]
+ModelName = Literal["minilm", "qwen3", "gemma"]
 
 _SYSTEM_CA_READY = False
 
@@ -88,7 +108,7 @@ class Embedder:
 
     def __init__(
         self,
-        model_name: Literal["minilm", "gemma"] = "minilm",
+        model_name: ModelName = "minilm",
         device: DeviceType = "auto",
         batch_size: int = 32,
     ):
@@ -96,7 +116,7 @@ class Embedder:
         Initialize embedder.
 
         Args:
-            model_name: Model to use ("minilm" or "gemma")
+            model_name: Model to use ("minilm", "qwen3", or "gemma")
             device: Device to use ("auto", "cpu", "cuda", "mps")
             batch_size: Batch size for encoding
         """
@@ -104,6 +124,7 @@ class Embedder:
         self.batch_size = batch_size
         self._model = None
         self._dimension = None
+        self._warned_missing_prompt = False
 
         # Auto-detect device
         if device == "auto":
@@ -253,14 +274,43 @@ class Embedder:
         """
         Generate embedding for a search query.
 
+        Asymmetric models (e.g. Qwen3) prepend an instruction to queries but embed
+        documents bare; applying the query prompt only here — not in embed()/
+        embed_batch(), which encode stored documents — keeps the two sides aligned.
+        Symmetric models (query_prompt_name=None) take the same path as documents.
+
         Args:
             query: Search query string
 
         Returns:
             numpy array (shape: [dimension])
         """
-        embeddings = self.embed([query])
-        return embeddings[0]
+        prompt_name = MODEL_REGISTRY.get(self.model_name, {}).get("query_prompt_name")
+        if prompt_name:
+            # Only pass prompt_name if the loaded model actually defines it; a stale
+            # registry hint must degrade to a bare encode, not raise. Warn once so
+            # the degradation (asymmetric model encoded symmetrically → worse
+            # retrieval) is visible instead of silent.
+            if prompt_name in (getattr(self.model, "prompts", None) or {}):
+                embeddings = self.model.encode(
+                    [query],
+                    batch_size=self.batch_size,
+                    convert_to_numpy=True,
+                    show_progress_bar=False,
+                    normalize_embeddings=True,
+                    prompt_name=prompt_name,
+                )
+                return embeddings[0]
+            if not self._warned_missing_prompt:
+                logger.warning(
+                    "Model %s declares query_prompt_name=%r but the loaded model "
+                    "does not define it; queries are encoded without the instruction "
+                    "prefix (retrieval quality degraded).",
+                    self.model_name,
+                    prompt_name,
+                )
+                self._warned_missing_prompt = True
+        return self.embed([query])[0]
 
     def get_info(self) -> dict:
         """

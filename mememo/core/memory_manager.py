@@ -174,9 +174,12 @@ class MemoryManager:
             self._generate_detailed_summary(validated_content) if token_count > 200 else None
         )
 
-        # 7. Generate embedding
+        # 7. Generate embedding (document side — stored content, not a query, so
+        # asymmetric models like Qwen3 don't prepend the query instruction; this
+        # matches the batch path's embed() and is identical to embed_query for
+        # symmetric models like MiniLM).
         logger.debug(f"Generating embedding for memory {memory_id}")
-        embedding = self.embedder.embed_query(validated_content)
+        embedding = self.embedder.embed(validated_content)[0]
 
         # 8. Create memory object
         now = datetime.now()
