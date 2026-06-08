@@ -876,6 +876,39 @@ class StorageManager:
         )
         self.conn.commit()
 
+    def get_memory_ids_by_tag(
+        self,
+        tag: str,
+        *,
+        repo_id: str | None = None,
+        branch: str | None = None,
+        content_type: str | None = None,
+    ) -> list[str]:
+        """Return memory ids carrying an exact tag (uses the indexed tags table).
+
+        Optional ``repo_id``/``branch``/``content_type`` scope the lookup via a join
+        on ``memories`` — manage_skill passes all three (GLOBAL lane + ``skill``
+        type) so the skill-mirror upsert/delete can never touch a user memory that
+        happens to share the tag in another lane or of another type.
+        """
+        conditions = ["t.tag = ?"]
+        args: list = [tag]
+        if repo_id is not None:
+            conditions.append("m.repo_id = ?")
+            args.append(repo_id)
+        if branch is not None:
+            conditions.append("m.branch_name = ?")
+            args.append(branch)
+        if content_type is not None:
+            conditions.append("m.content_type = ?")
+            args.append(content_type)
+        where = " AND ".join(conditions)
+        rows = self.conn.execute(
+            f"SELECT t.memory_id FROM tags t JOIN memories m ON m.id = t.memory_id WHERE {where}",
+            args,
+        ).fetchall()
+        return [r["memory_id"] for r in rows]
+
     def delete_expired_memories(
         self, ttl_conversation_days: int, ttl_context_days: int
     ) -> list[str]:

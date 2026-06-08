@@ -525,15 +525,33 @@ class MemoryManager:
                     by_id[r.memory.id] = r
         return sorted(by_id.values(), key=lambda r: r.similarity, reverse=True)
 
-    async def delete_memory(self, memory_id: str, cwd: str | None = None) -> None:
+    async def delete_memory(
+        self,
+        memory_id: str,
+        cwd: str | None = None,
+        *,
+        repo_id: str | None = None,
+        branch: str | None = None,
+    ) -> None:
         """
         Delete memory.
 
         Args:
             memory_id: Memory ID to delete
             cwd: Working directory for git context detection
+            repo_id / branch: Explicit lane override (e.g. the GLOBAL lane). When
+                set, skip git detection — required to delete a memory that lives in
+                a lane other than the ambient one (storage delete is lane-scoped).
         """
-        context = await self.git_manager.detect_context(cwd)
+        if repo_id:
+            from ..types.memory import BranchContext, GitContext, RepoContext
+
+            context = GitContext(
+                repo=RepoContext(id=repo_id, name="", path="", remote_url=None),
+                branch=BranchContext(name=branch or "main", commit_hash=""),
+            )
+        else:
+            context = await self.git_manager.detect_context(cwd)
         await self.storage_manager.delete_memory(memory_id, context)
 
         # Emit a DELETED event so event-replay sees the tombstone (FR-003 / FR-004).

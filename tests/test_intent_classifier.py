@@ -93,13 +93,15 @@ def test_low_confidence_falls_back_to_general(mock_embedder, cache_dir):
 
 
 def test_get_type_priority():
-    assert IntentClassifier.get_type_priority("debugging", "analysis") == 1.0
-    assert IntentClassifier.get_type_priority("debugging", "code_snippet") == 0.7
-    assert IntentClassifier.get_type_priority("debugging", "context") == 0.4
-    assert IntentClassifier.get_type_priority("debugging", "conversation") == 0.2
+    # A distilled skill leads every intent (most actionable hit).
+    assert IntentClassifier.get_type_priority("debugging", "skill") == 1.0
+    assert IntentClassifier.get_type_priority("debugging", "analysis") == 0.7
+    assert IntentClassifier.get_type_priority("debugging", "code_snippet") == 0.4
+    assert IntentClassifier.get_type_priority("debugging", "context") == 0.2
     assert IntentClassifier.get_type_priority("debugging", "unknown_type") == 0.1
     # general intent
-    assert IntentClassifier.get_type_priority("general", "context") == 1.0
+    assert IntentClassifier.get_type_priority("general", "skill") == 1.0
+    assert IntentClassifier.get_type_priority("general", "context") == 0.7
 
 
 def test_all_intents_have_priorities():

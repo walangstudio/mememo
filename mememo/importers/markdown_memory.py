@@ -39,6 +39,7 @@ _TYPE_MAP: dict[str, MemoryContentType] = {
     "reference": "reference",
     "user": "context",
     "feedback": "context",
+    "skill": "skill",
 }
 
 _FRONTMATTER_RE = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)

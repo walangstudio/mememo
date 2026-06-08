@@ -80,14 +80,15 @@ INTENT_PHRASES: dict[str, list[str]] = {
     ],
 }
 
-# Memory type priorities per intent (ordered by priority)
+# Memory type priorities per intent (ordered by priority). A distilled `skill`
+# is the most actionable hit for any intent, so it leads every list.
 INTENT_TYPE_PRIORITIES: dict[str, list[str]] = {
-    "coding": ["code_snippet", "context", "decision", "relationship"],
-    "debugging": ["analysis", "code_snippet", "context", "conversation"],
-    "architecture": ["decision", "analysis", "context", "summary"],
-    "testing": ["code_snippet", "analysis", "context", "decision"],
-    "review": ["code_snippet", "decision", "context", "analysis"],
-    "general": ["context", "decision", "conversation", "summary"],
+    "coding": ["skill", "code_snippet", "context", "decision"],
+    "debugging": ["skill", "analysis", "code_snippet", "context"],
+    "architecture": ["skill", "decision", "analysis", "context"],
+    "testing": ["skill", "code_snippet", "analysis", "context"],
+    "review": ["skill", "code_snippet", "decision", "context"],
+    "general": ["skill", "context", "decision", "conversation"],
 }
 
 

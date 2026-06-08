@@ -1006,7 +1006,7 @@ async def manage_skill(params: ManageSkillParams) -> ManageSkillResponse:
     """
     await ensure_initialized()
     _audit_log("manage_skill")
-    return await manage_skill_impl(params, skill_store)
+    return await manage_skill_impl(params, skill_store, memory_manager)
 
 
 @mcp.tool()

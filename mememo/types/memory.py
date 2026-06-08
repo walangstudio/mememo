@@ -46,14 +46,16 @@ MemoryContentType = Literal[
     "analysis",
     "conversation",
     "reference",
+    "skill",
 ]
 
 # Types tied to source files — staled when the file changes in a commit
 CODE_MEMORY_TYPES: frozenset[str] = frozenset({"code_snippet", "relationship"})
 
-# Types that survive code changes — decisions, analysis, and conversation notes persist
+# Types that survive code changes — decisions, analysis, notes, and distilled
+# skills persist across commits
 PERSISTENT_MEMORY_TYPES: frozenset[str] = frozenset(
-    {"context", "summary", "decision", "analysis", "conversation", "reference"}
+    {"context", "summary", "decision", "analysis", "conversation", "reference", "skill"}
 )
 
 
