@@ -891,6 +891,8 @@ class StorageManager:
         type) so the skill-mirror upsert/delete can never touch a user memory that
         happens to share the tag in another lane or of another type.
         """
+        # All `conditions` are static literals (never user input); only `args` are
+        # user values, and those are bound as parameters — no injection surface.
         conditions = ["t.tag = ?"]
         args: list = [tag]
         if repo_id is not None:

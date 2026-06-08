@@ -8,11 +8,12 @@ skill lands in ``SkillStore`` and is injected into future sessions by intent.
 
 Passthrough-native: the host model does the distillation (no LLM/API call here),
 mirroring the capture/diagram passthrough pattern. This module is the pure,
-testable core; ``cli.cmd_capture`` wires it into the hook.
+testable core; ``cli.cmd_distill`` wires it into the (synchronous) Stop hook.
 """
 
 from __future__ import annotations
 
+import collections
 import json
 from pathlib import Path
 
@@ -33,8 +34,13 @@ def count_tool_uses(transcript_path: str, max_lines: int) -> int:
     if not p.exists():
         return 0
 
-    lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-    tail = lines[-max_lines:] if len(lines) > max_lines else lines
+    # Stream the tail instead of reading the whole file: a long session's
+    # transcript can be hundreds of MB, and this runs on the synchronous hook.
+    try:
+        with p.open(encoding="utf-8", errors="replace") as fh:
+            tail = collections.deque(fh, maxlen=max_lines)
+    except OSError:
+        return 0
 
     count = 0
     for line in tail:
@@ -57,16 +63,15 @@ def count_tool_uses(transcript_path: str, max_lines: int) -> int:
     return count
 
 
-def should_distill(
-    *, enabled: bool, stop_hook_active: bool, num_tool_uses: int, min_tools: int
-) -> bool:
-    """Whether the Stop hook should ask the model to distill a skill.
+def should_distill(*, stop_hook_active: bool, num_tool_uses: int, min_tools: int) -> bool:
+    """Whether a (already-enabled) session is worth a skill-distillation pass.
 
+    The caller gates on the opt-in flag; this decides on session shape only.
     ``stop_hook_active`` is True when Claude is *already* continuing because of a
     prior Stop-hook block — gating on it prevents an infinite distill→stop→distill
     loop (the model gets exactly one distillation pass per stop attempt).
     """
-    if not enabled or stop_hook_active:
+    if stop_hook_active:
         return False
     return num_tool_uses >= min_tools
 

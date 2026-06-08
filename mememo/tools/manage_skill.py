@@ -25,12 +25,12 @@ logger = logging.getLogger(__name__)
 SKILL_TAG_PREFIX = "mememo-skill:"
 
 
-def _skill_mirror_ids(memory_manager: "MemoryManager", name: str) -> list[str]:
-    """Ids of the GLOBAL ``skill``-typed mirror memories for skill ``name``."""
+def _skill_mirror_ids(memory_manager: "MemoryManager", safe_name: str) -> list[str]:
+    """Ids of the GLOBAL ``skill``-typed mirror memories for a (sanitized) name."""
     from ..core.identity import GLOBAL_REPO_ID
 
     return memory_manager.storage_manager.get_memory_ids_by_tag(
-        f"{SKILL_TAG_PREFIX}{name}",
+        f"{SKILL_TAG_PREFIX}{safe_name}",
         repo_id=GLOBAL_REPO_ID,
         branch="main",
         content_type="skill",
@@ -38,43 +38,52 @@ def _skill_mirror_ids(memory_manager: "MemoryManager", name: str) -> list[str]:
 
 
 async def _delete_skill_memories(
-    memory_manager: "MemoryManager", name: str, *, exclude: str | None = None
-) -> int:
-    """Delete the skill-mirror memories for ``name`` (optionally keeping ``exclude``)."""
+    memory_manager: "MemoryManager", safe_name: str, *, exclude: str | None = None
+) -> None:
+    """Delete the skill-mirror memories for a (sanitized) name, keeping ``exclude``.
+
+    ``safe_name`` must be the canonical SkillStore name (``SkillStore.sanitize_name``)
+    so the tag matches what the mirror was stored under.
+    """
     from ..core.identity import GLOBAL_REPO_ID
 
-    deleted = 0
-    for mid in _skill_mirror_ids(memory_manager, name):
+    for mid in _skill_mirror_ids(memory_manager, safe_name):
         if mid == exclude:
             continue
         await memory_manager.delete_memory(mid, repo_id=GLOBAL_REPO_ID, branch="main")
-        deleted += 1
-    return deleted
 
 
 async def _mirror_skill_memory(
-    memory_manager: "MemoryManager", name: str, intent: str, prompt: str, tags: list[str] | None
+    memory_manager: "MemoryManager",
+    safe_name: str,
+    intent: str,
+    prompt: str,
+    tags: list[str] | None,
 ) -> None:
     """Upsert a skill as a GLOBAL ``skill``-typed memory so recall can find it.
 
     Create-then-prune (not delete-then-create): the new mirror is written first,
     then older mirrors for the same name are removed. If create_memory raises
     (e.g. the secret scanner rejects the content), nothing was deleted — the
-    previous mirror stays, so a failed upsert never orphans the mirror.
+    previous mirror stays, so a failed upsert never orphans the mirror. A prune
+    failure (mirror already created) is logged but not raised.
     """
     from ..types.memory import CreateMemoryParams, MemoryRelationships
 
-    mirror_tags = [f"{SKILL_TAG_PREFIX}{name}", intent, *(tags or [])]
+    mirror_tags = [f"{SKILL_TAG_PREFIX}{safe_name}", intent, *(tags or [])]
     memory = await memory_manager.create_memory(
         CreateMemoryParams(
-            content=f"{name}: {prompt}",
+            content=f"{safe_name}: {prompt}",
             type="skill",
             tags=mirror_tags,
             relationships=MemoryRelationships(),
         ),
         force_global=True,
     )
-    await _delete_skill_memories(memory_manager, name, exclude=memory.id)
+    try:
+        await _delete_skill_memories(memory_manager, safe_name, exclude=memory.id)
+    except Exception as e:  # mirror is created; a stale duplicate is harmless
+        logger.warning("Skill mirror prune failed for '%s': %s", safe_name, e)
 
 
 async def manage_skill(
@@ -158,8 +167,14 @@ async def manage_skill(
             return ManageSkillResponse(success=False, message="name is required for delete")
         deleted = skill_store.delete_skill(params.name)
         if memory_manager is not None:
+            # Sanitize to the canonical name the mirror was tagged under (the YAML
+            # store sanitizes too) — without this, a name like "git ops" would
+            # query "mememo-skill:git ops" and never match "mememo-skill:git-ops".
+            # Runs even when the YAML was already gone, so it also reaps orphans.
             try:
-                await _delete_skill_memories(memory_manager, params.name)
+                from ..context.skill_store import SkillStore
+
+                await _delete_skill_memories(memory_manager, SkillStore.sanitize_name(params.name))
             except Exception as e:  # best-effort — keep the SkillStore delete result authoritative
                 logger.warning("Skill mirror delete failed for '%s': %s", params.name, e)
         if deleted:
