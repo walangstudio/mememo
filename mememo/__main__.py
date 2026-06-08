@@ -417,12 +417,87 @@ def _resolve_cli_repo(conn, repo_path: str | None) -> tuple[str | None, str | No
     return (row["repo_id"], row["branch_name"]) if row else (None, None)
 
 
+def _cmd_curate_skills(args: list[str]) -> int:
+    """Consolidate the distilled-skill library headlessly (for cron / `/schedule`).
+
+    The deterministic prunes (exact dupes, never-used stale skills) run without a
+    model; near-duplicate clusters are printed as a merge prompt for the next host
+    session to act on (passthrough). Dry by default; pass --apply to delete.
+    """
+    import argparse
+    import asyncio
+
+    from .context.skill_curator import DEFAULT_DUP_THRESHOLD
+
+    ap = argparse.ArgumentParser(prog="mememo curate-skills")
+    ap.add_argument(
+        "--apply",
+        action="store_true",
+        help="Delete exact-duplicate skills (and never-used stale skills with "
+        "--stale-days). Default is a dry preview.",
+    )
+    ap.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_DUP_THRESHOLD,
+        help=f"Near-duplicate cosine threshold (default {DEFAULT_DUP_THRESHOLD}).",
+    )
+    ap.add_argument(
+        "--stale-days",
+        type=int,
+        default=0,
+        help="Prune skills never injected AND not modified in N days (0 = off).",
+    )
+    ap.add_argument("--json", action="store_true", help="Emit the raw JSON response.")
+    ns = ap.parse_args(args)
+
+    from .server import ensure_initialized
+    from .tools.curate_skills import curate_skills as curate_impl
+    from .tools.schemas import CurateSkillsParams
+
+    async def _run():
+        await ensure_initialized()
+        import mememo.server as srv
+
+        return await curate_impl(
+            CurateSkillsParams(
+                apply=ns.apply, threshold=ns.threshold, stale_unused_days=ns.stale_days
+            ),
+            srv.skill_store,
+            srv.memory_manager,
+        )
+
+    res = asyncio.run(_run())
+
+    if ns.json:
+        print(res.model_dump_json(indent=2))
+        return 0 if res.success else 1
+
+    print(res.message)
+    if res.removed_exact:
+        print(f"  removed (exact dupes): {', '.join(res.removed_exact)}")
+    if res.removed_unused:
+        print(f"  removed (never-used):  {', '.join(res.removed_unused)}")
+    if res.unused_candidates:
+        print(
+            f"  prunable (never-used): {', '.join(res.unused_candidates)} "
+            "[re-run with --apply to delete]"
+        )
+    for i, cluster in enumerate(res.clusters, 1):
+        print(f"  near-dup cluster {i}: " + ", ".join(c["name"] for c in cluster))
+    if res.passthrough and res.passthrough_prompt:
+        print("\n--- merge prompt (hand to a host model / next session) ---")
+        print(res.passthrough_prompt)
+    return 0 if res.success else 1
+
+
 _SUBCOMMANDS = {
     "install-git-hooks": _cmd_install_git_hooks,
     "serve": _cmd_serve,
     "index": _cmd_index,
     "diagram": _cmd_diagram,
     "render": _cmd_render,
+    "curate-skills": _cmd_curate_skills,
     "migrate-worktrees": _cmd_migrate_worktrees,
     "merge-branch": _cmd_merge_branch,
     "sync-commits": _cmd_sync_commits,
@@ -496,6 +571,7 @@ def main() -> None:
                 "index",
                 "diagram",
                 "render",
+                "curate-skills",
                 "install-git-hooks",
                 "migrate-worktrees",
                 "merge-branch",
@@ -533,6 +609,7 @@ def _subcommand_help(name: str) -> str:
         "index": "Index a repo into mememo (the explicit first-index); --watch to keep it fresh",
         "diagram": "Generate a class/call/module diagram and open it in the browser",
         "render": "Convert a Mermaid .mmd file into a double-clickable .html",
+        "curate-skills": "Consolidate distilled skills (dedup + prune never-used); cron-friendly",
         "install-git-hooks": "Install opt-in post-merge / post-commit / pre-tool hooks",
         "migrate-worktrees": "Re-key legacy per-worktree repo_ids onto the canonical one",
         "merge-branch": "Shim over merge_branch MCP tool (called by post-merge hook)",
