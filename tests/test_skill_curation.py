@@ -169,3 +169,94 @@ async def test_create_no_nudge_when_unique(mm, tmp_path) -> None:
         mm,
     )
     assert resp.success and "similar to existing skill" not in resp.message
+
+
+def _age_skill(tmp_path, name, days=40):
+    import os
+    import time
+
+    old = time.time() - days * 86400
+    os.utime(tmp_path / "skills" / f"{name}.yaml", (old, old))
+
+
+async def test_curate_previews_unused_without_deleting(mm, tmp_path) -> None:
+    ss = SkillStore(base_dir=tmp_path)
+    await _create(mm, ss, "creds", "rotate the database credentials quarterly")
+    await _create(mm, ss, "diagram", "render the mermaid diagram in the browser tab")
+    _age_skill(tmp_path, "creds")
+    _age_skill(tmp_path, "diagram")
+
+    res = await curate_skills(CurateSkillsParams(apply=False, stale_unused_days=30), ss, mm)
+    assert res.success
+    assert set(res.unused_candidates) == {"creds", "diagram"}
+    assert res.removed_unused == []  # dry run never deletes
+    assert {s.name for s in ss.list_skills()} == {"creds", "diagram"}
+
+
+async def test_curate_apply_prunes_never_used_stale(mm, tmp_path) -> None:
+    ss = SkillStore(base_dir=tmp_path)
+    await _create(mm, ss, "keepme", "rotate the database credentials quarterly")
+    await _create(mm, ss, "stale1", "configure pytest fixtures for async suites")
+    await _create(mm, ss, "stale2", "render the mermaid diagram in the browser tab")
+    ss.record_use(["keepme"])  # used → spared regardless of age
+    for n in ("keepme", "stale1", "stale2"):
+        _age_skill(tmp_path, n)
+
+    res = await curate_skills(CurateSkillsParams(apply=True, stale_unused_days=30), ss, mm)
+    assert res.success
+    assert set(res.removed_unused) == {"stale1", "stale2"}
+    assert {s.name for s in ss.list_skills()} == {"keepme"}
+    # the pruned skills' memory mirrors are reaped too
+    assert not mm.storage_manager.get_memory_ids_by_tag(f"{SKILL_TAG_PREFIX}stale1")
+    assert not mm.storage_manager.get_memory_ids_by_tag(f"{SKILL_TAG_PREFIX}stale2")
+
+
+async def test_curate_apply_spares_recent_unused(mm, tmp_path) -> None:
+    ss = SkillStore(base_dir=tmp_path)
+    await _create(mm, ss, "newish", "rotate the database credentials quarterly")
+    await _create(mm, ss, "other", "configure pytest fixtures for async suites")
+    # No aging → both are fresh, so the age gate spares them even though unused.
+    res = await curate_skills(CurateSkillsParams(apply=True, stale_unused_days=30), ss, mm)
+    assert res.removed_unused == []
+    assert {s.name for s in ss.list_skills()} == {"newish", "other"}
+
+
+async def test_curate_exact_dupe_keeps_most_used_copy(mm, tmp_path) -> None:
+    ss = SkillStore(base_dir=tmp_path)
+    prompt = "deploy by tagging the release and pushing the tag"
+    await _create(mm, ss, "highprio", prompt)
+    ss.create_skill(name="highprio", intent="coding", prompt=prompt, priority=10)
+    await _create(mm, ss, "used", prompt)
+    ss.record_use(["used"])  # lower priority but actually used → must be the survivor
+
+    res = await curate_skills(CurateSkillsParams(apply=True), ss, mm)
+    assert res.removed_exact == ["highprio"]
+    assert {s.name for s in ss.list_skills()} == {"used"}
+
+
+async def test_curate_combined_prune_spares_the_used_copy(mm, tmp_path) -> None:
+    # Regression: a higher-priority but never-used duplicate must not win exact-dedup
+    # and then get stale-pruned, which would delete the only copy that was being used.
+    ss = SkillStore(base_dir=tmp_path)
+    prompt = "rotate the production database credentials every quarter"
+    await _create(mm, ss, "dupeunused", prompt)
+    ss.create_skill(name="dupeunused", intent="coding", prompt=prompt, priority=10)
+    await _create(mm, ss, "usedcopy", prompt)
+    ss.record_use(["usedcopy"])
+    _age_skill(tmp_path, "dupeunused")
+    _age_skill(tmp_path, "usedcopy")
+
+    res = await curate_skills(CurateSkillsParams(apply=True, stale_unused_days=30), ss, mm)
+    assert res.removed_exact == ["dupeunused"]
+    assert res.removed_unused == []  # the surviving copy is used → not stale-pruned
+    assert {s.name for s in ss.list_skills()} == {"usedcopy"}
+
+
+async def test_manage_skill_list_reports_usage_count(mm, tmp_path) -> None:
+    ss = SkillStore(base_dir=tmp_path)
+    await _create(mm, ss, "tracked", "deploy by tagging a release")
+    ss.record_use(["tracked"])
+    ss.record_use(["tracked"])
+    resp = await manage_skill(ManageSkillParams(action="list"), ss, mm)
+    row = next(s for s in resp.skills if s["name"] == "tracked")
+    assert row["usage_count"] == 2

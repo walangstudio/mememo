@@ -5,9 +5,13 @@ Skills are reusable prompt templates stored as YAML files, selected
 by intent classification and injected within a configurable token budget.
 """
 
+import json
 import logging
 import os
+import threading
+import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -15,6 +19,12 @@ import yaml
 from ..utils.token_counter import count_tokens
 
 logger = logging.getLogger(__name__)
+
+# Sidecar (NOT *.yaml, so the skill glob never loads it as a skill) holding per-skill
+# usage: {sanitized_name: {"count": int, "last_used": iso8601}}. Kept out of the YAML
+# so a usage bump on every injection doesn't churn the skill files' mtime (which would
+# trigger a needless reload storm).
+_USAGE_FILE = "usage.json"
 
 
 @dataclass
@@ -153,7 +163,113 @@ class SkillStore:
         path = self._skills_dir / f"{safe_name}.yaml"
         if path.exists():
             os.remove(path)
+            self._purge_usage(safe_name)
             self._skills = None  # force reload
             logger.info("Deleted skill '%s'", name)
             return True
         return False
+
+    # ----- usage tracking -------------------------------------------------
+    # A skill's value is whether it ever gets injected. Tracking that lets the
+    # curator prune skills that were distilled but never matched anything.
+
+    def _usage_path(self) -> Path:
+        return self._skills_dir / _USAGE_FILE
+
+    def _load_usage(self) -> dict:
+        path = self._usage_path()
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (json.JSONDecodeError, OSError) as e:
+            logger.debug("usage load failed (%s); treating as empty", e)
+            return {}
+
+    def _save_usage(self, usage: dict) -> None:
+        path = self._usage_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Unique temp per writer (pid+thread): the daemon serves inject hooks on a
+        # ThreadingHTTPServer, so a shared temp name could let two writers corrupt
+        # each other's temp before the atomic replace. A lost update (last replace
+        # wins) is fine for a heuristic counter; a torn file is not.
+        tmp = path.with_name(f"usage.{os.getpid()}.{threading.get_ident()}.json.tmp")
+        tmp.write_text(json.dumps(usage), encoding="utf-8")
+        tmp.replace(path)  # atomic within a volume on POSIX and Windows
+
+    def record_use(self, names: list[str]) -> None:
+        """Increment usage_count + set last_used for each injected skill.
+
+        Best-effort: a usage write must never break injection, so all failures are
+        swallowed. Keys are canonicalized via ``sanitize_name`` so record_use,
+        ``get_usage``, and ``stale_unused_skills`` always agree on the key.
+        """
+        keys: list[str] = []
+        for n in names:
+            if not n:
+                continue
+            try:
+                keys.append(self.sanitize_name(n))
+            except ValueError:
+                continue
+        if not keys:
+            return
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            usage = self._load_usage()
+            for key in keys:
+                entry = usage.get(key) or {"count": 0, "last_used": None}
+                entry["count"] = int(entry.get("count", 0)) + 1
+                entry["last_used"] = now
+                usage[key] = entry
+            self._save_usage(usage)
+        except Exception as e:  # never let usage accounting break the inject hook
+            logger.debug("record_use failed: %s", e)
+
+    def get_usage(self, name: str) -> dict:
+        """Return ``{'count': int, 'last_used': iso|None}`` for a skill (zeros if unseen)."""
+        safe = self._sanitize_name(name)
+        entry = self._load_usage().get(safe)
+        if not entry:
+            return {"count": 0, "last_used": None}
+        return {"count": int(entry.get("count", 0)), "last_used": entry.get("last_used")}
+
+    def usage_map(self) -> dict:
+        """All recorded usage counts, keyed by sanitized name (one read)."""
+        return self._load_usage()
+
+    def stale_unused_skills(self, *, stale_days: float, _now: float | None = None) -> list[str]:
+        """Names of skills never injected (count==0) AND not modified in ``stale_days`` days.
+
+        A freshly distilled skill has count==0 until it first matches, so the age
+        gate (skill-file mtime) keeps a brand-new skill from being pruned before it
+        has had a chance to be used. ``_now`` overrides the clock for tests.
+        """
+        if stale_days <= 0:
+            return []
+        now = _now if _now is not None else time.time()
+        usage = self._load_usage()
+        out: list[str] = []
+        for skill in self._load_skills():
+            try:
+                key = self.sanitize_name(skill.name)
+            except ValueError:
+                continue
+            if int((usage.get(key) or {}).get("count", 0)) > 0:
+                continue
+            try:
+                age_days = (now - (self._skills_dir / f"{key}.yaml").stat().st_mtime) / 86400
+            except OSError:
+                continue
+            if age_days >= stale_days:
+                out.append(skill.name)
+        return out
+
+    def _purge_usage(self, safe_name: str) -> None:
+        try:
+            usage = self._load_usage()
+            if usage.pop(safe_name, None) is not None:
+                self._save_usage(usage)
+        except Exception as e:
+            logger.debug("usage purge failed for '%s': %s", safe_name, e)

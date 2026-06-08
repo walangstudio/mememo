@@ -45,6 +45,11 @@ async def _prune_exact_dupes(
     from .manage_skill import manage_skill
     from .schemas import ManageSkillParams
 
+    usage = skill_store.usage_map()
+
+    def _uses(s: Skill) -> int:
+        return int((usage.get(s.name) or {}).get("count", 0))
+
     by_prompt: dict[str, list[Skill]] = {}
     for s in skills:
         by_prompt.setdefault(s.prompt.strip(), []).append(s)
@@ -53,9 +58,12 @@ async def _prune_exact_dupes(
     for group in by_prompt.values():
         if len(group) < 2:
             continue
-        # Keep the highest-priority skill; tie → shortest then lexically-first name
-        # so the kept/deleted choice is fully deterministic regardless of FS order.
-        group.sort(key=lambda s: (-s.priority, len(s.name), s.name))
+        # Keep the MOST-USED copy first (then highest-priority, then shortest /
+        # lexically-first name for determinism). Keeping the used copy matters when
+        # stale-unused pruning runs in the same pass: a higher-priority but never-used
+        # duplicate would otherwise win here and then get stale-pruned, deleting the
+        # only copy of a skill that was actually being used.
+        group.sort(key=lambda s: (-_uses(s), -s.priority, len(s.name), s.name))
         for dup in group[1:]:
             resp = await manage_skill(
                 ManageSkillParams(action="delete", name=dup.name), skill_store, memory_manager
@@ -63,6 +71,36 @@ async def _prune_exact_dupes(
             if resp.success:  # only report what this pass actually deleted (a race may have)
                 removed.append(dup.name)
     return removed
+
+
+async def _prune_stale_unused(
+    skill_store: SkillStore, memory_manager: MemoryManager, stale_days: int
+) -> list[str]:
+    """Delete skills never injected and older than ``stale_days`` (reaps their mirrors)."""
+    from .manage_skill import manage_skill
+    from .schemas import ManageSkillParams
+
+    removed: list[str] = []
+    for name in skill_store.stale_unused_skills(stale_days=stale_days):
+        resp = await manage_skill(
+            ManageSkillParams(action="delete", name=name), skill_store, memory_manager
+        )
+        if resp.success:
+            removed.append(name)
+    return removed
+
+
+def _prune_summary(
+    removed_exact: list[str], removed_unused: list[str], candidates: list[str]
+) -> str:
+    bits = []
+    if removed_exact:
+        bits.append(f"removed {len(removed_exact)} exact dupe(s)")
+    if removed_unused:
+        bits.append(f"removed {len(removed_unused)} never-used skill(s)")
+    if candidates:
+        bits.append(f"{len(candidates)} never-used skill(s) prunable (preview)")
+    return "; ".join(bits)
 
 
 def _build_merge_prompt(skills: list[Skill], clusters: list[list[int]]) -> str:
@@ -108,30 +146,46 @@ async def curate_skills(
         )
 
     removed_exact: list[str] = []
+    removed_unused: list[str] = []
+    unused_candidates: list[str] = []
+
+    if params.stale_unused_days > 0 and not params.apply:
+        # Dry preview only — apply path computes + deletes the live set below.
+        unused_candidates = skill_store.stale_unused_skills(stale_days=params.stale_unused_days)
+
     if params.apply:
         removed_exact = await _prune_exact_dupes(skills, skill_store, memory_manager)
-        if removed_exact:
+        if params.stale_unused_days > 0:
+            removed_unused = await _prune_stale_unused(
+                skill_store, memory_manager, params.stale_unused_days
+            )
+        if removed_exact or removed_unused:
             skills = skill_store.list_skills()  # reload after deletions
-            if len(skills) < 2:
-                return CurateSkillsResponse(
-                    success=True,
-                    removed_exact=removed_exact,
-                    message=f"Removed {len(removed_exact)} exact-duplicate skill(s); "
-                    f"{len(skills)} left — no near-duplicates to merge.",
-                )
+
+    prune_note = _prune_summary(removed_exact, removed_unused, unused_candidates)
+
+    if len(skills) < 2:
+        tail = f"{len(skills)} skill(s) left — no near-duplicates to merge."
+        return CurateSkillsResponse(
+            success=True,
+            removed_exact=removed_exact,
+            removed_unused=removed_unused,
+            unused_candidates=unused_candidates,
+            message=f"{prune_note}; {tail}" if prune_note else tail,
+        )
 
     from ..context.skill_curator import cluster_duplicates
 
     vectors = memory_manager.embedder.embed([_skill_text(s) for s in skills])
     clusters = cluster_duplicates(vectors, params.threshold)
     if not clusters:
+        head = f"No near-duplicate skills above similarity {params.threshold:.2f}"
         return CurateSkillsResponse(
             success=True,
             removed_exact=removed_exact,
-            message=(
-                f"No near-duplicate skills above similarity {params.threshold:.2f}"
-                + (f" (removed {len(removed_exact)} exact dupe(s))." if removed_exact else ".")
-            ),
+            removed_unused=removed_unused,
+            unused_candidates=unused_candidates,
+            message=f"{head} ({prune_note})." if prune_note else f"{head}.",
         )
 
     cluster_dicts = [
@@ -146,11 +200,13 @@ async def curate_skills(
         success=True,
         clusters=cluster_dicts,
         removed_exact=removed_exact,
+        removed_unused=removed_unused,
+        unused_candidates=unused_candidates,
         passthrough=True,
         passthrough_prompt=_build_merge_prompt(skills, clusters),
         message=(
             f"Found {len(clusters)} near-duplicate cluster(s) covering {n_dupes} skills. "
             "Merge each via the host model using passthrough_prompt, then manage_skill."
-            + (f" Removed {len(removed_exact)} exact dupe(s)." if removed_exact else "")
+            + (f" ({prune_note})." if prune_note else "")
         ),
     )

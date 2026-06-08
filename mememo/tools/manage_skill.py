@@ -126,6 +126,7 @@ async def manage_skill(
 ) -> ManageSkillResponse:
     if params.action == "list":
         skills = skill_store.list_skills()
+        usage = skill_store.usage_map()  # one read; attach injection counts for visibility
         return ManageSkillResponse(
             success=True,
             message=f"Found {len(skills)} skills",
@@ -136,6 +137,7 @@ async def manage_skill(
                     "priority": s.priority,
                     "token_count": s.token_count,
                     "tags": s.tags,
+                    "usage_count": int((usage.get(s.name) or {}).get("count", 0)),
                 }
                 for s in skills
             ],

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.31.0] - 2026-06-08
+
+### Added
+- **Skill usage tracking -> prune-never-used (self-learning loop, Phase C cont.).** Every
+  time a skill is injected (the inject hook's `_smart_context_build`), its `usage_count`
+  and `last_used` are recorded in a `skills/usage.json` sidecar — kept out of the YAML so
+  a bump doesn't churn skill-file mtimes (which would trigger reload storms). `curate_skills`
+  gains `stale_unused_days`: skills never injected AND not modified in that many days are
+  pruned with `apply=True` (`removed_unused`) or previewed with `apply=False`
+  (`unused_candidates`); 0 disables it (default). The mtime age-gate spares freshly-distilled
+  skills that haven't had a chance to match yet. `manage_skill list` now reports each skill's
+  `usage_count`. Deleting a skill purges its usage entry.
+
 ## [0.30.0] - 2026-06-08
 
 ### Added
