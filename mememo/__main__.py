@@ -4,6 +4,7 @@ Usage:
     python -m mememo                        # Run MCP server
     python -m mememo --version              # Show version
     python -m mememo capture --hook         # Stop hook: auto-capture
+    python -m mememo distill --hook         # Stop hook (sync): distill a reusable skill
     python -m mememo inject --hook          # UserPromptSubmit: inject context
     python -m mememo pre-tool --hook        # PreToolUse: related-memory block
     python -m mememo session-start --hook   # SessionStart: recall memories
@@ -440,6 +441,13 @@ def main() -> None:
     # of import cost and Claude Code invokes these per turn.
     if len(args) >= 2 and args[1] == "--hook":
         hook_name = args[0]
+        if hook_name == "distill":
+            # Sync Stop hook: cheap (config + transcript scan only), no daemon —
+            # decision:block only works from a synchronous hook.
+            from .cli import run_distill
+
+            run_distill()
+            return
         if hook_name in ("capture", "inject", "pre-tool", "session-start"):
             # Try the sidecar in the running MCP server first (sub-100ms vs ~3s
             # cold). Falls through to the slow path on any daemon trouble.
@@ -495,6 +503,7 @@ def main() -> None:
                 "import-md",
                 "reindex-identity",
                 "capture --hook",
+                "distill --hook",
                 "inject --hook",
                 "pre-tool --hook",
                 "session-start --hook",
@@ -531,6 +540,7 @@ def _subcommand_help(name: str) -> str:
         "import-md": "Import .md files from a directory as memories",
         "reindex-identity": "Re-derive repo_ids from git remote and move FAISS dirs",
         "capture --hook": "Stop-hook fast path: auto-capture session transcript",
+        "distill --hook": "Stop-hook (sync): distill a reusable skill on complex sessions",
         "inject --hook": "UserPromptSubmit fast path: inject recall context",
         "pre-tool --hook": "PreToolUse fast path: emit related-memory block",
         "session-start --hook": "SessionStart fast path: recall memories at session open",

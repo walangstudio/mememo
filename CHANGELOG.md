@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.28.0] - 2026-06-07
+
+### Added
+- **Autonomous skill distillation (self-learning loop, Phase A)** — opt-in
+  (`MEMEMO_HOOK_SKILL_DISTILL=true`). When a session ends after doing real work
+  (`>= MEMEMO_HOOK_SKILL_DISTILL_MIN_TOOLS` tool calls, default 5), a new **sync**
+  Stop hook (`mememo distill --hook`) blocks the stop and asks the same-session
+  model to reflect and, if the session demonstrated a reusable technique, save ONE
+  skill via the existing `manage_skill` tool. The skill lands in `SkillStore` and
+  is injected into future sessions by intent — closing the capture→distill→recall
+  loop (Hermes-style). Passthrough-native (the host model distills; no LLM/API
+  call). It is a **separate synchronous** hook (not the async `capture` hook,
+  whose stdout Claude Code discards, so `decision: block` would never fire there);
+  the gate is cheap (config + transcript scan, no model load), so running it
+  synchronously adds negligible latency. Guarded by `stop_hook_active` so it never
+  loops; off by default because blocking the stop adds a turn. New pure core in
+  `mememo/context/skill_distiller.py` (`count_tool_uses` / `should_distill` /
+  `build_distillation_reason`); enable by adding `hooks/distill.sh` as a sync Stop
+  hook (see `hooks/hooks.json`).
+
 ## [0.27.0] - 2026-06-07
 
 ### Added

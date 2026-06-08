@@ -298,6 +298,16 @@ export MEMEMO_HOOK_INJECT_TOKEN_BUDGET_MAX="1200"
 export MEMEMO_SKILL_INJECTION_ENABLED="true"
 export MEMEMO_SKILL_TOKEN_BUDGET="200"
 
+# Autonomous skill distillation (self-learning loop, default: OFF).
+# When on, a separate SYNC Stop hook (hooks/distill.sh -> `mememo distill --hook`)
+# asks the model to save a reusable skill after a session that used >= MIN_TOOLS
+# tool calls. Intrusive (adds a turn) so opt-in; requires registering the sync
+# Stop hook (see hooks/hooks.json — it must NOT be async or decision:block is
+# ignored). SCAN_LINES is how many transcript tail lines are scanned to count tools.
+export MEMEMO_HOOK_SKILL_DISTILL="false"
+export MEMEMO_HOOK_SKILL_DISTILL_MIN_TOOLS="5"
+export MEMEMO_HOOK_SKILL_DISTILL_SCAN_LINES="5000"
+
 # Response compression before capture (default: true)
 export MEMEMO_RESPONSE_COMPRESSION_ENABLED="true"
 

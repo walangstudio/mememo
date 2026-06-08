@@ -7,6 +7,10 @@
             "type": "command",
             "command": "bash /path/to/mememo/hooks/stop.sh",
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "bash /path/to/mememo/hooks/distill.sh"
           }
         ]
       }

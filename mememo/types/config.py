@@ -176,6 +176,27 @@ class HookConfig(BaseModel):
     response_compression_enabled: bool = Field(
         default=True, description="Enable transcript compression before capture"
     )
+    # Autonomous skill distillation (Hermes-style closed loop). Opt-in: when on,
+    # the Stop hook blocks a complex session's end and asks the model to save a
+    # reusable skill via manage_skill. Off by default because blocking the stop
+    # adds a turn to every qualifying session.
+    skill_distill_enabled: bool = Field(
+        default=False,
+        description="On session end, ask the model to distill a reusable skill if the "
+        "session used >= skill_distill_min_tools tools (intrusive — adds a turn).",
+    )
+    skill_distill_min_tools: int = Field(
+        default=5,
+        gt=0,
+        description="Tool-call threshold for a session to qualify for skill distillation.",
+    )
+    skill_distill_scan_lines: int = Field(
+        default=5000,
+        gt=0,
+        description="Transcript tail lines the distill hook scans to count tool calls "
+        "(generous so a long session's tool calls aren't missed — unlike the smaller "
+        "capture window).",
+    )
     capture_dedup_similarity: float = Field(
         default=0.85,
         ge=0.0,
@@ -297,6 +318,12 @@ class Config(BaseModel):
                 == "true",
                 capture_dedup_similarity=float(
                     os.getenv("MEMEMO_CAPTURE_DEDUP_SIMILARITY", "0.85")
+                ),
+                skill_distill_enabled=os.getenv("MEMEMO_HOOK_SKILL_DISTILL", "false").lower()
+                == "true",
+                skill_distill_min_tools=int(os.getenv("MEMEMO_HOOK_SKILL_DISTILL_MIN_TOOLS", "5")),
+                skill_distill_scan_lines=int(
+                    os.getenv("MEMEMO_HOOK_SKILL_DISTILL_SCAN_LINES", "5000")
                 ),
                 session_start_enabled=os.getenv("MEMEMO_HOOK_SESSION_START_ENABLED", "true").lower()
                 == "true",

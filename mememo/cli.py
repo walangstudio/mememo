@@ -269,6 +269,52 @@ async def cmd_capture() -> None:
     print(json.dumps({"continue": True}))
 
 
+def cmd_distill() -> None:
+    """Sync Stop hook: a cheap gate that, on a complex session, blocks the stop and
+    asks the same-session model to distill a reusable skill via ``manage_skill``.
+
+    Kept separate from ``capture`` (which is async — its stdout is discarded by
+    Claude Code) because ``decision: block`` only takes effect from a SYNCHRONOUS
+    hook. This path does no model load or daemon call: just a config read and a
+    transcript scan, so running it synchronously adds negligible latency.
+    """
+    from .context.skill_distiller import (
+        build_distillation_reason,
+        count_tool_uses,
+        should_distill,
+    )
+    from .types.config import MemoConfig
+
+    raw = sys.stdin.read()
+    try:
+        hook_data = json.loads(raw)
+    except json.JSONDecodeError:
+        hook_data = {}
+
+    cfg = MemoConfig.from_env()
+    if not cfg.hook.skill_distill_enabled:
+        print(json.dumps({"continue": True}))
+        return
+
+    transcript_path = hook_data.get("transcript_path", "")
+    n_tools = (
+        count_tool_uses(transcript_path, cfg.hook.skill_distill_scan_lines)
+        if transcript_path
+        else 0
+    )
+    if should_distill(
+        enabled=cfg.hook.skill_distill_enabled,
+        stop_hook_active=bool(hook_data.get("stop_hook_active", False)),
+        num_tool_uses=n_tools,
+        min_tools=cfg.hook.skill_distill_min_tools,
+    ):
+        print(f"mememo distill: distilling skill ({n_tools} tools)", file=sys.stderr)
+        print(json.dumps({"decision": "block", "reason": build_distillation_reason(n_tools)}))
+        return
+
+    print(json.dumps({"continue": True}))
+
+
 async def cmd_inject() -> None:
     """UserPromptSubmit hook: inject relevant memories as system context."""
     from .server import ensure_initialized
@@ -474,6 +520,10 @@ def run_pre_tool():
 
 def run_capture():
     asyncio.run(cmd_capture())
+
+
+def run_distill():
+    cmd_distill()  # sync: no event loop needed (no awaits)
 
 
 def run_inject():
