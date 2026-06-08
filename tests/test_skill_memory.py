@@ -117,6 +117,20 @@ async def test_skill_delete_spares_lookalike_user_memory(mm, tmp_path) -> None:
     assert remaining == [user_mem.id]  # user memory survives; only the skill mirror was removed
 
 
+async def test_delete_reaps_mirror_for_unsanitized_name(mm, tmp_path) -> None:
+    # The YAML store sanitizes names (e.g. "git ops" -> "gitops"); the mirror is
+    # tagged with the sanitized name. Deleting with the raw name must still match.
+    ss = SkillStore(base_dir=tmp_path)
+    await manage_skill(
+        ManageSkillParams(action="create", name="git ops", intent="coding", prompt="how to"), ss, mm
+    )
+    safe = SkillStore.sanitize_name("git ops")
+    assert mm.storage_manager.get_memory_ids_by_tag(f"{SKILL_TAG_PREFIX}{safe}")
+
+    await manage_skill(ManageSkillParams(action="delete", name="git ops"), ss, mm)
+    assert not mm.storage_manager.get_memory_ids_by_tag(f"{SKILL_TAG_PREFIX}{safe}")
+
+
 async def test_manage_skill_without_memory_manager_is_noop_mirror(mm, tmp_path) -> None:
     # Back-compat: callers that don't pass a memory_manager still work (no mirror).
     ss = SkillStore(base_dir=tmp_path)

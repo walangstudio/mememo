@@ -35,6 +35,20 @@ class GitContext(BaseModel):
     repo: RepoContext
     branch: BranchContext
 
+    @classmethod
+    def for_lane(cls, repo_id: str, branch: str = "main") -> "GitContext":
+        """Minimal context that targets a specific (repo_id, branch) lane directly.
+
+        Lane-scoped storage ops (load/delete/search) only read ``repo.id`` and
+        ``branch.name``; the other fields are unused placeholders. Use this instead
+        of detecting git context when you already know the lane (e.g. the GLOBAL
+        lane for cross-project memories).
+        """
+        return cls(
+            repo=RepoContext(id=repo_id, name="", path="", remote_url=None),
+            branch=BranchContext(name=branch, commit_hash=""),
+        )
+
 
 # Memory content types
 MemoryContentType = Literal[

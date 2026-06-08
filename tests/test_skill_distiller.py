@@ -87,14 +87,24 @@ def test_count_tool_uses_skips_malformed_and_missing(tmp_path: Path) -> None:
 
 
 def test_should_distill_matrix() -> None:
-    assert should_distill(enabled=True, stop_hook_active=False, num_tool_uses=5, min_tools=5)
-    assert should_distill(enabled=True, stop_hook_active=False, num_tool_uses=9, min_tools=5)
+    assert should_distill(stop_hook_active=False, num_tool_uses=5, min_tools=5)
+    assert should_distill(stop_hook_active=False, num_tool_uses=9, min_tools=5)
     # below threshold
-    assert not should_distill(enabled=True, stop_hook_active=False, num_tool_uses=4, min_tools=5)
-    # disabled
-    assert not should_distill(enabled=False, stop_hook_active=False, num_tool_uses=9, min_tools=5)
+    assert not should_distill(stop_hook_active=False, num_tool_uses=4, min_tools=5)
     # already continuing from a stop hook -> never re-distill (loop guard)
-    assert not should_distill(enabled=True, stop_hook_active=True, num_tool_uses=9, min_tools=5)
+    assert not should_distill(stop_hook_active=True, num_tool_uses=9, min_tools=5)
+
+
+def test_distillation_reason_matches_manage_skill_schema() -> None:
+    """Guard against drift: the fields the reason tells the model to send must
+    exist on ManageSkillParams (so the instruction stays valid if the schema moves)."""
+    from mememo.tools.schemas import ManageSkillParams
+
+    reason = build_distillation_reason(5)
+    fields = set(ManageSkillParams.model_fields)
+    for f in ("name", "intent", "prompt", "tags"):
+        assert f in fields, f"reason names a field {f!r} that ManageSkillParams lacks"
+        assert f"`{f}`" in reason
 
 
 def test_build_distillation_reason_contract() -> None:

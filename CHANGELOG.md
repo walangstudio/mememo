@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.29.1] - 2026-06-07
+
+### Fixed
+- **Skill-mirror orphaned on delete for names needing sanitization.** The YAML
+  store stores a skill under a sanitized name (`git ops` → `gitops`) and the mirror
+  is tagged with it, but the delete path queried the raw name and never matched —
+  leaving the `skill` memory behind. Delete now sanitizes via the new public
+  `SkillStore.sanitize_name`.
+- **`count_tool_uses` no longer reads the whole transcript into memory.** It streams
+  the tail via `deque(maxlen=...)`, so a large session can't spike latency/memory on
+  the synchronous distill hook.
+
+### Changed
+- Cleanup from a code-review pass over the Phase A/B self-learning code: dropped the
+  redundant `enabled` arg from `should_distill` (the caller already gates), isolated
+  the mirror-prune error from the create error (precise logging), added
+  `GitContext.for_lane()` to document the lane-sentinel context (used by
+  `delete_memory`), and a schema-drift test pinning the distillation prompt to
+  `ManageSkillParams`.
+
 ## [0.29.0] - 2026-06-07
 
 ### Added

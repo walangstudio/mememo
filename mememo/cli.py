@@ -303,7 +303,6 @@ def cmd_distill() -> None:
         else 0
     )
     if should_distill(
-        enabled=cfg.hook.skill_distill_enabled,
         stop_hook_active=bool(hook_data.get("stop_hook_active", False)),
         num_tool_uses=n_tools,
         min_tools=cfg.hook.skill_distill_min_tools,

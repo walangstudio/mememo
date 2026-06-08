@@ -109,11 +109,19 @@ class SkillStore:
         return None
 
     @staticmethod
-    def _sanitize_name(name: str) -> str:
+    def sanitize_name(name: str) -> str:
+        """Canonical on-disk skill name (alnum/-/_). Raises on an empty result.
+
+        Public so callers that key off the skill name (e.g. the manage_skill memory
+        mirror) derive the same canonical name the YAML file is stored under.
+        """
         safe = "".join(c for c in name if c.isalnum() or c in "-_")
         if not safe:
             raise ValueError(f"Invalid skill name: {name!r}")
         return safe
+
+    # Back-compat alias for the previously-private name.
+    _sanitize_name = sanitize_name
 
     def create_skill(
         self, name: str, intent: str, prompt: str, priority: int = 0, tags: list[str] | None = None

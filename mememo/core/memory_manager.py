@@ -544,12 +544,9 @@ class MemoryManager:
                 a lane other than the ambient one (storage delete is lane-scoped).
         """
         if repo_id:
-            from ..types.memory import BranchContext, GitContext, RepoContext
+            from ..types.memory import GitContext
 
-            context = GitContext(
-                repo=RepoContext(id=repo_id, name="", path="", remote_url=None),
-                branch=BranchContext(name=branch or "main", commit_hash=""),
-            )
+            context = GitContext.for_lane(repo_id, branch or "main")
         else:
             context = await self.git_manager.detect_context(cwd)
         await self.storage_manager.delete_memory(memory_id, context)
