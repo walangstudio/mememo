@@ -1,4 +1,11 @@
-"""manage_skill tool - CRUD operations for skill prompt templates."""
+"""manage_skill tool - CRUD operations for skill prompt templates.
+
+Skills live in two places, kept in sync here: the ``SkillStore`` (YAML, injected
+by intent) and the memory store (a ``skill``-typed GLOBAL memory, surfaced by
+semantic/hybrid recall). The mirror makes a distilled skill recallable by
+*relevance*, not just by its coarse intent bucket. Memory mirroring is
+best-effort — a memory-store failure never blocks the primary SkillStore op.
+"""
 
 import logging
 from typing import TYPE_CHECKING
@@ -7,11 +14,74 @@ from .schemas import ManageSkillParams, ManageSkillResponse
 
 if TYPE_CHECKING:
     from ..context.skill_store import SkillStore
+    from ..core.memory_manager import MemoryManager
 
 logger = logging.getLogger(__name__)
 
+# Reserved tag that links a skill-mirror memory back to its SkillStore name (for
+# upsert + delete sync). Namespaced + paired with a content_type='skill' / GLOBAL
+# scope so it can never match a user-applied tag. The mirror also carries the
+# intent tag for filtering.
+SKILL_TAG_PREFIX = "mememo-skill:"
 
-async def manage_skill(params: ManageSkillParams, skill_store: "SkillStore") -> ManageSkillResponse:
+
+def _skill_mirror_ids(memory_manager: "MemoryManager", name: str) -> list[str]:
+    """Ids of the GLOBAL ``skill``-typed mirror memories for skill ``name``."""
+    from ..core.identity import GLOBAL_REPO_ID
+
+    return memory_manager.storage_manager.get_memory_ids_by_tag(
+        f"{SKILL_TAG_PREFIX}{name}",
+        repo_id=GLOBAL_REPO_ID,
+        branch="main",
+        content_type="skill",
+    )
+
+
+async def _delete_skill_memories(
+    memory_manager: "MemoryManager", name: str, *, exclude: str | None = None
+) -> int:
+    """Delete the skill-mirror memories for ``name`` (optionally keeping ``exclude``)."""
+    from ..core.identity import GLOBAL_REPO_ID
+
+    deleted = 0
+    for mid in _skill_mirror_ids(memory_manager, name):
+        if mid == exclude:
+            continue
+        await memory_manager.delete_memory(mid, repo_id=GLOBAL_REPO_ID, branch="main")
+        deleted += 1
+    return deleted
+
+
+async def _mirror_skill_memory(
+    memory_manager: "MemoryManager", name: str, intent: str, prompt: str, tags: list[str] | None
+) -> None:
+    """Upsert a skill as a GLOBAL ``skill``-typed memory so recall can find it.
+
+    Create-then-prune (not delete-then-create): the new mirror is written first,
+    then older mirrors for the same name are removed. If create_memory raises
+    (e.g. the secret scanner rejects the content), nothing was deleted — the
+    previous mirror stays, so a failed upsert never orphans the mirror.
+    """
+    from ..types.memory import CreateMemoryParams, MemoryRelationships
+
+    mirror_tags = [f"{SKILL_TAG_PREFIX}{name}", intent, *(tags or [])]
+    memory = await memory_manager.create_memory(
+        CreateMemoryParams(
+            content=f"{name}: {prompt}",
+            type="skill",
+            tags=mirror_tags,
+            relationships=MemoryRelationships(),
+        ),
+        force_global=True,
+    )
+    await _delete_skill_memories(memory_manager, name, exclude=memory.id)
+
+
+async def manage_skill(
+    params: ManageSkillParams,
+    skill_store: "SkillStore",
+    memory_manager: "MemoryManager | None" = None,
+) -> ManageSkillResponse:
     if params.action == "list":
         skills = skill_store.list_skills()
         return ManageSkillResponse(
@@ -62,6 +132,13 @@ async def manage_skill(params: ManageSkillParams, skill_store: "SkillStore") -> 
             priority=params.priority if params.priority is not None else 0,
             tags=params.tags,
         )
+        if memory_manager is not None:
+            try:
+                await _mirror_skill_memory(
+                    memory_manager, skill.name, skill.intent, skill.prompt, skill.tags
+                )
+            except Exception as e:  # mirror is best-effort; SkillStore op already succeeded
+                logger.warning("Skill mirror to memory store failed for '%s': %s", skill.name, e)
         return ManageSkillResponse(
             success=True,
             message=f"Created skill '{skill.name}' ({skill.token_count} tokens)",
@@ -80,6 +157,11 @@ async def manage_skill(params: ManageSkillParams, skill_store: "SkillStore") -> 
         if not params.name:
             return ManageSkillResponse(success=False, message="name is required for delete")
         deleted = skill_store.delete_skill(params.name)
+        if memory_manager is not None:
+            try:
+                await _delete_skill_memories(memory_manager, params.name)
+            except Exception as e:  # best-effort — keep the SkillStore delete result authoritative
+                logger.warning("Skill mirror delete failed for '%s': %s", params.name, e)
         if deleted:
             return ManageSkillResponse(success=True, message=f"Deleted skill '{params.name}'")
         return ManageSkillResponse(success=False, message=f"Skill '{params.name}' not found")

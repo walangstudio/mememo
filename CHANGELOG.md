@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.29.0] - 2026-06-07
+
+### Added
+- **Skills are now a first-class, recallable memory type (self-learning loop,
+  Phase B).** A distilled skill previously surfaced only via its coarse intent
+  bucket (`SkillStore` injection). Now `manage_skill` also mirrors each skill into
+  the memory store as a `skill`-typed memory in the GLOBAL lane, so it surfaces by
+  **semantic/hybrid relevance** in the inject hook, `recall_context`, and
+  session-start recall — not just when the intent classifier happens to match. New
+  `skill` value across `MemoryContentType`, `PERSISTENT_MEMORY_TYPES`,
+  `recall_context` `RECALL_TYPES`, `recall_workspace`, and the markdown import map;
+  `skill` leads every `INTENT_TYPE_PRIORITIES` list (a relevant skill is the most
+  actionable hit). The mirror is best-effort and upsert-on-create (one memory per
+  skill name), kept in sync on delete via a tag lookup.
+
+### Changed
+- `MemoryManager.delete_memory` accepts an explicit `repo_id`/`branch` lane
+  override (needed to delete a GLOBAL-lane memory; storage delete is lane-scoped).
+- New `StorageManager.get_memory_ids_by_tag(tag)` (indexed tag lookup) backing the
+  skill-mirror upsert/delete sync.
+
 ## [0.28.0] - 2026-06-07
 
 ### Added
