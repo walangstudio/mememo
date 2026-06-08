@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from .schemas import ManageSkillParams, ManageSkillResponse
 
 if TYPE_CHECKING:
-    from ..context.skill_store import SkillStore
+    from ..context.skill_store import Skill, SkillStore
     from ..core.memory_manager import MemoryManager
 
 logger = logging.getLogger(__name__)
@@ -86,6 +86,39 @@ async def _mirror_skill_memory(
         logger.warning("Skill mirror prune failed for '%s': %s", safe_name, e)
 
 
+# Above this many skills, skip the create-time dedup nudge — re-embedding the whole
+# library on every create stops being cheap. The periodic curate_skills pass still
+# catches duplicates in a large library.
+_NUDGE_MAX_SKILLS = 500
+
+
+async def _dedup_nudge(
+    skill: "Skill", skill_store: "SkillStore", memory_manager: "MemoryManager"
+) -> str:
+    """A one-line hint if the just-created skill near-duplicates an existing one.
+
+    Non-destructive: it only names the closest match so the host can consolidate
+    (via curate_skills). Best-effort — embedding failure yields no nudge. Uses the
+    same threshold + doc-to-doc similarity the curator clusters on, so a skill
+    flagged here is one curate_skills would later group.
+    """
+    from ..context.skill_curator import DEFAULT_DUP_THRESHOLD, nearest
+
+    others = [s for s in skill_store.list_skills() if s.name != skill.name]
+    if not others or len(others) >= _NUDGE_MAX_SKILLS:
+        return ""
+    texts = [f"{skill.name}: {skill.prompt}"] + [f"{s.name}: {s.prompt}" for s in others]
+    vectors = memory_manager.embedder.embed(texts)
+    hit = nearest(vectors[0], vectors[1:], DEFAULT_DUP_THRESHOLD)
+    if hit is None:
+        return ""
+    idx, score = hit
+    return (
+        f" Note: {score:.0%} similar to existing skill '{others[idx].name}' — "
+        "consider consolidating with curate_skills."
+    )
+
+
 async def manage_skill(
     params: ManageSkillParams,
     skill_store: "SkillStore",
@@ -141,6 +174,7 @@ async def manage_skill(
             priority=params.priority if params.priority is not None else 0,
             tags=params.tags,
         )
+        nudge = ""
         if memory_manager is not None:
             try:
                 await _mirror_skill_memory(
@@ -148,9 +182,13 @@ async def manage_skill(
                 )
             except Exception as e:  # mirror is best-effort; SkillStore op already succeeded
                 logger.warning("Skill mirror to memory store failed for '%s': %s", skill.name, e)
+            try:
+                nudge = await _dedup_nudge(skill, skill_store, memory_manager)
+            except Exception as e:  # nudge is advisory only — never fail the create
+                logger.debug("Skill dedup nudge failed for '%s': %s", skill.name, e)
         return ManageSkillResponse(
             success=True,
-            message=f"Created skill '{skill.name}' ({skill.token_count} tokens)",
+            message=f"Created skill '{skill.name}' ({skill.token_count} tokens){nudge}",
             skills=[
                 {
                     "name": skill.name,
