@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from ..chunking.language_detector import get_index_globs
+from ..context.skill_curator import DEFAULT_DUP_THRESHOLD
 from ..types.memory import (
     Memory,
     MemoryContentType,
@@ -549,6 +550,48 @@ class ManageSkillResponse(BaseModel):
     success: bool = Field(description="Whether the operation was successful")
     message: str = Field(description="Success or error message")
     skills: list[dict] = Field(default_factory=list, description="Skill data")
+
+
+# ============================================================================
+# curate_skills tool
+# ============================================================================
+
+
+class CurateSkillsParams(BaseModel):
+    """Parameters for curate_skills (consolidate near-duplicate distilled skills)."""
+
+    threshold: float = Field(
+        default=DEFAULT_DUP_THRESHOLD,
+        ge=0.0,
+        le=1.0,
+        description="Cosine-similarity threshold above which two skills are near-duplicates.",
+    )
+    apply: bool = Field(
+        default=False,
+        description="When True, deterministically delete EXACT-duplicate skills (identical "
+        "prompt), keeping the highest-priority one. Near-duplicates are always only "
+        "reported for host-assisted merge, never auto-deleted (dry by default).",
+    )
+
+
+class CurateSkillsResponse(BaseModel):
+    """Response from curate_skills."""
+
+    success: bool = Field(description="Whether the curation pass ran")
+    message: str = Field(default="", description="Summary of what was found / done")
+    clusters: list[list[dict]] = Field(
+        default_factory=list,
+        description="Near-duplicate skill clusters (each inner list is one cluster of "
+        "{name, intent, priority}).",
+    )
+    removed_exact: list[str] = Field(
+        default_factory=list,
+        description="Exact-duplicate skill names deleted (only when apply=True).",
+    )
+    # Passthrough: with near-duplicate clusters found, the host model merges each
+    # cluster by completing passthrough_prompt (then calls manage_skill).
+    passthrough: bool = Field(default=False)
+    passthrough_prompt: str = Field(default="")
 
 
 # ============================================================================

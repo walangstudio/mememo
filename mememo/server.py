@@ -78,6 +78,9 @@ from .tools import (
 from .tools import (
     sync_commits as sync_commits_impl,
 )
+from .tools.curate_skills import (
+    curate_skills as curate_skills_impl,
+)
 
 # v0.6 Cypher subset query tool (T035)
 from .tools.cypher_query import (
@@ -151,6 +154,8 @@ from .tools.schemas import (
     CheckMemoryResponse,
     CleanupMemoryParams,
     CleanupMemoryResponse,
+    CurateSkillsParams,
+    CurateSkillsResponse,
     DeleteMemoryParams,
     DeleteMemoryResponse,
     EndSessionParams,
@@ -1007,6 +1012,25 @@ async def manage_skill(params: ManageSkillParams) -> ManageSkillResponse:
     await ensure_initialized()
     _audit_log("manage_skill")
     return await manage_skill_impl(params, skill_store, memory_manager)
+
+
+@mcp.tool()
+async def curate_skills(params: CurateSkillsParams) -> CurateSkillsResponse:
+    """
+    Consolidate the distilled-skill library (Phase C of the self-learning loop).
+
+    As skills are auto-distilled over time, near-duplicates accumulate. This pass:
+    - Clusters near-duplicate skills by embedding similarity and returns a
+      passthrough_prompt for the host model to merge each cluster into one skill
+      (then apply via manage_skill). Near-duplicates are never auto-deleted.
+    - With apply=True, also deletes EXACT-duplicate skills (identical prompt),
+      keeping the highest-priority one.
+
+    Dry by default (apply=False). Run periodically to keep the library lean.
+    """
+    await ensure_initialized()
+    _audit_log("curate_skills")
+    return await curate_skills_impl(params, skill_store, memory_manager)
 
 
 @mcp.tool()

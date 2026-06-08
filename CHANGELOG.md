@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.30.0] - 2026-06-08
+
+### Added
+- **`curate_skills` — consolidate the distilled-skill library (self-learning loop,
+  Phase C).** Autonomous distillation (Phase A) keeps adding skills, so near-duplicates
+  accumulate. The new tool clusters near-duplicate skills by embedding similarity
+  (cosine over the shared embedder, union-find so chains group together) and returns a
+  `passthrough_prompt` for the host model to merge each cluster into one skill, then
+  apply via `manage_skill` — no API key needed. With `apply=True` it also deletes
+  EXACT-duplicate skills (identical prompt), keeping the highest-priority one and reaping
+  its memory mirror. Dry by default; near-duplicates are never auto-deleted. Mirrors
+  Hermes v0.12+'s periodic consolidation; run it on a schedule to keep the library lean.
+- **Create-time dedup nudge.** `manage_skill action=create` now appends a one-line hint
+  when the new skill is ≥86% similar to an existing one (`"… similar to existing skill
+  'X' — consider consolidating with curate_skills"`), so duplicates are flagged at the
+  source. Non-destructive and best-effort; skipped above 500 skills to keep create cheap.
+
 ## [0.29.1] - 2026-06-07
 
 ### Fixed
