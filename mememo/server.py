@@ -520,20 +520,10 @@ def _audit_log(tool: str) -> None:
 
 @mcp.tool()
 async def store_memory(params: StoreMemoryParams) -> StoreMemoryResponse:
-    """
-    Store code snippets, context, or summaries in local memory.
+    """Store a code snippet, context, summary, or decision in local memory.
 
-    Automatically:
-    - Detects git context (repo + branch)
-    - Checks for secrets (with optional sanitization)
-    - Generates embedding
-    - Indexes in vector database
-    - Extracts code-aware metadata (functions, classes, docstrings)
-
-    Examples:
-        - Store Python function with auto-extraction
-        - Store context notes with tags
-        - Store code summary with relationships
+    Auto-detects git context, scans for secrets, embeds, indexes, and extracts
+    code metadata (function/class/docstring).
     """
     await ensure_initialized()
     _audit_log("store_memory")
@@ -542,13 +532,8 @@ async def store_memory(params: StoreMemoryParams) -> StoreMemoryResponse:
 
 @mcp.tool()
 async def batch_store(params: BatchStoreParams) -> BatchStoreResponse:
-    """
-    Store multiple memories in a single batch operation.
-
-    Optimized for bulk ingestion: single git context detection, batch
-    embedding generation, and batch vector indexing. Use when storing
-    results from multiple parallel agents or bulk imports.
-    """
+    """Store many memories in one call: one git detection + batched embed/index.
+    Use for parallel-agent results or bulk imports."""
     await ensure_initialized()
     _audit_log("batch_store")
     return await batch_store_impl(params, memory_manager)
@@ -556,18 +541,10 @@ async def batch_store(params: BatchStoreParams) -> BatchStoreResponse:
 
 @mcp.tool()
 async def capture(params: CaptureParams) -> CaptureResponse:
-    """
-    Passive memory capture — extract and store memorable facts from raw text.
+    """Extract and store memorable facts (decisions, context, analysis) from raw text.
 
-    Pass any text (conversation snippet, session notes, observations). The
-    configured LLM extracts decisions, context, analysis, and other facts and
-    stores them automatically as the appropriate memory types.
-
-    Passthrough mode (default, no LLM configured): returns passthrough=True and
-    a passthrough_prompt you can use to self-extract by calling store_memory.
-
-    Configure a provider in mememo/config/providers.yaml or set
-    MEMEMO_LLM_CONFIG to a custom providers.yaml path.
+    Passthrough (default, no LLM): returns passthrough=True + a passthrough_prompt to
+    self-extract via store_memory. Set MEMEMO_LLM_CONFIG to use a real provider.
     """
     await ensure_initialized()
     _audit_log("capture")
@@ -576,16 +553,7 @@ async def capture(params: CaptureParams) -> CaptureResponse:
 
 @mcp.tool()
 async def retrieve_memory(params: RetrieveMemoryParams) -> RetrieveMemoryResponse:
-    """
-    Retrieve a memory by its ID.
-
-    Returns full memory with:
-    - Content (text, language, file path, line range)
-    - Metadata (tags, created/updated timestamps, token count)
-    - Code-aware metadata (function name, class name, docstring)
-    - Git context (repo + branch)
-    - Summary (one-line + detailed)
-    """
+    """Retrieve a memory by ID (full content, metadata, code info, git context)."""
     await ensure_initialized()
     _audit_log("retrieve_memory")
     return await retrieve_memory_impl(params, memory_manager)
@@ -593,17 +561,8 @@ async def retrieve_memory(params: RetrieveMemoryParams) -> RetrieveMemoryRespons
 
 @mcp.tool()
 async def search_similar(params: SearchSimilarParams) -> SearchSimilarResponse:
-    """
-    Search for similar memories using semantic vector search.
-
-    Uses:
-    - Embedding-based similarity (cosine similarity)
-    - Git-aware branch isolation
-    - Optional filters (type, language)
-    - Configurable similarity threshold
-
-    Returns ranked results with similarity scores (0.0-1.0).
-    """
+    """Semantic vector search over memories (branch-isolated, optional type/language
+    filters). Returns ranked hits with similarity scores."""
     await ensure_initialized()
     _audit_log("search_similar")
     return await search_similar_impl(params, memory_manager)
@@ -611,19 +570,8 @@ async def search_similar(params: SearchSimilarParams) -> SearchSimilarResponse:
 
 @mcp.tool()
 async def list_memories(params: ListMemoriesParams) -> ListMemoriesResponse:
-    """
-    List memories with filters.
-
-    Filters:
-    - Type (code_snippet, context, summary, relationship, decision, analysis, conversation)
-    - Language (python, typescript, javascript, go, rust, etc.)
-    - Tags (user-defined tags)
-    - File path, function name, class name
-    - Git context (automatic branch isolation)
-    - include_stale: include memories whose source file has changed (default: false)
-
-    Returns matching memories (up to limit).
-    """
+    """List memories, optionally filtered by type/language/tags/file/function/class.
+    Branch-isolated; excludes stale unless include_stale=true."""
     await ensure_initialized()
     _audit_log("list_memories")
     return await list_memories_impl(params, memory_manager)
@@ -631,20 +579,7 @@ async def list_memories(params: ListMemoriesParams) -> ListMemoriesResponse:
 
 @mcp.tool()
 async def summarize_context(params: SummarizeContextParams) -> SummarizeContextResponse:
-    """
-    Summarize multiple memories into a hierarchical summary.
-
-    Creates:
-    - Grouped summary (by file, type, or none)
-    - Token-limited output
-    - One-line summaries for each memory
-    - Hierarchical structure for readability
-
-    Useful for:
-    - Providing context to LLM prompts
-    - Understanding memory clusters
-    - Debugging memory storage
-    """
+    """Summarize memories (or raw text) into a grouped, token-limited summary."""
     await ensure_initialized()
     _audit_log("summarize_context")
     return await summarize_context_impl(params, memory_manager)
@@ -652,18 +587,7 @@ async def summarize_context(params: SummarizeContextParams) -> SummarizeContextR
 
 @mcp.tool()
 async def delete_memory(params: DeleteMemoryParams) -> DeleteMemoryResponse:
-    """
-    Delete a memory by ID.
-
-    Requires confirmation (confirm=True) to prevent accidental deletions.
-
-    Deletes:
-    - Memory metadata (SQLite)
-    - Memory content (JSON blob)
-    - Vector index entry
-
-    Note: Deletion is permanent and cannot be undone.
-    """
+    """Delete a memory by ID. Permanent; requires confirm=True."""
     await ensure_initialized()
     _audit_log("delete_memory")
     return await delete_memory_impl(params, memory_manager)
@@ -671,26 +595,8 @@ async def delete_memory(params: DeleteMemoryParams) -> DeleteMemoryResponse:
 
 @mcp.tool()
 async def index_repository(params: IndexRepositoryParams) -> IndexRepositoryResponse:
-    """
-    Index a repository with code-aware chunking.
-
-    Features:
-    - Multi-language support (Python, TypeScript, Go, Rust, Java, C/C++, C#)
-    - AST-based parsing for functions, classes, methods
-    - Incremental indexing (only changed files)
-    - Batch embedding generation
-    - Progress tracking
-
-    Supports glob patterns:
-    - "**/*.py" - All Python files
-    - "**/*.ts" - All TypeScript files
-    - "src/**/*.go" - Go files in src directory
-
-    Returns:
-    - Files indexed count
-    - Chunks created count
-    - Duration in seconds
-    """
+    """Index a repo with AST-aware chunking (functions/classes/methods) across all
+    supported languages. Incremental by default; accepts glob file_patterns."""
     await ensure_initialized()
     _audit_log("index_repository")
     # Force full re-index if last snapshot is older than auto_reindex_age_minutes
@@ -711,21 +617,7 @@ async def index_repository(params: IndexRepositoryParams) -> IndexRepositoryResp
 
 @mcp.tool()
 async def check_memory(params: CheckMemoryParams) -> CheckMemoryResponse:
-    """
-    Get memory statistics and health info.
-
-    Returns:
-    - Total memories count
-    - Storage size (MB)
-    - Vector index stats (vectors, shards)
-    - Embedder info (model, dimension, device)
-    - Git context (optional)
-
-    Useful for:
-    - Monitoring memory usage
-    - Debugging indexing issues
-    - Understanding current context
-    """
+    """Memory stats/health: counts, storage size, vector-index + embedder info, git context."""
     await ensure_initialized()
     _audit_log("check_memory")
     return await check_memory_impl(params, memory_manager)
@@ -733,19 +625,9 @@ async def check_memory(params: CheckMemoryParams) -> CheckMemoryResponse:
 
 @mcp.tool()
 async def sync_commits(params: SyncCommitsParams) -> SyncCommitsResponse:
-    """
-    Patch memories to reflect new commits since the last index_repository run.
-
-    For every file changed between the last indexed commit and HEAD:
-    - Marks existing code_snippet/relationship memories as stale
-    - Re-indexes files that still exist (creating fresh memories)
-
-    Persistent memory types (decision, analysis, conversation, context, summary)
-    are never staled — they survive code changes by design.
-
-    Run after index_repository whenever new commits land. Faster than a full
-    re-index because only changed files are processed.
-    """
+    """Re-index files changed since the last index_repository (stale old code memories,
+    create fresh ones). Persistent types (decision/analysis/conversation/context/summary)
+    are never staled. Faster than a full re-index."""
     await ensure_initialized()
     _audit_log("sync_commits")
     return await sync_commits_impl(params, memory_manager)
@@ -756,18 +638,9 @@ async def sync_commits(params: SyncCommitsParams) -> SyncCommitsResponse:
 
 @mcp.tool()
 async def detect_changes(params: DetectChangesParams) -> DetectChangesResponse:
-    """
-    Map git diff between two refs to affected memories with risk grades.
-
-    Returns a list of {memory_id, file_path, line_range, change_kind, risk_grade}
-    where risk_grade is one of:
-    - WILL_BREAK       — source file deleted or renamed
-    - LIKELY_AFFECTED  — file modified and the memory has a line_range
-    - MAY_NEED_TESTING — file modified but no line_range, or unclassified change
-
-    Read-only: does NOT mark memories stale or persist risk_grade. Use
-    sync_commits when you want the staleness side-effects.
-    """
+    """Map a git diff between two refs to affected memories, each graded
+    WILL_BREAK / LIKELY_AFFECTED / MAY_NEED_TESTING. Read-only (no staling);
+    use sync_commits for the staleness side-effects."""
     await ensure_initialized()
     _audit_log("detect_changes")
     return await detect_changes_impl(params, memory_manager)
@@ -775,16 +648,8 @@ async def detect_changes(params: DetectChangesParams) -> DetectChangesResponse:
 
 @mcp.tool()
 async def recall_at_commit(params: RecallAtCommitParams) -> RecallAtCommitResponse:
-    """
-    Time-travel semantic search: recall memory state as-of a target commit SHA.
-
-    Resolves the SHA to its commit timestamp, replays the append-only event
-    log up to that timestamp to compute the alive memory set, then runs
-    semantic search and filters results to that set.
-
-    Use cases: "what did we know before this refactor?", auditing decisions
-    against the code state when they were made.
-    """
+    """Time-travel recall: memory state as-of a commit SHA (replays the event log to the
+    commit's timestamp, then semantic-searches that alive set)."""
     await ensure_initialized()
     _audit_log("recall_at_commit")
     return await recall_at_commit_impl(params, memory_manager)
@@ -792,14 +657,8 @@ async def recall_at_commit(params: RecallAtCommitParams) -> RecallAtCommitRespon
 
 @mcp.tool()
 async def graph_neighbors(params: GraphNeighborsParams) -> GraphNeighborsResponse:
-    """
-    Depth-limited BFS over typed edges in the memory graph (v0.5).
-
-    Walks IMPORTS / CALLS / EXTENDS / USES / DECORATED_BY relations from
-    the given memory, returning visited memory ids and the traversed edges.
-    Use this when you need the local neighborhood of a function or class —
-    callers, callees, base classes, etc.
-    """
+    """Depth-limited BFS over typed edges (IMPORTS/CALLS/EXTENDS/USES/DECORATED_BY) from a
+    memory — its local neighborhood (callers, callees, base classes)."""
     await ensure_initialized()
     _audit_log("graph_neighbors")
     return await graph_neighbors_impl(params, memory_manager)
@@ -807,16 +666,9 @@ async def graph_neighbors(params: GraphNeighborsParams) -> GraphNeighborsRespons
 
 @mcp.tool()
 async def graph_impact(params: GraphImpactParams) -> GraphImpactResponse:
-    """
-    Blast-radius reasoning over the memory graph (v0.5).
-
-    BFS over relations from the named memory, filtered by confidence floor
-    and edge type. Each reached memory is decorated with its current
-    risk_grade (WILL_BREAK / LIKELY_AFFECTED / MAY_NEED_TESTING) if set —
-    so you can ask "if I change THIS, what downstream code is already
-    graded as at-risk?". direction='upstream' inverts the walk to find
-    callers / dependents.
-    """
+    """Blast-radius BFS from a memory (confidence + edge-type filtered), decorating each
+    reached node with its risk_grade (WILL_BREAK/LIKELY_AFFECTED/MAY_NEED_TESTING).
+    direction='upstream' finds callers/dependents."""
     await ensure_initialized()
     _audit_log("graph_impact")
     return await graph_impact_impl(params, memory_manager)
@@ -824,13 +676,8 @@ async def graph_impact(params: GraphImpactParams) -> GraphImpactResponse:
 
 @mcp.tool()
 async def graph_path(params: GraphPathParams) -> GraphPathResponse:
-    """
-    Shortest directed edge path between two memories (v0.5).
-
-    BFS over outbound relations. Returns the ordered list of memory_ids or
-    null if no path exists within max_depth. Useful for impact reasoning:
-    "does ServiceA reach DatabaseTable via any call chain?"
-    """
+    """Shortest directed edge path between two memories (BFS over outbound relations);
+    null if none within max_depth."""
     await ensure_initialized()
     _audit_log("graph_path")
     return await graph_path_impl(params, memory_manager)
@@ -876,16 +723,9 @@ async def community_resource(repo_id: str, community_id: int) -> str:
 
 @mcp.tool()
 async def cypher_query(params: CypherQueryParams) -> CypherQueryResponse:
-    """
-    Cypher subset query over the memory graph (v0.6).
-
-    Supports a documented subset: ``MATCH (a)-[r:TYPE]->(b)`` single-hop
-    patterns; ``WHERE`` with `=`, `<>`, `=~` (regex), `AND`, `OR`;
-    ``RETURN ident.prop [AS alias]`` projections; ``LIMIT n``. Returns
-    a structured error (error_kind="unsupported") naming the construct
-    when the query uses anything else (WITH, MERGE/CREATE/DELETE,
-    variable-length paths, aggregations, ...).
-    """
+    """Cypher-subset query over the memory graph: single-hop MATCH (a)-[r:TYPE]->(b),
+    WHERE (=, <>, =~, AND, OR), RETURN ident.prop [AS alias], LIMIT. Anything else
+    returns a structured error_kind='unsupported'."""
     await ensure_initialized()
     _audit_log("cypher_query")
     return await cypher_query_impl(params, memory_manager)
@@ -893,16 +733,8 @@ async def cypher_query(params: CypherQueryParams) -> CypherQueryResponse:
 
 @mcp.tool()
 async def merge_branch(params: MergeBranchParams) -> MergeBranchResponse:
-    """
-    Union the source branch's alive memories into the target branch.
-
-    Mirrors a git merge at the memory layer: dedupes by content checksum so
-    you never get two copies of the same insight, and emits RESTORED events
-    tagged at the merge SHA so event-replay can see the merge boundary.
-
-    Typically called from the opt-in post-merge git hook installed via
-    `mememo install-git-hooks`, but can be invoked manually after any merge.
-    """
+    """Union the source branch's alive memories into target (dedup by checksum),
+    emitting RESTORED events at the merge SHA. Usually run by the post-merge git hook."""
     await ensure_initialized()
     _audit_log("merge_branch")
     return await merge_branch_impl(params, memory_manager)
@@ -910,21 +742,8 @@ async def merge_branch(params: MergeBranchParams) -> MergeBranchResponse:
 
 @mcp.tool()
 async def refresh_memory(params: RefreshMemoryParams) -> RefreshMemoryResponse:
-    """
-    Update an existing memory.
-
-    Can update:
-    - Content (re-generates embedding)
-    - Tags
-
-    Preserves:
-    - Memory ID (if tags-only update)
-    - Git context
-    - Code-aware metadata
-    - Timestamps (updated_at refreshed)
-
-    Note: Content updates create a new memory ID.
-    """
+    """Update a memory's content (re-embeds, new ID) or tags (same ID). Preserves git
+    context + code metadata."""
     await ensure_initialized()
     _audit_log("refresh_memory")
     return await refresh_memory_impl(params, memory_manager)
@@ -932,17 +751,8 @@ async def refresh_memory(params: RefreshMemoryParams) -> RefreshMemoryResponse:
 
 @mcp.tool()
 async def store_decision(params: StoreDecisionParams) -> StoreDecisionResponse:
-    """
-    Store a structured architectural decision.
-
-    Assembles canonical markdown from structured fields:
-    - Problem statement
-    - Alternatives considered
-    - Chosen option with rationale
-    - Outcome (optional)
-
-    Stored as a persistent 'decision' memory — never staled by code changes.
-    """
+    """Store a structured architectural decision (problem/alternatives/chosen/rationale)
+    as a persistent 'decision' memory — never staled."""
     await ensure_initialized()
     _audit_log("store_decision")
     return await store_decision_impl(params, memory_manager)
@@ -950,16 +760,8 @@ async def store_decision(params: StoreDecisionParams) -> StoreDecisionResponse:
 
 @mcp.tool()
 async def end_session(params: EndSessionParams) -> EndSessionResponse:
-    """
-    Store a session summary as a persistent conversation memory.
-
-    Automatically prepends:
-    - ISO timestamp (UTC)
-    - Current git branch name
-
-    Use at the end of a working session to capture what was accomplished.
-    Stored as a 'conversation' memory — never staled by code changes.
-    """
+    """Store a session summary as a persistent 'conversation' memory (prepends UTC
+    timestamp + branch). Never staled."""
     await ensure_initialized()
     _audit_log("end_session")
     return await end_session_impl(params, memory_manager)
@@ -967,14 +769,8 @@ async def end_session(params: EndSessionParams) -> EndSessionResponse:
 
 @mcp.tool()
 async def recall_context(params: RecallContextParams) -> RecallContextResponse:
-    """
-    Semantic search across persistent memory types only.
-
-    Searches: decision, analysis, context, conversation.
-    Excludes: code_snippet, relationship (code-bound types).
-
-    Uses a lower default similarity threshold (0.2) for broader recall.
-    """
+    """Semantic search over persistent types only (decision/analysis/context/conversation),
+    excluding code-bound types. Lower default threshold (0.2) for broad recall."""
     await ensure_initialized()
     _audit_log("recall_context")
     return await recall_context_impl(params, memory_manager)
@@ -982,12 +778,8 @@ async def recall_context(params: RecallContextParams) -> RecallContextResponse:
 
 @mcp.tool()
 async def recent_context(params: RecentContextParams) -> RecentContextResponse:
-    """
-    Return the N most recent memories, sorted by creation date.
-
-    Pure SQL — no vector search. Useful for "what did I work on recently?"
-    Optionally filter by memory type.
-    """
+    """The N most recent memories by creation date (pure SQL, no vector search).
+    Optional type filter."""
     await ensure_initialized()
     _audit_log("recent_context")
     return await recent_context_impl(params, memory_manager)
@@ -995,20 +787,8 @@ async def recent_context(params: RecentContextParams) -> RecentContextResponse:
 
 @mcp.tool()
 async def manage_skill(params: ManageSkillParams) -> ManageSkillResponse:
-    """
-    Manage reusable skill prompt templates for smart context injection.
-
-    Skills are intent-based prompt templates automatically injected before
-    memory context when the user's message matches the skill's intent category.
-
-    Actions:
-    - create: Create a new skill (requires name, intent, prompt)
-    - list: List all skills
-    - get: Get a skill by name (returns full prompt)
-    - delete: Delete a skill by name
-
-    Intent categories: coding, debugging, architecture, testing, review, general.
-    """
+    """CRUD for reusable skill prompt templates (create/list/get/delete), injected by
+    matching intent (coding, debugging, architecture, testing, review, general)."""
     await ensure_initialized()
     _audit_log("manage_skill")
     return await manage_skill_impl(params, skill_store, memory_manager)
@@ -1016,18 +796,9 @@ async def manage_skill(params: ManageSkillParams) -> ManageSkillResponse:
 
 @mcp.tool()
 async def curate_skills(params: CurateSkillsParams) -> CurateSkillsResponse:
-    """
-    Consolidate the distilled-skill library (Phase C of the self-learning loop).
-
-    As skills are auto-distilled over time, near-duplicates accumulate. This pass:
-    - Clusters near-duplicate skills by embedding similarity and returns a
-      passthrough_prompt for the host model to merge each cluster into one skill
-      (then apply via manage_skill). Near-duplicates are never auto-deleted.
-    - With apply=True, also deletes EXACT-duplicate skills (identical prompt),
-      keeping the highest-priority one.
-
-    Dry by default (apply=False). Run periodically to keep the library lean.
-    """
+    """Consolidate the distilled-skill library: cluster near-duplicates and return a
+    passthrough merge prompt; with apply=True also delete exact dupes (+ never-used
+    stale skills via stale_unused_days). Dry by default."""
     await ensure_initialized()
     _audit_log("curate_skills")
     return await curate_skills_impl(params, skill_store, memory_manager)
@@ -1035,19 +806,8 @@ async def curate_skills(params: CurateSkillsParams) -> CurateSkillsResponse:
 
 @mcp.tool()
 async def cleanup_memory(params: CleanupMemoryParams) -> CleanupMemoryResponse:
-    """
-    Manual, controlled memory cleanup.
-
-    Unlike auto-expiry, this tool gives you full control over what gets deleted.
-    Default is dry_run=True (preview only). Set dry_run=False to actually delete.
-
-    Cleanup modes (can combine):
-    - older_than_days: Delete memories older than N days (optionally filtered by type)
-    - stale_only: Delete code memories whose source file has changed
-    - dedup: Remove exact-duplicate memories (same content checksum)
-
-    Always preview with dry_run=True first before deleting.
-    """
+    """Controlled memory cleanup (dry_run=True by default). Modes: older_than_days,
+    stale_only, dedup (exact checksum). Preview before deleting."""
     await ensure_initialized()
     _audit_log("cleanup_memory")
     return await cleanup_memory_impl(params, memory_manager)
@@ -1055,30 +815,12 @@ async def cleanup_memory(params: CleanupMemoryParams) -> CleanupMemoryResponse:
 
 @mcp.tool()
 async def generate_diagram(params: GenerateDiagramParams) -> GenerateDiagramResponse:
-    """
-    Generate a Mermaid diagram from the indexed code graph.
+    """Mermaid diagram from the indexed code graph.
 
-    Deterministic generators — no LLM required:
-    - type="class"  : classDiagram with methods + EXTENDS/IMPLEMENTS edges.
-                      scope=file_path or class_name to narrow the view.
-    - type="call"   : flowchart LR BFS over CALLS edges.
-                      scope=memory_id or function_name sets the root.
-    - type="module" : flowchart LR of cross-file IMPORTS grouped by file.
-    - type="overview": flowchart TD grouping files into subsystems (by directory)
-                       with cross-subsystem import counts — a coarse, non-dev view.
-
-    LLM-synthesized (passthrough-aware) — grounded in the deterministic subgraph
-    plus the scope's source:
-    - type="sequence" : sequenceDiagram of the call flow from a function entry.
-    - type="usecase"  : flowchart of user-facing workflows from public entry points.
-    - type="state"    : stateDiagram-v2 of a class's lifecycle (scope=class).
-    - type="erd"      : erDiagram of data models / entities.
-    - type="flow"     : plain-English flowchart of how the system works, for
-                        non-developers (grounded in the subsystem overview + README).
-
-    For the LLM types with no provider configured, the response sets
-    passthrough=True and returns passthrough_prompt for the host model to
-    synthesize the Mermaid in chat.
+    Deterministic (no LLM): class, call, module, overview.
+    LLM/passthrough (grounded in the subgraph + source): sequence, usecase, state, erd, flow
+    (flow = plain-English, non-dev). With no provider, LLM types return passthrough=True +
+    passthrough_prompt for the host to draw. Pass scope to narrow (file/class/function/memory_id).
     """
     await ensure_initialized()
     _audit_log("generate_diagram")
