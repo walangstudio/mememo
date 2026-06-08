@@ -804,6 +804,7 @@ Refuses to bind to anything other than `127.0.0.1` / `localhost`. The MCP server
 | `python -m mememo session-start --hook` | SessionStart hook: recall memories at session open (see [SessionStart hook](#sessionstart-hook)) |
 | `python -m mememo import-md <dir> [--repo <path>] [--dry-run]` | Ingest existing markdown memory files (see [Importing existing memories](#importing-existing-memories)) |
 | `python -m mememo reindex-identity [--dry-run]` | Recompute repo IDs via the live resolver; move FAISS dirs to match |
+| `python -m mememo curate-skills [--apply] [--stale-days N] [--threshold T] [--json]` | Consolidate distilled skills (dedup + prune never-used); cron/`/schedule`-friendly |
 
 #### Orchestrator Integration
 

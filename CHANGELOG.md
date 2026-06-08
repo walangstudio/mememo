@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.32.0] - 2026-06-08
+
+### Added
+- **`mememo curate-skills` CLI** — runs the `curate_skills` consolidation headlessly so
+  it can be cron'd or `/schedule`d for autonomous, periodic curation (the Hermes-style
+  curator cadence). The deterministic prunes (exact dupes + never-used stale skills) run
+  without a model; near-duplicate clusters are printed as a merge prompt for the next host
+  session to act on. Flags: `--apply` (delete; dry by default), `--stale-days N` (prune
+  never-used skills older than N days), `--threshold T`, `--json`. Mirrors `cmd_inject`'s
+  init (`ensure_initialized` → `skill_store`/`memory_manager`).
+
 ## [0.31.0] - 2026-06-08
 
 ### Added
