@@ -491,6 +491,131 @@ def _cmd_curate_skills(args: list[str]) -> int:
     return 0 if res.success else 1
 
 
+def _cmd_export_skills(args: list[str]) -> int:
+    """Export distilled skills to a directory of agentskills.io ``<name>/SKILL.md`` files."""
+    import argparse
+    from pathlib import Path
+
+    ap = argparse.ArgumentParser(prog="mememo export-skills")
+    ap.add_argument("out_dir", help="Directory to write <name>/SKILL.md trees into")
+    ap.add_argument("--force", action="store_true", help="Overwrite existing SKILL.md files")
+    ns = ap.parse_args(args)
+
+    from .context.skill_portability import skill_to_skillmd
+    from .context.skill_store import SkillStore
+    from .types.config import MemoConfig
+
+    ss = SkillStore(base_dir=MemoConfig.from_env().storage.base_dir)
+    skills = ss.list_skills()
+    if not skills:
+        print("No skills to export.")
+        return 0
+
+    out = Path(ns.out_dir)
+    written = 0
+    seen: set[str] = set()
+    for skill in skills:
+        name, text = skill_to_skillmd(skill)
+        if name in seen:
+            # Two distinct skill names collapse to the same SKILL.md dir name
+            # (e.g. "git_ops" and "git-ops" -> "git-ops"). Don't silently clobber.
+            print(f"skip (name collision -> {name}): {skill.name}")
+            continue
+        seen.add(name)
+        path = out / name / "SKILL.md"
+        if path.exists() and not ns.force:
+            print(f"skip (exists): {path}")
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        written += 1
+    print(f"Exported {written}/{len(skills)} skill(s) to {out}")
+    return 0
+
+
+def _cmd_import_skills(args: list[str]) -> int:
+    """Import agentskills.io ``SKILL.md`` skill files from a directory tree."""
+    import argparse
+    import asyncio
+    from pathlib import Path
+
+    ap = argparse.ArgumentParser(prog="mememo import-skills")
+    ap.add_argument("in_dir", help="Directory tree containing <name>/SKILL.md files")
+    ap.add_argument("--dry-run", action="store_true", help="List what would import without writing")
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite skills that already exist (default: skip them)",
+    )
+    ns = ap.parse_args(args)
+
+    src = Path(ns.in_dir)
+    if not src.is_dir():
+        sys.stderr.write(f"import-skills: not a directory: {src}\n")
+        return 1
+
+    from .context.skill_portability import parse_skillmd
+
+    # Only canonical SKILL.md files — a blanket *.md sweep would slurp READMEs / docs
+    # that merely happen to carry a `name:` frontmatter key.
+    files = sorted(src.rglob("SKILL.md"))
+    parsed = []
+    for f in files:
+        try:
+            data = parse_skillmd(f.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if data:
+            parsed.append(data)
+    if not parsed:
+        print("No importable SKILL.md skills found.")
+        return 0
+
+    if ns.dry_run:
+        for d in parsed:
+            print(f"would import: {d['name']} (intent={d['intent']}, priority={d['priority']})")
+        print(f"{len(parsed)} skill(s) would be imported.")
+        return 0
+
+    from .server import ensure_initialized
+    from .tools.manage_skill import manage_skill as manage_impl
+    from .tools.schemas import ManageSkillParams
+
+    async def _run():
+        await ensure_initialized()
+        import mememo.server as srv
+
+        n = 0
+        skipped = 0
+        for d in parsed:
+            if not ns.force and srv.skill_store.get_skill(d["name"]) is not None:
+                print(f"skip (exists): {d['name']}  [--force to overwrite]")
+                skipped += 1
+                continue
+            resp = await manage_impl(
+                ManageSkillParams(
+                    action="create",
+                    name=d["name"],
+                    intent=d["intent"],
+                    prompt=d["prompt"],
+                    priority=d["priority"],
+                    tags=d["tags"],
+                ),
+                srv.skill_store,
+                srv.memory_manager,
+            )
+            if resp.success:
+                n += 1
+            else:
+                sys.stderr.write(f"import-skills: {d['name']}: {resp.message}\n")
+        return n, skipped
+
+    n, skipped = asyncio.run(_run())
+    tail = f" ({skipped} skipped)" if skipped else ""
+    print(f"Imported {n}/{len(parsed)} skill(s).{tail}")
+    return 0
+
+
 _SUBCOMMANDS = {
     "install-git-hooks": _cmd_install_git_hooks,
     "serve": _cmd_serve,
@@ -498,6 +623,8 @@ _SUBCOMMANDS = {
     "diagram": _cmd_diagram,
     "render": _cmd_render,
     "curate-skills": _cmd_curate_skills,
+    "export-skills": _cmd_export_skills,
+    "import-skills": _cmd_import_skills,
     "migrate-worktrees": _cmd_migrate_worktrees,
     "merge-branch": _cmd_merge_branch,
     "sync-commits": _cmd_sync_commits,
@@ -572,6 +699,8 @@ def main() -> None:
                 "diagram",
                 "render",
                 "curate-skills",
+                "export-skills",
+                "import-skills",
                 "install-git-hooks",
                 "migrate-worktrees",
                 "merge-branch",
@@ -610,6 +739,8 @@ def _subcommand_help(name: str) -> str:
         "diagram": "Generate a class/call/module diagram and open it in the browser",
         "render": "Convert a Mermaid .mmd file into a double-clickable .html",
         "curate-skills": "Consolidate distilled skills (dedup + prune never-used); cron-friendly",
+        "export-skills": "Export skills to agentskills.io <name>/SKILL.md files (portable)",
+        "import-skills": "Import agentskills.io SKILL.md files into the skill store",
         "install-git-hooks": "Install opt-in post-merge / post-commit / pre-tool hooks",
         "migrate-worktrees": "Re-key legacy per-worktree repo_ids onto the canonical one",
         "merge-branch": "Shim over merge_branch MCP tool (called by post-merge hook)",

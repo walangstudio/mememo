@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.33.0] - 2026-06-08
+
+### Added
+- **Skill portability — agentskills.io `SKILL.md` export/import (self-learning loop,
+  Phase D).** Distilled skills can now leave (and enter) mememo in the open Agent Skills
+  format. `python -m mememo export-skills <dir>` writes each skill to `<dir>/<name>/SKILL.md`
+  (YAML frontmatter `name` + `description` + a `metadata` block holding mememo's
+  `intent`/`priority`/`tags`, with the prompt as the markdown body); `python -m mememo
+  import-skills <dir>` parses a `SKILL.md` tree back into the skill store (with `--dry-run`).
+  A foreign `SKILL.md` lacking the `metadata` block imports as a `general` skill; the skill
+  name normalizes to the SKILL.md form (lowercase, hyphens) on round-trip. Pure mapping lives
+  in `mememo/context/skill_portability.py`; import reuses `manage_skill` so the memory mirror
+  stays in sync. Verified by an end-to-end export -> import round-trip into a fresh store.
+
 ## [0.32.0] - 2026-06-08
 
 ### Added
