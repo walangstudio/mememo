@@ -572,6 +572,13 @@ class CurateSkillsParams(BaseModel):
         "prompt), keeping the highest-priority one. Near-duplicates are always only "
         "reported for host-assisted merge, never auto-deleted (dry by default).",
     )
+    stale_unused_days: int = Field(
+        default=0,
+        ge=0,
+        description="Prune skills never injected AND not modified in this many days "
+        "(0 = disabled). With apply=True they are deleted; with apply=False they are "
+        "previewed in unused_candidates. The age gate spares freshly-distilled skills.",
+    )
 
 
 class CurateSkillsResponse(BaseModel):
@@ -587,6 +594,14 @@ class CurateSkillsResponse(BaseModel):
     removed_exact: list[str] = Field(
         default_factory=list,
         description="Exact-duplicate skill names deleted (only when apply=True).",
+    )
+    removed_unused: list[str] = Field(
+        default_factory=list,
+        description="Never-used stale skill names deleted (apply=True + stale_unused_days>0).",
+    )
+    unused_candidates: list[str] = Field(
+        default_factory=list,
+        description="Never-used stale skills that WOULD be pruned (apply=False preview).",
     )
     # Passthrough: with near-duplicate clusters found, the host model merges each
     # cluster by completing passthrough_prompt (then calls manage_skill).

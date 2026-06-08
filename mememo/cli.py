@@ -142,6 +142,7 @@ def _smart_context_build(results, user_prompt, cfg, srv):
         if skills:
             skill_lines = [s.prompt.strip() for s in skills]
             skill_block = "\n".join(skill_lines)
+            srv.skill_store.record_use([s.name for s in skills])  # for prune-never-used
             from .utils.token_counter import count_tokens
 
             skill_tokens_used = count_tokens(skill_block)
