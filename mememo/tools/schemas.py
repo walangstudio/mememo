@@ -23,41 +23,28 @@ from ..types.memory import (
 class StoreMemoryParams(BaseModel):
     """Parameters for storing a new memory."""
 
-    content: str = Field(description="Content to store in memory")
+    content: str = Field(description="Content to store")
     type: MemoryContentType = Field(
         default="code_snippet",
         description=(
-            "Type: code_snippet (file-bound, staled on change), context, summary, relationship, "
-            "decision (architectural choices + rationale), analysis (bug/code investigation), "
-            "conversation (AI session summaries). decision/analysis/conversation are persistent "
-            "and never staled by code changes."
+            "code_snippet and relationship are file-bound and staled when source "
+            "changes; the rest (context, summary, decision, analysis, conversation, "
+            "reference) persist and are never staled."
         ),
     )
-    language: str | None = Field(
-        default=None, description="Programming language (auto-detected if not provided)"
-    )
+    language: str | None = Field(default=None, description="Language (auto-detected)")
     file_path: str | None = Field(default=None, description="File path for code snippets")
-    line_range: tuple[int, int] | None = Field(
-        default=None, description="Line range tuple (start, end)"
-    )
-    tags: list[str] | None = Field(default=None, description="Tags for categorization")
+    line_range: tuple[int, int] | None = Field(default=None, description="(start, end) lines")
+    tags: list[str] | None = Field(default=None, description="Tags")
 
-    # Code-aware metadata (optional - auto-extracted if not provided)
-    function_name: str | None = Field(
-        default=None, description="Function name (auto-extracted from code)"
-    )
-    class_name: str | None = Field(
-        default=None, description="Class name (auto-extracted from code)"
-    )
-    docstring: str | None = Field(default=None, description="Docstring (auto-extracted from code)")
-    decorators: list[str] | None = Field(
-        default=None, description="Decorators (auto-extracted from code)"
-    )
-    parent_class: str | None = Field(
-        default=None, description="Parent class (auto-extracted from code)"
-    )
+    # Code metadata — auto-extracted from code if omitted.
+    function_name: str | None = Field(default=None, description="Function name (auto-extracted)")
+    class_name: str | None = Field(default=None, description="Class name (auto-extracted)")
+    docstring: str | None = Field(default=None, description="Docstring (auto-extracted)")
+    decorators: list[str] | None = Field(default=None, description="Decorators (auto-extracted)")
+    parent_class: str | None = Field(default=None, description="Parent class (auto-extracted)")
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -81,7 +68,7 @@ class RetrieveMemoryParams(BaseModel):
 
     memory_id: str = Field(description="Memory ID to retrieve")
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -119,12 +106,11 @@ class SearchSimilarParams(BaseModel):
         default=None, description="Filter by tags (AND logic, all must match)"
     )
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
     cluster_id: int | None = Field(
         default=None,
-        description="v0.5 (FR-023): restrict results to memories whose relations "
-        "live in the named community. Requires a prior clustering pass.",
+        description="Restrict to a relation community (requires a prior clustering pass).",
     )
 
 
@@ -164,7 +150,7 @@ class ListMemoriesParams(BaseModel):
     )
     limit: int = Field(default=50, ge=1, le=500, description="Max results (1-500)")
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -202,7 +188,7 @@ class SummarizeContextParams(BaseModel):
         default=False, description="If True, persist the summary as a 'summary' memory"
     )
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -230,7 +216,7 @@ class DeleteMemoryParams(BaseModel):
     memory_id: str = Field(description="Memory ID to delete")
     confirm: bool = Field(default=False, description="Confirmation flag (must be True)")
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -286,7 +272,7 @@ class CheckMemoryParams(BaseModel):
 
     include_git_info: bool = Field(default=True, description="Include git repository info")
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -311,7 +297,7 @@ class RefreshMemoryParams(BaseModel):
     new_content: str | None = Field(default=None, description="New content (if updating content)")
     tags: list[str] | None = Field(default=None, description="New tags (if updating tags)")
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -367,7 +353,7 @@ class StoreDecisionParams(BaseModel):
     outcome: str | None = Field(default=None, description="Result or follow-up (if known)")
     tags: list[str] | None = Field(default=None, description="Tags for categorization")
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -392,7 +378,7 @@ class EndSessionParams(BaseModel):
     summary: str = Field(description="Summary of what was accomplished this session")
     tags: list[str] | None = Field(default=None, description="Tags for categorization")
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -426,7 +412,7 @@ class RecallContextParams(BaseModel):
         default=None, description="Filter by tags (AND logic, all must match)"
     )
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -450,7 +436,7 @@ class RecentContextParams(BaseModel):
     limit: int = Field(default=10, ge=1, le=100, description="Number of recent memories to return")
     type: MemoryContentType | None = Field(default=None, description="Filter by memory type")
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -500,7 +486,7 @@ class CaptureParams(BaseModel):
         description="Pre-extracted memories to store directly (skips LLM extraction)",
     )
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 
@@ -669,7 +655,7 @@ class BatchStoreParams(BaseModel):
 
     memories: list[StoreMemoryParams] = Field(description="List of memories to store")
     repo_path: str | None = Field(
-        default=None, description="Repository path (overrides cwd-based git detection)"
+        default=None, description="Repo path; overrides cwd git detection"
     )
 
 

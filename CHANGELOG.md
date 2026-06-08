@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.33.1] - 2026-06-09
+
+### Changed
+- **Trimmed MCP tool descriptions + parameter docs to cut per-session token cost.** The
+  tool definitions sit in the model's system prompt on every turn while mememo is
+  connected; verbose multi-paragraph docstrings and repeated boilerplate (e.g. the
+  `repo_path` blurb on ~15 tools, the `auto-extracted from code` suffix on every
+  `StoreMemoryParams` field) were condensed to terse, information-dense forms. Tool
+  names, parameters, types, defaults, and behavior are unchanged — only the prose
+  shrank. Measured footprint: **~9.2K → ~7.6K tokens** (-17%) across the 27 tools
+  (tiktoken cl100k proxy), with `batch_store`/`store_memory` (which inline
+  `StoreMemoryParams`) and `generate_diagram` the biggest wins. No functional change.
+
 ## [0.33.0] - 2026-06-08
 
 ### Added
