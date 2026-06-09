@@ -426,6 +426,7 @@ def _cmd_curate_skills(args: list[str]) -> int:
     """
     import argparse
     import asyncio
+    import os
 
     from .context.skill_curator import DEFAULT_DUP_THRESHOLD
 
@@ -449,6 +450,9 @@ def _cmd_curate_skills(args: list[str]) -> int:
         help="Prune skills never injected AND not modified in N days (0 = off).",
     )
     ap.add_argument("--json", action="store_true", help="Emit the raw JSON response.")
+    # Set by the auto-curate spawner: a lock this run owns and must release on
+    # failure so a crashed background child doesn't suppress retries for the TTL.
+    ap.add_argument("--lock", default=None, help=argparse.SUPPRESS)
     ns = ap.parse_args(args)
 
     from .server import ensure_initialized
@@ -467,11 +471,26 @@ def _cmd_curate_skills(args: list[str]) -> int:
             srv.memory_manager,
         )
 
-    res = asyncio.run(_run())
+    def _release_lock():
+        if ns.lock:
+            try:
+                os.unlink(ns.lock)
+            except OSError:
+                pass
+
+    try:
+        res = asyncio.run(_run())
+    except Exception as exc:
+        sys.stderr.write(f"mememo curate-skills failed: {exc}\n")
+        _release_lock()  # crashed child: free the slot so the next session retries
+        return 1
+    if not res.success:
+        _release_lock()
+        return 1
 
     if ns.json:
         print(res.model_dump_json(indent=2))
-        return 0 if res.success else 1
+        return 0
 
     print(res.message)
     if res.removed_exact:
@@ -488,7 +507,7 @@ def _cmd_curate_skills(args: list[str]) -> int:
     if res.passthrough and res.passthrough_prompt:
         print("\n--- merge prompt (hand to a host model / next session) ---")
         print(res.passthrough_prompt)
-    return 0 if res.success else 1
+    return 0  # success keeps the lock so the TTL rate-limit holds
 
 
 def _cmd_export_skills(args: list[str]) -> int:

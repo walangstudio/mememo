@@ -233,6 +233,24 @@ class HookConfig(BaseModel):
         description="Skip auto-index if one ran for this repo within this window",
     )
 
+    # Autonomous skill curation (opt-in). When True, SessionStart spawns a detached
+    # `mememo curate-skills --apply` at most once per interval so the distilled-skill
+    # library self-maintains (exact-dupe + stale-unused pruning) without an external cron.
+    auto_curate_on_session_start: bool = Field(
+        default=False,
+        description="On session start, background-run curate-skills to keep the skill library lean (opt-in)",
+    )
+    auto_curate_min_interval_hours: float = Field(
+        default=24.0,
+        gt=0,
+        description="Skip auto-curate if one ran within this window (curation is cheap to defer)",
+    )
+    auto_curate_stale_unused_days: int = Field(
+        default=0,
+        ge=0,
+        description="Background curate prunes never-used skills older than this (0 = dedup only)",
+    )
+
 
 class Config(BaseModel):
     """Complete mememo configuration."""
@@ -340,6 +358,16 @@ class Config(BaseModel):
                 == "true",
                 auto_index_min_interval_minutes=float(
                     os.getenv("MEMEMO_AUTO_INDEX_MIN_INTERVAL_MINUTES", "15.0")
+                ),
+                auto_curate_on_session_start=os.getenv(
+                    "MEMEMO_AUTO_CURATE_ON_SESSION_START", "false"
+                ).lower()
+                == "true",
+                auto_curate_min_interval_hours=float(
+                    os.getenv("MEMEMO_AUTO_CURATE_MIN_INTERVAL_HOURS", "24.0")
+                ),
+                auto_curate_stale_unused_days=int(
+                    float(os.getenv("MEMEMO_AUTO_CURATE_STALE_UNUSED_DAYS", "0"))
                 ),
             ),
         )
