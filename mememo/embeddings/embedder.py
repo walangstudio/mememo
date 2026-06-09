@@ -25,12 +25,16 @@ logger = logging.getLogger(__name__)
 # resolved from the model's own ST config at encode time; if the loaded model
 # doesn't actually define it, embed_query() falls back to a bare encode rather
 # than raising, so a wrong registry hint degrades instead of crashing.
+# cpu_ms_per_chunk: measured wall-clock to embed one code-sized chunk on CPU (no GPU).
+# Used only to warn before a full-repo index would crawl — minilm ~29ms vs qwen3 ~1770ms
+# (a 0.6B model is ~60x slower per chunk on CPU; sequence-length capping does NOT help).
 MODEL_REGISTRY = {
     "minilm": {
         "name": "sentence-transformers/all-MiniLM-L6-v2",
         "dimension": 384,
         "size_mb": 90,
         "query_prompt_name": None,
+        "cpu_ms_per_chunk": 30,
         "description": "Lightweight, fast, good quality (default)",
     },
     "qwen3": {
@@ -38,9 +42,10 @@ MODEL_REGISTRY = {
         "dimension": 1024,
         "size_mb": 1200,
         "query_prompt_name": "query",
+        "cpu_ms_per_chunk": 1800,
         "description": (
             "Highest quality, Apache-2.0, instruction-aware (1024-dim, 32k ctx). "
-            "Switching to it requires a re-index."
+            "Switching to it requires a re-index. ~60x slower than minilm to index on CPU."
         ),
     },
     "gemma": {
@@ -48,6 +53,7 @@ MODEL_REGISTRY = {
         "dimension": 768,
         "size_mb": 1200,
         "query_prompt_name": None,
+        "cpu_ms_per_chunk": 600,
         "description": "768-dim, experimental; gated download (requires HuggingFace login)",
     },
 }

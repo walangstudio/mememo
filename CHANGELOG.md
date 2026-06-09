@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.35.1] - 2026-06-09
+
+### Fixed
+- **Indexing no longer silently hangs on a slow model/CPU combo.** Root cause of the
+  "indexing hangs for hours" reports: `MEMEMO_EMBEDDING_MODEL=qwen3` with no GPU —
+  Qwen3-Embedding-0.6B embeds ~1770 ms/chunk on CPU vs minilm's ~29 ms (measured; ~60×
+  slower, and capping sequence length does NOT help — it's the 0.6B model size), so a
+  repo that indexes in ~40 s on minilm takes ~1 h on qwen3/CPU and looks dead. `index_repository`
+  now runs a pre-flight check: on CPU with a heavy model it logs a loud warning with the
+  projected ETA and the fast path (`set MEMEMO_EMBEDDING_MODEL=minilm`, needs a re-index,
+  or use a CUDA/MPS GPU) instead of hanging with no output. Added `cpu_ms_per_chunk` to the
+  model registry. GPU runs are unaffected (no warning).
+
 ## [0.35.0] - 2026-06-09
 
 ### Changed

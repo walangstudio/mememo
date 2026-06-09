@@ -36,6 +36,43 @@ EDGE_PASS_LANGUAGES: frozenset[str] = frozenset({"python", "markdown", *EDGE_WAL
 # + one vector add per flush).
 _INDEX_BATCH = 256
 
+# Rough chunks-per-file for the pre-index ETA estimate (this repo: ~1782/175 ≈ 10).
+_EST_CHUNKS_PER_FILE = 10
+
+
+def _warn_if_slow_embedding(embedder, n_files: int) -> None:
+    """Loudly flag a model/device combo that makes a full index crawl, with an ETA.
+
+    The classic "indexing hangs forever" is `MEMEMO_EMBEDDING_MODEL=qwen3` with no GPU:
+    Qwen3-Embedding-0.6B embeds ~1770ms/chunk on CPU vs minilm's ~29ms (~60x), so a repo
+    that indexes in ~40s on minilm takes ~1h on qwen3/CPU and looks dead. Warn (don't
+    silently hang) and point at the fast path. GPU (cuda/mps) is fast, so no warning there.
+    """
+    from ..embeddings.embedder import MODEL_REGISTRY
+
+    if n_files <= 0:
+        return  # nothing to index (e.g. an up-to-date incremental run)
+    # Only warn for a definitely-CPU embedder; absent/unknown device → stay quiet.
+    if getattr(embedder, "device", "") != "cpu":
+        return
+    ms = MODEL_REGISTRY.get(getattr(embedder, "model_name", ""), {}).get("cpu_ms_per_chunk", 0)
+    if ms <= 100:  # minilm-class — fast enough, stay quiet
+        return
+    est_chunks = n_files * _EST_CHUNKS_PER_FILE
+    eta_min = ms * est_chunks / 1000 / 60
+    fast_ms = MODEL_REGISTRY.get("minilm", {}).get("cpu_ms_per_chunk", 30)
+    logger.warning(
+        "mememo index: '%s' on CPU embeds ~%dms/chunk; ~%d files (~%d chunks) is roughly "
+        "~%.0f min. minilm is ~%dx faster: set MEMEMO_EMBEDDING_MODEL=minilm (needs a "
+        "re-index) for fast CPU indexing, or use a CUDA/MPS GPU.",
+        getattr(embedder, "model_name", "?"),
+        ms,
+        n_files,
+        est_chunks,
+        eta_min,
+        round(ms / fast_ms),
+    )
+
 
 async def index_repository(
     params: IndexRepositoryParams,
@@ -97,6 +134,9 @@ async def index_repository(
             merkle = MerkleDAG(memory_manager.storage_manager.base_dir / "merkle")
             files_to_index = merkle.get_changed_files(files_to_index, persist=False)
             logger.info(f"Incremental: {len(files_to_index)} files changed since last index")
+
+        # Flag a slow model/CPU combo up front (the usual "indexing hangs" cause).
+        _warn_if_slow_embedding(memory_manager.embedder, len(files_to_index))
 
         # Initialize chunker factory
         chunker_factory = ChunkerFactory()
