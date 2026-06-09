@@ -85,9 +85,14 @@ from .tools.comprehension import (
     AskResponse,
     OverviewParams,
     OverviewResponse,
+    WikiParams,
+    WikiResponse,
 )
 from .tools.comprehension import (
     ask as ask_impl,
+)
+from .tools.comprehension import (
+    generate_wiki as generate_wiki_impl,
 )
 from .tools.comprehension import (
     overview as overview_impl,
@@ -861,6 +866,19 @@ async def overview(params: OverviewParams) -> OverviewResponse:
     await ensure_initialized()
     _audit_log("overview")
     return await overview_impl(params, memory_manager, llm_adapter)
+
+
+@mcp.tool()
+async def generate_wiki(params: WikiParams) -> WikiResponse:
+    """Auto-generate a developer wiki / onboarding doc for the indexed repo from its
+    graph: an Overview, Architecture (with the subsystem Mermaid), per-subsystem pages,
+    Core API, and Getting Started. Passthrough-first — with no LLM provider, returns
+    passthrough_prompt + the deterministic page plan and diagrams for the host model to
+    write the Markdown in chat. Pass scope to wiki one subsystem; write_path to save the
+    Markdown when an LLM provider is configured."""
+    await ensure_initialized()
+    _audit_log("generate_wiki")
+    return await generate_wiki_impl(params, memory_manager, llm_adapter)
 
 
 def run():
