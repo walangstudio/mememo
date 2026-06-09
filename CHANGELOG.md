@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.34.0] - 2026-06-09
+
+### Added
+- **Autonomous skill curation on session start (opt-in)** — closes the last gap in the
+  self-learning loop: the curator now runs itself instead of waiting for a manual/external
+  cron. With `MEMEMO_AUTO_CURATE_ON_SESSION_START=true`, the SessionStart hook spawns a
+  detached `mememo curate-skills --apply` at most once per
+  `MEMEMO_AUTO_CURATE_MIN_INTERVAL_HOURS` (default 24), guarded by an atomic interval lock
+  (`<base_dir>/autocurate/curate.lock`) so concurrent sessions don't pile on. Set
+  `MEMEMO_AUTO_CURATE_STALE_UNUSED_DAYS=N` to also prune never-used skills older than N days
+  (default 0 = dedup only). The background run does the deterministic prunes (exact dupes +
+  stale-unused); near-duplicate merges still happen when `curate_skills` is called
+  interactively (they need a host model). Mirrors the existing `auto_index_on_session_start`
+  detached/locked pattern; best-effort and fully guarded so it never blocks session open.
+
 ## [0.33.1] - 2026-06-09
 
 ### Changed

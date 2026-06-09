@@ -44,6 +44,11 @@ async def cmd_session_start() -> None:
     if cfg.hook.auto_index_on_session_start:
         _maybe_background_index(cfg, cwd or os.getcwd())
 
+    # Opt-in: autonomously keep the distilled-skill library lean (Hermes-style periodic
+    # curator) without an external cron. Detached + interval-locked like auto-index.
+    if cfg.hook.auto_curate_on_session_start:
+        _maybe_background_curate(cfg)
+
     if not cfg.hook.session_start_enabled:
         print(json.dumps({"continue": True}))
         return
@@ -188,6 +193,65 @@ def _maybe_background_index(cfg, cwd: str, spawn=_spawn_detached) -> None:
             except OSError:
                 pass
         print(f"mememo session-start: auto-index spawn failed: {exc}", file=sys.stderr)
+
+
+def _maybe_background_curate(cfg, spawn=_spawn_detached) -> None:
+    """Background-run ``curate-skills`` if one hasn't run within the interval.
+
+    Skills are GLOBAL (not per-repo), so a single interval lock guards every session.
+    Best-effort: any failure is swallowed so it never breaks session open. The detached
+    child only does the deterministic prunes (exact dupes + optional stale-unused) — the
+    near-duplicate merge needs a host model and still happens when curate_skills is
+    called interactively.
+    """
+    import time
+    from pathlib import Path
+
+    lock = None
+    try:
+        lock_dir = Path(cfg.storage.base_dir).expanduser() / "autocurate"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        candidate = lock_dir / "curate.lock"
+        ttl = cfg.hook.auto_curate_min_interval_hours * 3600
+        # Atomic O_EXCL claim; reclaim a stale lock. Bounded retry avoids the
+        # two-sessions-both-unlink-then-create TOCTOU (mirrors _maybe_background_index).
+        for _ in range(3):
+            try:
+                with open(candidate, "x", encoding="utf-8") as fh:
+                    fh.write(str(time.time()))
+                lock = candidate
+                break
+            except FileExistsError:
+                try:
+                    age = time.time() - candidate.stat().st_mtime
+                except OSError:
+                    continue
+                if age < ttl:
+                    return  # a recent run owns the slot
+                try:
+                    candidate.unlink()
+                except OSError:
+                    pass
+    except Exception:
+        lock = None  # locking is best-effort
+
+    argv = [sys.executable, "-m", "mememo", "curate-skills", "--apply"]
+    if cfg.hook.auto_curate_stale_unused_days > 0:
+        argv += ["--stale-days", str(cfg.hook.auto_curate_stale_unused_days)]
+    if lock is not None:
+        # Hand the lock to the child so it releases on its OWN failure (a crashed
+        # child would otherwise hold the slot for the full interval). Success keeps it.
+        argv += ["--lock", str(lock)]
+    try:
+        spawn(argv)
+        print("mememo session-start: background curating skills", file=sys.stderr)
+    except Exception as exc:
+        if lock is not None:
+            try:
+                lock.unlink()  # release so a later session can retry
+            except OSError:
+                pass
+        print(f"mememo session-start: auto-curate spawn failed: {exc}", file=sys.stderr)
 
 
 def _format_session_context(results, cwd: str) -> str:
