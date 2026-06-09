@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.35.0] - 2026-06-09
+
+### Changed
+- **Skill injection is now usage-weighted (usage -> quality grade).** When more
+  intent-matching skills exist than fit the injection token budget,
+  `get_skills_for_intent` now ranks by `(priority, usage_count)` instead of priority
+  alone — so a skill that has actually been injected before wins the slot over an
+  equal-priority one that never has. The usage counts come from the v0.31 usage sidecar;
+  priority (the manual signal) still dominates, with usage as the empirical tiebreaker.
+  This closes the last self-learning nice-to-have: the loop now *uses* the usage signal
+  it records, not just for pruning but to surface proven skills first.
+
 ## [0.34.0] - 2026-06-09
 
 ### Added

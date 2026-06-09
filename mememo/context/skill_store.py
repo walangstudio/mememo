@@ -97,7 +97,25 @@ class SkillStore:
     def get_skills_for_intent(self, intent: str, budget: int) -> list[Skill]:
         skills = self._load_skills()
         matching = [s for s in skills if s.intent == intent]
-        matching.sort(key=lambda s: s.priority, reverse=True)
+        if not matching:
+            return []
+
+        if sum(s.token_count for s in matching) <= budget:
+            # No contention — every matching skill is injected, so ranking only
+            # affects presentation order. Sort by priority and skip the usage.json
+            # read (this is the common case on the per-prompt inject hot path).
+            matching.sort(key=lambda s: s.priority, reverse=True)
+            return matching
+
+        # Budget contention: rank by priority (manual signal) then usage_count
+        # (empirical signal) so the skills that have actually been injected before win
+        # the slot over equal-priority ones that never have — usage as a quality grade.
+        usage = self._load_usage()
+
+        def _rank(s: Skill) -> tuple[int, int]:
+            return (s.priority, int((usage.get(s.name) or {}).get("count", 0)))
+
+        matching.sort(key=_rank, reverse=True)
 
         selected: list[Skill] = []
         used = 0
