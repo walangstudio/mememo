@@ -1,5 +1,67 @@
 # Benchmarks
 
+## Retrieval quality — does it find the right code? (`tests/eval_code_search.py`)
+
+The cost benchmark below shows mememo is *heavier*; this one asks whether that buys
+anything. It holds the corpus constant (the same indexed code chunks) and compares
+ranking methods on plain-English questions about the codebase:
+
+```
+set MEMEMO_EMBEDDING_MODEL=minilm
+set MEMEMO_STORAGE_DIR=<store where this repo is indexed>
+python tests/eval_code_search.py
+```
+
+22 hand-authored intent questions, each mapped to a known target function and phrased the
+way a developer would *ask* (not copied from the code, so lexical baselines can't trivially
+string-match). Metric: rank of the target function in each method's top-10.
+
+### Results (2026-06-09, this repo indexed with minilm, N=22)
+
+| method | recall@1 | recall@5 | MRR |
+|---|---|---|---|
+| **mememo-hybrid** (BM25 + vector, the production mode) | **0.59** | **1.00** | **0.758** |
+| mememo-vector (semantic only) | 0.32 | 0.82 | 0.535 |
+| tfidf (classic lexical / keyword) | 0.36 | 0.50 | 0.436 |
+| overlap (shared-token count, a grep-like floor) | 0.36 | 0.45 | 0.394 |
+
+### Reading the numbers
+
+- **Hybrid retrieval roughly doubles keyword search for code understanding.** It put the
+  right function in the top-5 for **every** query (recall@5 = 1.00) vs 0.50 for TF-IDF;
+  MRR is ~74% higher. That is the concrete payoff for the embedding machinery the cost
+  benchmark charges for.
+- **Pure vector is not enough — the *hybrid* is the win.** Vector-only actually trails
+  keyword at rank-1 (0.32 vs 0.36): the embedding finds the right *neighborhood*
+  (recall@5 = 0.82) but doesn't reliably rank it first. Fusing the BM25 lexical signal
+  (RRF) sharpens rank-1 to 0.59. This validates mememo defaulting to hybrid, not pure
+  vector.
+- **Where keyword loses:** the paraphrased questions. "group skills that mean almost the
+  same thing" → `cluster_duplicates` and "increase the counter each time a skill is used"
+  → `record_use` are misses for both lexical baselines and hits for hybrid. Keyword only
+  keeps up when the question happens to share tokens with the code (`count_tokens`).
+
+### Honest limitations
+
+- **N=22, one codebase (mememo itself), queries authored by the same person who knows the
+  code** — directional, not definitive. Mitigated by a transparent per-query table and
+  mechanically-scored lexical baselines, but a larger, third-party-labelled set would be
+  stronger.
+- Indexed with **minilm**, not qwen3 — qwen3 would likely score higher semantically but
+  is impractically slow to index a whole repo on CPU (see note below).
+- Gold = one designated target; a different-but-also-valid function ranking higher counts
+  as a miss, which penalizes every method equally.
+- This measures **retrieval** (did it surface the right code), a proxy for usefulness. It
+  does **not** measure end-to-end answer quality — that would need an LLM-judge eval.
+- **`server-memory` is excluded on purpose:** it has no code index (entities/relations/
+  observations + keyword search), so it cannot answer "where is the code that does X" —
+  scoring it here would be a strawman, not a fair test.
+
+> Indexing note: this eval first hung for hours because the environment had
+> `MEMEMO_EMBEDDING_MODEL=qwen3` — Qwen3-Embedding-0.6B embeds a whole repo far too slowly
+> on CPU (large model, runs the working set into multiple GB with no flushes). Use
+> **minilm** for indexing on CPU; reserve qwen3 for query-time recall or a GPU.
+
 ## mememo vs `@modelcontextprotocol/server-memory`
 
 Reproducible cost/latency comparison against Anthropic's reference MCP memory server.
