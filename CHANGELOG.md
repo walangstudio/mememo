@@ -11,7 +11,7 @@
   `passthrough_prompt` + the page plan and diagrams for the host (Claude) to write the Markdown in
   chat. `scope` narrows the wiki to one subsystem (facts, core symbols, and excerpts all scoped);
   `write_path` saves the Markdown (confined to the repo root) when an LLM provider is configured.
-  Closes the flagship gap vs DeepWiki / Understand-Anything (auto-wiki / onboarding output).
+  Gives mememo the auto-generated wiki / onboarding-doc output expected of a codebase-understanding tool.
 - Refactored the shared structural-facts gathering out of `overview` into `_gather_facts`
   (subsystems / languages / edges / core-API), now used by both `overview` and `generate_wiki`.
   MCP tool surface 29 → 30; 6 new tests.
@@ -23,8 +23,8 @@
   indexed codebase; `ask` hybrid-recalls the most relevant code chunks and returns them with
   numbered `[n]` file:line citations. With no LLM provider configured (the default) it returns
   `passthrough=True` + a `passthrough_prompt` for the host model (e.g. Claude in Claude Code) to
-  answer in chat — citations are returned either way. Closes the "natural-language repo Q&A with
-  citations" gap vs DeepWiki / Greptile.
+  answer in chat — citations are returned either way. Adds natural-language repo Q&A with inline
+  source citations.
 - **`overview` — architectural system map (passthrough-first).** Assembles a deterministic
   structural map of the repo — subsystems grouped by path, most-called symbols (the de-facto
   core API, by CALLS in-degree), dependency edge counts, language breakdown — plus the overview
