@@ -15,7 +15,9 @@ from mememo.core.storage_manager import StorageManager
 from mememo.tools.comprehension import (
     AskParams,
     OverviewParams,
+    WikiParams,
     ask,
+    generate_wiki,
     overview,
 )
 from mememo.types.memory import (
@@ -248,6 +250,107 @@ async def test_overview_empty_returns_failure(tmp_path: Path):
     empty = StorageManager(base_dir=tmp_path / "empty")
     resp = await overview(
         OverviewParams(repo_id=REPO, branch=BRANCH),
+        _FakeMMStore(empty),
+        _passthrough_adapter(),
+    )
+    assert resp.success is False
+    assert "index" in resp.message.lower()
+
+
+# ---------- generate_wiki ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wiki_passthrough_has_plan_and_diagrams(store: StorageManager):
+    resp = await generate_wiki(
+        WikiParams(repo_id=REPO, branch=BRANCH, depth=2),
+        _FakeMMStore(store),
+        _passthrough_adapter(),
+    )
+    assert resp.success and resp.passthrough
+    assert resp.wiki == "" and resp.written_to == ""
+    assert resp.sections[0] == "Overview" and "Core API" in resp.sections
+    # web/c.py IMPORTS core/b.py -> a real overview diagram is grounded for embedding.
+    assert "overview" in resp.diagrams
+    assert "Structural facts" in resp.passthrough_prompt
+    assert "Markdown" in resp.passthrough_prompt
+
+
+@pytest.mark.asyncio
+async def test_wiki_scope_filters_subsystems(store: StorageManager):
+    ok = await generate_wiki(
+        WikiParams(repo_id=REPO, branch=BRANCH, scope="core"),
+        _FakeMMStore(store),
+        _passthrough_adapter(),
+    )
+    assert ok.success
+    # Facts list the scoped subsystem only; the dropped one has no "- web:" entry.
+    assert "- core:" in ok.passthrough_prompt and "- web:" not in ok.passthrough_prompt
+    # A scoped page drops the whole-repo diagrams (they'd show other subsystems).
+    assert ok.diagrams == {}
+
+    miss = await generate_wiki(
+        WikiParams(repo_id=REPO, branch=BRANCH, scope="zzz-nope"),
+        _FakeMMStore(store),
+        _passthrough_adapter(),
+    )
+    assert miss.success is False
+    assert "no subsystem matches" in miss.message.lower()
+
+
+class _StubLLM:
+    """Configured (non-passthrough) adapter that returns a canned wiki."""
+
+    def is_passthrough(self):
+        return False
+
+    async def complete(self, system, user):
+        return "# Wiki\nhello"
+
+
+@pytest.mark.asyncio
+async def test_wiki_writes_within_repo_root(store: StorageManager, tmp_path: Path):
+    resp = await generate_wiki(
+        WikiParams(repo_id=REPO, branch=BRANCH, repo_path=str(tmp_path), write_path="WIKI.md"),
+        _FakeMMStore(store),
+        _StubLLM(),
+    )
+    assert resp.success and not resp.passthrough
+    assert resp.wiki.startswith("# Wiki")
+    out = tmp_path / "WIKI.md"
+    assert out.exists() and out.read_text(encoding="utf-8").startswith("# Wiki")
+    assert resp.written_to == str(out.resolve())
+
+
+@pytest.mark.asyncio
+async def test_wiki_write_path_escape_refused(store: StorageManager, tmp_path: Path):
+    resp = await generate_wiki(
+        WikiParams(repo_id=REPO, branch=BRANCH, repo_path=str(tmp_path), write_path="../escape.md"),
+        _FakeMMStore(store),
+        _StubLLM(),
+    )
+    assert resp.success  # wiki is still generated
+    assert resp.written_to == ""
+    assert "outside" in resp.message.lower()
+    assert not (tmp_path.parent / "escape.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_wiki_no_repo_context_returns_failure():
+    resp = await generate_wiki(
+        WikiParams(),
+        _FakeMMStore(None),
+        _passthrough_adapter(),
+    )
+    assert resp.success is False
+    assert "repo context" in resp.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_wiki_empty_returns_failure(tmp_path: Path):
+    empty = StorageManager(base_dir=tmp_path / "empty2")
+    resp = await generate_wiki(
+        WikiParams(repo_id=REPO, branch=BRANCH),
         _FakeMMStore(empty),
         _passthrough_adapter(),
     )
