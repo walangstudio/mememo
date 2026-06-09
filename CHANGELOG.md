@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.36.0] - 2026-06-09
+
+### Added
+- **`ask` — cited repo Q&A (passthrough-first).** Ask a plain-English question about the
+  indexed codebase; `ask` hybrid-recalls the most relevant code chunks and returns them with
+  numbered `[n]` file:line citations. With no LLM provider configured (the default) it returns
+  `passthrough=True` + a `passthrough_prompt` for the host model (e.g. Claude in Claude Code) to
+  answer in chat — citations are returned either way. Closes the "natural-language repo Q&A with
+  citations" gap vs DeepWiki / Greptile.
+- **`overview` — architectural system map (passthrough-first).** Assembles a deterministic
+  structural map of the repo — subsystems grouped by path, most-called symbols (the de-facto
+  core API, by CALLS in-degree), dependency edge counts, language breakdown — plus the overview
+  Mermaid diagram, then asks the host model to name each subsystem's responsibility and trace how
+  the pieces fit together. The structural facts are returned even in passthrough.
+- Both reuse the existing graph + hybrid recall + passthrough pattern (mirrors `generate_diagram`);
+  5 new tests. MCP tool surface 27 → 29.
+
 ## [0.35.1] - 2026-06-09
 
 ### Fixed
