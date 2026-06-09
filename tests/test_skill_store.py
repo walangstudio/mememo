@@ -67,6 +67,25 @@ def test_intent_filtering(store):
     assert len(code_skills) == 1
 
 
+def test_usage_breaks_priority_ties_for_budget(store):
+    # Equal priority + identical size, budget fits exactly one. The names are chosen so
+    # the LESS-used skill sorts alphabetically first (skills load in sorted-glob order),
+    # so a priority-only sort would pick 'aaa-rare' — only the usage signal flips it to
+    # 'zzz-often'. (Guards against a test that passes on the pre-change sort.)
+    prompt = "follow the documented release checklist step by step"
+    store.create_skill("aaa-rare", "coding", prompt, priority=5)
+    store.create_skill("zzz-often", "coding", prompt, priority=5)
+    store.record_use(["zzz-often"])
+
+    fit_one = store.get_skill("zzz-often").token_count
+    one = store.get_skills_for_intent("coding", fit_one)
+    assert [s.name for s in one] == ["zzz-often"]  # used skill wins the only slot
+
+    # With room for both, both are injected (order immaterial when nothing is dropped).
+    both = store.get_skills_for_intent("coding", 10000)
+    assert {s.name for s in both} == {"aaa-rare", "zzz-often"}
+
+
 def test_budget_enforcement(store):
     store.create_skill("big", "coding", "x " * 500, priority=10)
     store.create_skill("small", "coding", "tiny", priority=5)
