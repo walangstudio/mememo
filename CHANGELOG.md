@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.37.0] - 2026-06-09
+
+### Added
+- **`generate_wiki` — auto-generated developer wiki / onboarding doc (passthrough-first).**
+  Turns the indexed graph into a structured Markdown wiki: Overview, Architecture (with the
+  subsystem Mermaid), one page per subsystem, Core API (the most-called symbols + their source),
+  and Getting Started. Grounds the host model on the deterministic structural facts + core-API
+  source excerpts + diagrams; with no LLM provider it returns `passthrough=True` +
+  `passthrough_prompt` + the page plan and diagrams for the host (Claude) to write the Markdown in
+  chat. `scope` narrows the wiki to one subsystem (facts, core symbols, and excerpts all scoped);
+  `write_path` saves the Markdown (confined to the repo root) when an LLM provider is configured.
+  Gives mememo the auto-generated wiki / onboarding-doc output expected of a codebase-understanding tool.
+- Refactored the shared structural-facts gathering out of `overview` into `_gather_facts`
+  (subsystems / languages / edges / core-API), now used by both `overview` and `generate_wiki`.
+  MCP tool surface 29 → 30; 6 new tests.
+
 ## [0.36.0] - 2026-06-09
 
 ### Added

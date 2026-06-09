@@ -5,18 +5,22 @@ tools/generate_diagram.py and tools/capture.py: when no LLM provider is configur
 (the default), return a passthrough_prompt for the host model to answer in chat;
 when a provider is configured, answer directly.
 
-- ask:      hybrid-recall the most relevant code chunks for a question and hand them
-            back with numbered [n] file:line citations for a grounded, cited answer.
-- overview: assemble a deterministic system map (subsystems, key symbols, dependency
-            edges, languages) plus the overview Mermaid, then ask the host to name each
-            subsystem's responsibility and how the pieces fit together.
+- ask:           hybrid-recall the most relevant code chunks for a question and hand
+                 them back with numbered [n] file:line citations for a grounded answer.
+- overview:      assemble a deterministic system map (subsystems, key symbols, dependency
+                 edges, languages) plus the overview Mermaid, then ask the host to name
+                 each subsystem's responsibility and how the pieces fit together.
+- generate_wiki: build a full onboarding wiki (Overview / Architecture / per-subsystem
+                 pages / Core API / Getting Started) from the same facts + source
+                 excerpts + diagrams; host writes the Markdown.
 """
 
 from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
 
 from pydantic import BaseModel, Field
 
@@ -257,27 +261,24 @@ _OVERVIEW_SYSTEM = (
 _MAX_KEY_SYMBOLS = 15
 
 
-async def overview(
-    params: OverviewParams,
-    memory_manager: MemoryManager,
-    llm_adapter: LLMAdapter,
-) -> OverviewResponse:
-    from ..diagrams import _label, _subsystem, is_empty_diagram, overview_diagram
+class _RepoFacts(NamedTuple):
+    """Deterministic structural facts shared by `overview` and `generate_wiki`."""
 
-    repo_id, branch = await resolve_repo_branch(
-        params.repo_id, params.branch, params.repo_path, memory_manager
-    )
-    if not repo_id or not branch:
-        return OverviewResponse(
-            success=False,
-            repo_id=repo_id,
-            branch=branch,
-            message=(
-                "Could not determine repo context. Pass repo_id and branch, or run from "
-                "inside the indexed repo."
-            ),
-        )
-    conn = memory_manager.storage_manager.conn
+    subsystems: list[OverviewSubsystem]
+    languages: dict[str, int]
+    edge_counts: dict[str, int]
+    key_symbols: list[str]
+    key_symbol_ids: list[str]  # memory ids behind key_symbols, for source reading
+    key_symbol_files: list[str]  # file_path per key symbol, for scope filtering
+    overview_mermaid: str  # "" when the graph has no cross-subsystem edges
+    truncated: bool  # subsystem list capped OR diagram capped
+
+
+def _gather_facts(
+    conn: sqlite3.Connection, repo_id: str, branch: str, depth: int, max_nodes: int
+) -> _RepoFacts | None:
+    """Compute subsystems / languages / edges / core-API for a lane, or None if unindexed."""
+    from ..diagrams import _label, _subsystem, is_empty_diagram, overview_diagram
 
     file_rows = conn.execute(
         "SELECT file_path, class_name FROM memories "
@@ -286,16 +287,11 @@ async def overview(
         (repo_id, branch),
     ).fetchall()
     if not file_rows:
-        return OverviewResponse(
-            success=False,
-            repo_id=repo_id,
-            branch=branch,
-            message="No indexed code. Index the repo first (index_repository), then retry.",
-        )
+        return None
 
     subs: dict[str, dict] = {}
     for r in file_rows:
-        name = _subsystem(r["file_path"], params.depth)
+        name = _subsystem(r["file_path"], depth)
         d = subs.setdefault(name, {"files": set(), "chunks": 0, "classes": []})
         d["files"].add(r["file_path"])
         d["chunks"] += 1
@@ -304,13 +300,13 @@ async def overview(
             d["classes"].append(cn)
     # Cap by the same knob as the diagram so the facts and the Mermaid agree on how
     # many subsystems they show; biggest-by-file-count first. Dropping any sets
-    # truncated (below) so the caller isn't told a partial map is complete.
+    # truncated so the caller isn't told a partial map is complete.
     subs_sorted = sorted(subs.items(), key=lambda kv: len(kv[1]["files"]), reverse=True)
     subsystems = [
         OverviewSubsystem(name=n, files=len(d["files"]), chunks=d["chunks"], classes=d["classes"])
-        for n, d in subs_sorted[: params.max_nodes]
+        for n, d in subs_sorted[:max_nodes]
     ]
-    subsystems_truncated = len(subs_sorted) > params.max_nodes
+    subsystems_truncated = len(subs_sorted) > max_nodes
 
     lang_rows = conn.execute(
         "SELECT language, COUNT(*) c FROM memories "
@@ -332,7 +328,7 @@ async def overview(
 
     # Most-called symbols = the de-facto core API (highest CALLS in-degree).
     key_rows = conn.execute(
-        "SELECT m.file_path, m.class_name, m.function_name, COUNT(*) c "
+        "SELECT m.id, m.file_path, m.class_name, m.function_name, COUNT(*) c "
         "FROM relations r JOIN memories m ON m.id = r.target_memory_id "
         "WHERE r.repo_id = ? AND r.branch = ? AND r.type = 'CALLS' AND r.stale = 0 "
         "AND r.target_memory_id IS NOT NULL "
@@ -343,70 +339,96 @@ async def overview(
         f"{_label(r['file_path'], r['class_name'], r['function_name'])} (x{r['c']})"
         for r in key_rows
     ]
+    key_symbol_ids = [r["id"] for r in key_rows]
+    key_symbol_files = [r["file_path"] or "" for r in key_rows]
 
-    mermaid = overview_diagram(
-        conn, repo_id, branch, max_nodes=params.max_nodes, depth=params.depth
+    raw = overview_diagram(conn, repo_id, branch, max_nodes=max_nodes, depth=depth)
+    overview_mermaid = raw if not is_empty_diagram(raw) else ""
+    truncated = subsystems_truncated or "%% truncated" in raw
+
+    return _RepoFacts(
+        subsystems,
+        languages,
+        edge_counts,
+        key_symbols,
+        key_symbol_ids,
+        key_symbol_files,
+        overview_mermaid,
+        truncated,
     )
-    has_mermaid = not is_empty_diagram(mermaid)
-    truncated = subsystems_truncated or "%% truncated" in mermaid
 
-    facts = _overview_facts(subsystems, languages, edge_counts, key_symbols)
+
+async def overview(
+    params: OverviewParams,
+    memory_manager: MemoryManager,
+    llm_adapter: LLMAdapter,
+) -> OverviewResponse:
+    repo_id, branch = await resolve_repo_branch(
+        params.repo_id, params.branch, params.repo_path, memory_manager
+    )
+    if not repo_id or not branch:
+        return OverviewResponse(
+            success=False,
+            repo_id=repo_id,
+            branch=branch,
+            message=(
+                "Could not determine repo context. Pass repo_id and branch, or run from "
+                "inside the indexed repo."
+            ),
+        )
+
+    facts = _gather_facts(
+        memory_manager.storage_manager.conn, repo_id, branch, params.depth, params.max_nodes
+    )
+    if facts is None:
+        return OverviewResponse(
+            success=False,
+            repo_id=repo_id,
+            branch=branch,
+            message="No indexed code. Index the repo first (index_repository), then retry.",
+        )
+
     user_prompt = (
-        f"=== Codebase structural facts ===\n{facts}\n"
-        + (f"\n=== Subsystem dependency diagram (Mermaid) ===\n{mermaid}\n" if has_mermaid else "")
+        f"=== Codebase structural facts ===\n"
+        f"{_overview_facts(facts.subsystems, facts.languages, facts.edge_counts, facts.key_symbols)}\n"
+        + (
+            f"\n=== Subsystem dependency diagram (Mermaid) ===\n{facts.overview_mermaid}\n"
+            if facts.overview_mermaid
+            else ""
+        )
         + "\nWrite the architectural overview."
     )
 
-    mermaid_out = mermaid if has_mermaid else ""
-
-    if llm_adapter.is_passthrough():
+    def _resp(**kw) -> OverviewResponse:
         return OverviewResponse(
             success=True,
             repo_id=repo_id,
             branch=branch,
-            mermaid=mermaid_out,
-            subsystems=subsystems,
-            languages=languages,
-            key_symbols=key_symbols,
-            edge_counts=edge_counts,
-            truncated=truncated,
+            mermaid=facts.overview_mermaid,
+            subsystems=facts.subsystems,
+            languages=facts.languages,
+            key_symbols=facts.key_symbols,
+            edge_counts=facts.edge_counts,
+            truncated=facts.truncated,
+            **kw,
+        )
+
+    prompt = f"{_OVERVIEW_SYSTEM}\n\n{user_prompt}"
+    if llm_adapter.is_passthrough():
+        return _resp(
             passthrough=True,
-            passthrough_prompt=f"{_OVERVIEW_SYSTEM}\n\n{user_prompt}",
-            message=(
-                "Passthrough — no LLM configured. Write the overview from "
-                "passthrough_prompt (host model)."
-            ),
+            passthrough_prompt=prompt,
+            message="Passthrough — no LLM configured. Write the overview from passthrough_prompt (host model).",
         )
 
     answer = await llm_adapter.complete(_OVERVIEW_SYSTEM, user_prompt)
     if not (answer or "").strip():
-        return OverviewResponse(
-            success=True,
-            repo_id=repo_id,
-            branch=branch,
-            mermaid=mermaid_out,
-            subsystems=subsystems,
-            languages=languages,
-            key_symbols=key_symbols,
-            edge_counts=edge_counts,
-            truncated=truncated,
+        return _resp(
             passthrough=True,
-            passthrough_prompt=f"{_OVERVIEW_SYSTEM}\n\n{user_prompt}",
+            passthrough_prompt=prompt,
             message="LLM returned no overview — falling back to passthrough.",
         )
-
-    return OverviewResponse(
-        success=True,
-        repo_id=repo_id,
-        branch=branch,
-        mermaid=mermaid_out,
-        subsystems=subsystems,
-        languages=languages,
-        key_symbols=key_symbols,
-        edge_counts=edge_counts,
-        answer=answer.strip(),
-        truncated=truncated,
-    )
+    return _resp(answer=answer.strip())
 
 
 def _overview_facts(
@@ -430,3 +452,232 @@ def _overview_facts(
         parts.append("\nMost-called symbols (core API):")
         parts.extend(f"- {sym}" for sym in key_symbols)
     return "\n".join(parts)
+
+
+# --------------------------------------------------------------------------
+# generate_wiki — auto-generated onboarding wiki (passthrough-first)
+# --------------------------------------------------------------------------
+
+# Wiki grounding is larger than ask/overview (multi-section doc), but still bounded
+# so the passthrough_prompt stays one request; per-excerpt cap keeps any one core-API
+# symbol from dominating.
+_WIKI_CHAR_BUDGET = 16000
+_WIKI_SOURCE_CAP = 1200
+_WIKI_SECTIONS = ["Overview", "Architecture", "Subsystems", "Core API", "Getting Started"]
+
+_WIKI_SYSTEM = (
+    "You write a developer wiki / onboarding guide for a codebase in Markdown, using ONLY the "
+    "provided structural facts, source excerpts, and diagrams. Produce one Markdown document "
+    "with, in order: a top-level `# <Project> — Overview` and a 2-4 sentence 'what this is and "
+    "what it does'; a `## Architecture` section that embeds the provided overview Mermaid "
+    "verbatim in a ```mermaid fenced block plus 2-3 sentences on the layering; a `## Subsystems` "
+    "section with one `### <name>` subsection per subsystem naming its responsibility in 1-2 "
+    "sentences and listing its key classes; a `## Core API` section describing the most-called "
+    "symbols and what each does; and a `## Getting Started` section pointing at the likely entry "
+    "points. Reference files and symbols in `backticks`. Embed every provided Mermaid diagram "
+    "verbatim in a ```mermaid block. Do NOT invent components, files, behaviour, or APIs absent "
+    "from the grounding — if something isn't in the grounding, omit it."
+)
+
+
+class WikiParams(BaseModel):
+    repo_path: str | None = Field(
+        default=None,
+        description="Repo path to detect repo_id/branch from (and read README). CWD if None.",
+    )
+    repo_id: str | None = Field(default=None, description="Override repo_id (skips detection).")
+    branch: str | None = Field(default=None, description="Override branch (skips detection).")
+    scope: str | None = Field(
+        default=None,
+        description="Limit the wiki to subsystems whose path matches this prefix/substring. None = whole repo.",
+    )
+    depth: int = Field(
+        default=2, ge=1, le=4, description="Path-segment depth for subsystem grouping."
+    )
+    max_nodes: int = Field(
+        default=40, ge=1, le=200, description="Subsystem cap (shared by facts + diagram)."
+    )
+    include_source: bool = Field(
+        default=True, description="Embed source excerpts of the core-API symbols in the grounding."
+    )
+    write_path: str | None = Field(
+        default=None,
+        description="When an LLM provider IS configured, write the generated Markdown here (e.g. WIKI.md). Ignored in passthrough.",
+    )
+
+
+class WikiResponse(BaseModel):
+    success: bool
+    repo_id: str = ""
+    branch: str = ""
+    sections: list[str] = Field(default_factory=list)
+    diagrams: dict[str, str] = Field(default_factory=dict)
+    wiki: str = ""
+    written_to: str = ""
+    truncated: bool = False
+    passthrough: bool = False
+    passthrough_prompt: str = ""
+    message: str = ""
+
+
+async def generate_wiki(
+    params: WikiParams,
+    memory_manager: MemoryManager,
+    llm_adapter: LLMAdapter,
+) -> WikiResponse:
+    from ..diagrams import _subsystem, module_dependency
+    from .generate_diagram import _read_source
+
+    repo_id, branch = await resolve_repo_branch(
+        params.repo_id, params.branch, params.repo_path, memory_manager
+    )
+    if not repo_id or not branch:
+        return WikiResponse(
+            success=False,
+            repo_id=repo_id,
+            branch=branch,
+            message=(
+                "Could not determine repo context. Pass repo_id and branch, or run from "
+                "inside the indexed repo."
+            ),
+        )
+
+    storage = memory_manager.storage_manager
+    conn = storage.conn
+    facts = _gather_facts(conn, repo_id, branch, params.depth, params.max_nodes)
+    if facts is None:
+        return WikiResponse(
+            success=False,
+            repo_id=repo_id,
+            branch=branch,
+            message="No indexed code. Index the repo first (index_repository), then retry.",
+        )
+
+    # Scope narrows ALL the grounding (subsystems, core symbols, excerpts) to the
+    # matching subsystems so the model never documents out-of-scope code; the
+    # whole-repo diagrams are dropped for a scoped page (they'd show other areas).
+    subsystems = facts.subsystems
+    key_symbols = facts.key_symbols
+    key_symbol_ids = facts.key_symbol_ids
+    truncated = facts.truncated
+    diagrams: dict[str, str] = {}
+    if params.scope:
+        subsystems = [s for s in subsystems if params.scope in s.name]
+        if not subsystems:
+            return WikiResponse(
+                success=False,
+                repo_id=repo_id,
+                branch=branch,
+                message=f"No subsystem matches scope={params.scope!r}. Try a broader path prefix.",
+            )
+        scoped = {s.name for s in subsystems}
+        keep = [
+            i for i, f in enumerate(facts.key_symbol_files) if _subsystem(f, params.depth) in scoped
+        ]
+        key_symbols = [facts.key_symbols[i] for i in keep]
+        key_symbol_ids = [facts.key_symbol_ids[i] for i in keep]
+    else:
+        if facts.overview_mermaid:
+            diagrams["overview"] = facts.overview_mermaid
+        modules = module_dependency(conn, repo_id, branch, max_nodes=params.max_nodes)
+        if "%% no data" not in modules:
+            diagrams["modules"] = modules
+            truncated = truncated or "%% truncated" in modules
+
+    # Grounding: README (plain-language project description) + structural facts +
+    # core-API source excerpts + the diagrams the wiki should embed.
+    parts: list[str] = []
+    if params.repo_path:
+        try:
+            readme = (Path(params.repo_path) / "README.md").read_text(
+                encoding="utf-8", errors="replace"
+            )
+            parts.append("# README:\n" + readme[:2500])
+        except OSError:
+            pass  # no README / unreadable — degrade gracefully
+    parts.append(
+        "# Structural facts:\n"
+        + _overview_facts(subsystems, facts.languages, facts.edge_counts, key_symbols)
+    )
+
+    if params.include_source:
+        used = sum(len(p) for p in parts)
+        blocks: list[str] = []
+        for mid in key_symbol_ids:
+            text, label = _read_source(storage, conn, mid)
+            if not text:
+                continue
+            block = f"\n## {label}\n{text[:_WIKI_SOURCE_CAP]}\n"
+            if blocks and used + len(block) > _WIKI_CHAR_BUDGET:
+                truncated = True
+                break
+            blocks.append(block)
+            used += len(block)
+        if blocks:
+            parts.append("\n# Core API source excerpts:")
+            parts.extend(blocks)
+
+    for name, mmd in diagrams.items():
+        parts.append(f"\n# {name} diagram (Mermaid):\n{mmd}")
+
+    target = f"subsystem {params.scope!r}" if params.scope else "this repository"
+    user_prompt = (
+        f"Write the wiki for {target}.\n"
+        f"Section plan: {', '.join(_WIKI_SECTIONS)}\n\n"
+        f"=== Grounding ===\n{''.join(parts)}"
+    )
+
+    def _resp(**kw) -> WikiResponse:
+        return WikiResponse(
+            success=True,
+            repo_id=repo_id,
+            branch=branch,
+            sections=list(_WIKI_SECTIONS),
+            diagrams=diagrams,
+            truncated=truncated,
+            **kw,
+        )
+
+    prompt = f"{_WIKI_SYSTEM}\n\n{user_prompt}"
+    if llm_adapter.is_passthrough():
+        return _resp(
+            passthrough=True,
+            passthrough_prompt=prompt,
+            message="Passthrough — no LLM configured. Write the wiki from passthrough_prompt (host model).",
+        )
+
+    wiki = await llm_adapter.complete(_WIKI_SYSTEM, user_prompt)
+    if not (wiki or "").strip():
+        return _resp(
+            passthrough=True,
+            passthrough_prompt=prompt,
+            message="LLM returned no wiki — falling back to passthrough.",
+        )
+    wiki = wiki.strip()
+
+    written = ""
+    message = ""
+    if params.write_path:
+        # Confine the write to the repo root so a caller-supplied path can't clobber
+        # files elsewhere (a relative path resolves under the repo; '..' escapes are
+        # refused). repo_path unset -> root is CWD.
+        root = Path(params.repo_path or ".").resolve()
+        dest = Path(params.write_path)
+        dest = (dest if dest.is_absolute() else root / dest).resolve()
+        try:
+            dest.relative_to(root)
+        except ValueError:
+            return _resp(
+                wiki=wiki,
+                message=(
+                    f"Generated the wiki but refused to write {params.write_path!r}: "
+                    f"resolves outside the repo root {str(root)!r}."
+                ),
+            )
+        try:
+            dest.write_text(wiki, encoding="utf-8")
+            written = str(dest)
+        except OSError as exc:
+            message = f"Generated the wiki but could not write {str(dest)!r}: {exc}"
+
+    return _resp(wiki=wiki, written_to=written, message=message)
