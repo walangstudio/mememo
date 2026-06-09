@@ -31,6 +31,7 @@ clients (Cursor, Windsurf, Cline, etc.) see [Installation](#-installation).
 - **⏱ Commit-Aware** *(v0.4)*: Every memory carries the SHA it was minted at; append-only event log enables time-travel recall and branch-merge unions
 - **🕸 Memory Graph** *(v0.5)*: Typed edges (`IMPORTS` / `CALLS` / `EXTENDS` / `IMPLEMENTS` / `USES` / `DECORATED_BY`) across Python and all 13 tree-sitter languages; intra-class `self`/`this` calls resolve to the owning method (v0.16+); Louvain communities; symbol resolver with bounded fuzzy match
 - **📐 Diagrams** *(v0.13+)*: `generate_diagram` emits Mermaid straight from the code graph — deterministic class / call / module / overview diagrams, plus LLM-synthesized sequence / use-case / state / ERD / flow (passthrough-aware, rendered in chat). Also a `/diagram` panel in the web UI
+- **💬 Comprehension** *(v0.36+)*: `ask` answers a plain-English question about the repo with numbered `[n]` file:line citations; `overview` builds an architectural system map (subsystems, core-API symbols, dependency edges). Both passthrough-first — the host model writes the prose, mememo supplies the grounding
 - **🌐 Web UI** *(v0.6, optional)*: Localhost-only D3-force graph + paginated table + time-travel slider via `mememo serve`
 - **⚡ Incremental**: Only re-index changed files (Merkle DAG)
 - **🤖 Passive Hooks**: Auto-capture memories, inject context, and (v0.6) augment Grep/Glob/Bash results — no manual invocation
@@ -769,6 +770,13 @@ extensions:
 |------|---------|
 | `manage_skill` | Create, list, get, or delete skill prompt templates |
 
+#### Code Comprehension *(v0.36)*
+
+| Tool | Purpose |
+|------|---------|
+| `ask` | Answer a plain-English question about the indexed repo, grounded in hybrid-recalled code with numbered `[n]` file:line citations. Passthrough-first: with no LLM provider, returns `passthrough_prompt` for the host model to answer in chat (citations returned either way) |
+| `overview` | Architectural system map — subsystems (by path), most-called symbols (core API), dependency edge counts, languages, plus the overview Mermaid. Passthrough-first: the host model names each subsystem's responsibility; structural facts returned regardless |
+
 ### MCP Resources *(v0.6)*
 
 Four read-only resources that summarise the memory store without burning a tool call. Each payload is bounded to ≤4 KB; over-budget lists truncate and set a `truncated` marker.
@@ -1095,7 +1103,7 @@ fallback and can be re-imported via `import-md` if needed.
 
 ```
 mememo/
-├── server.py              # FastMCP server (26 MCP tools + 6 resources)
+├── server.py              # FastMCP server (29 MCP tools + 6 resources)
 ├── cli.py                 # Hook CLI (capture --hook, inject --hook)
 ├── core/                  # Core managers
 │   ├── memory_manager.py  # Orchestrates all memory ops

@@ -101,16 +101,11 @@ async def generate_diagram(
 async def _resolve_repo_branch(
     params: GenerateDiagramParams, memory_manager: MemoryManager
 ) -> tuple[str, str]:
-    repo_id = params.repo_id
-    branch = params.branch
-    if repo_id and branch:
-        return repo_id, branch
-    try:
-        ctx = await memory_manager.git_manager.detect_context(params.repo_path or ".")
-        return repo_id or ctx.repo.id, branch or ctx.branch.name
-    except Exception as exc:
-        logger.warning("generate_diagram: git context detection failed: %s", exc)
-        return repo_id or "", branch or ""
+    from ._repo_context import resolve_repo_branch
+
+    return await resolve_repo_branch(
+        params.repo_id, params.branch, params.repo_path, memory_manager
+    )
 
 
 # --------------------------------------------------------------------------

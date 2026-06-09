@@ -78,6 +78,20 @@ from .tools import (
 from .tools import (
     sync_commits as sync_commits_impl,
 )
+
+# Comprehension tools: cited repo Q&A + architectural overview (passthrough-first)
+from .tools.comprehension import (
+    AskParams,
+    AskResponse,
+    OverviewParams,
+    OverviewResponse,
+)
+from .tools.comprehension import (
+    ask as ask_impl,
+)
+from .tools.comprehension import (
+    overview as overview_impl,
+)
 from .tools.curate_skills import (
     curate_skills as curate_skills_impl,
 )
@@ -825,6 +839,28 @@ async def generate_diagram(params: GenerateDiagramParams) -> GenerateDiagramResp
     await ensure_initialized()
     _audit_log("generate_diagram")
     return await generate_diagram_impl(params, memory_manager, llm_adapter)
+
+
+@mcp.tool()
+async def ask(params: AskParams) -> AskResponse:
+    """Answer a plain-English question about the codebase, grounded in the indexed
+    code with numbered [n] file:line citations. Hybrid-recalls the most relevant
+    chunks; with no LLM provider returns passthrough=True + passthrough_prompt for
+    the host model to answer in chat (citations are returned either way)."""
+    await ensure_initialized()
+    _audit_log("ask")
+    return await ask_impl(params, memory_manager, llm_adapter)
+
+
+@mcp.tool()
+async def overview(params: OverviewParams) -> OverviewResponse:
+    """Architectural system map of the indexed repo: subsystems (by path), most-called
+    symbols, dependency edge counts, languages, plus the deterministic overview Mermaid.
+    With no LLM provider returns passthrough=True + passthrough_prompt for the host to
+    name each subsystem's responsibility; the structural facts are returned either way."""
+    await ensure_initialized()
+    _audit_log("overview")
+    return await overview_impl(params, memory_manager, llm_adapter)
 
 
 def run():
