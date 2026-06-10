@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.39.0] - 2026-06-10
+
+### Changed
+- **`generate_wiki` Architecture section is now a business-readable flow, not the import graph.**
+  The wiki previously embedded the deterministic module-dependency graph (file→import edges, dozens
+  of `std::path::PathBuf`-style nodes) as its Architecture diagram — accurate but unreadable for a
+  non-technical reader. Now the Architecture section opens with a high-level `flowchart TD` the host
+  model draws from the README + subsystem responsibilities (inputs → what the system does →
+  outputs, plain-English labels, no file/import names), and the deterministic module/overview graphs
+  are demoted to a `## Appendix: Module map (for engineers)`. Same grounding, same passthrough-first
+  model; only the diagram framing changed. (For a standalone version of this diagram, `generate_diagram
+  type=flow` already produces it.)
+
 ## [0.38.0] - 2026-06-10
 
 ### Fixed
