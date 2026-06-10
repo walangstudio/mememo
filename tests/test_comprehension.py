@@ -274,6 +274,12 @@ async def test_wiki_passthrough_has_plan_and_diagrams(store: StorageManager):
     assert "overview" in resp.diagrams
     assert "Structural facts" in resp.passthrough_prompt
     assert "Markdown" in resp.passthrough_prompt
+    # Architecture is a host-drawn high-level flow for non-technical readers; the
+    # deterministic graphs ship as an engineers-only appendix.
+    assert "flowchart TD" in resp.passthrough_prompt
+    assert "non-technical" in resp.passthrough_prompt
+    assert "Appendix: Module map" in resp.sections
+    assert "Appendix: Module map" in resp.passthrough_prompt
 
 
 @pytest.mark.asyncio
@@ -286,8 +292,10 @@ async def test_wiki_scope_filters_subsystems(store: StorageManager):
     assert ok.success
     # Facts list the scoped subsystem only; the dropped one has no "- web:" entry.
     assert "- core:" in ok.passthrough_prompt and "- web:" not in ok.passthrough_prompt
-    # A scoped page drops the whole-repo diagrams (they'd show other subsystems).
+    # A scoped page drops the whole-repo diagrams (they'd show other subsystems),
+    # so there's no engineers appendix either.
     assert ok.diagrams == {}
+    assert "Appendix: Module map" not in ok.sections
 
     miss = await generate_wiki(
         WikiParams(repo_id=REPO, branch=BRANCH, scope="zzz-nope"),

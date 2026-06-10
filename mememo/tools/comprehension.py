@@ -469,14 +469,20 @@ _WIKI_SYSTEM = (
     "You write a developer wiki / onboarding guide for a codebase in Markdown, using ONLY the "
     "provided structural facts, source excerpts, and diagrams. Produce one Markdown document "
     "with, in order: a top-level `# <Project> — Overview` and a 2-4 sentence 'what this is and "
-    "what it does'; a `## Architecture` section that embeds the provided overview Mermaid "
-    "verbatim in a ```mermaid fenced block plus 2-3 sentences on the layering; a `## Subsystems` "
-    "section with one `### <name>` subsection per subsystem naming its responsibility in 1-2 "
-    "sentences and listing its key classes; a `## Core API` section describing the most-called "
-    "symbols and what each does; and a `## Getting Started` section pointing at the likely entry "
-    "points. Reference files and symbols in `backticks`. Embed every provided Mermaid diagram "
-    "verbatim in a ```mermaid block. Do NOT invent components, files, behaviour, or APIs absent "
-    "from the grounding — if something isn't in the grounding, omit it."
+    "what it does'; a `## Architecture` section that OPENS with a high-level Mermaid `flowchart TD` "
+    "a non-technical business reader and an engineer can both follow — show the main inputs, the "
+    "end-to-end happy-path of what the system DOES, and the outputs, with friendly plain-English "
+    "labels describing each part's job (describe behaviour, not file names, class names, or "
+    "imports), grouping related steps with subgraphs; you DRAW this flowchart yourself from the "
+    "README and the subsystem responsibilities, then add 2-3 sentences on how the pieces fit; a "
+    "`## Subsystems` section with one `### <name>` subsection per subsystem naming its "
+    "responsibility in 1-2 sentences and listing its key classes; a `## Core API` section "
+    "describing the most-called symbols and what each does; and a `## Getting Started` section "
+    "pointing at the likely entry points. If the grounding includes any deterministic diagrams, "
+    "embed each verbatim in a ```mermaid block under a final `## Appendix: Module map (for "
+    "engineers)` section — keep them OUT of the high-level Architecture flowchart. Reference files "
+    "and symbols in `backticks`. Do NOT invent components, files, behaviour, or APIs absent from "
+    "the grounding — if something isn't in the grounding, omit it."
 )
 
 
@@ -620,10 +626,15 @@ async def generate_wiki(
     for name, mmd in diagrams.items():
         parts.append(f"\n# {name} diagram (Mermaid):\n{mmd}")
 
+    # The deterministic module/overview graphs ship as an engineers-only appendix
+    # (the high-level Architecture flowchart is what onboards a business reader).
+    sections = list(_WIKI_SECTIONS)
+    if diagrams:
+        sections.append("Appendix: Module map")
     target = f"subsystem {params.scope!r}" if params.scope else "this repository"
     user_prompt = (
         f"Write the wiki for {target}.\n"
-        f"Section plan: {', '.join(_WIKI_SECTIONS)}\n\n"
+        f"Section plan: {', '.join(sections)}\n\n"
         f"=== Grounding ===\n{''.join(parts)}"
     )
 
@@ -632,7 +643,7 @@ async def generate_wiki(
             success=True,
             repo_id=repo_id,
             branch=branch,
-            sections=list(_WIKI_SECTIONS),
+            sections=sections,
             diagrams=diagrams,
             truncated=truncated,
             **kw,
