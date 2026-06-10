@@ -9,6 +9,7 @@ All-Python code-aware memory server with:
 - Hybrid storage (SQLite + JSON blobs)
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -501,16 +502,51 @@ async def initialize_mememo():
 # lock entirely thanks to the outer is-None check.
 _init_lock = threading.Lock()
 
+# Hard ceiling on first-call initialization (git detection + embedding-model /
+# vector-index load, including a possible first-run model download). Past this
+# the caller gets a readable error instead of an unbounded hang. Override with
+# MEMEMO_INIT_TIMEOUT (seconds; <= 0 disables the bound).
+try:
+    _INIT_TIMEOUT_S = float(os.environ.get("MEMEMO_INIT_TIMEOUT", "90"))
+except ValueError:
+    _INIT_TIMEOUT_S = 90.0
 
-async def ensure_initialized():
-    """Ensure mememo is initialized (lazy, cross-thread safe)."""
-    global config, memory_manager
-    if memory_manager is not None:
-        return
+
+def _run_init_once() -> None:
+    """Run initialize_mememo() to completion under the cross-thread lock.
+
+    Runs in a worker thread (via asyncio.to_thread) so its blocking work — git
+    subprocess, model load, sqlite open — never freezes the server event loop, and
+    a stuck initializer can't make concurrent tool calls hang. Nothing built here
+    binds to a loop (httpx clients are created lazily per request), so a throwaway
+    asyncio.run is safe.
+    """
     with _init_lock:
         # Double-check: another thread may have completed init while we waited.
         if memory_manager is None:
-            await initialize_mememo()
+            asyncio.run(initialize_mememo())
+
+
+async def ensure_initialized():
+    """Ensure mememo is initialized (lazy, cross-thread safe, time-bounded)."""
+    if memory_manager is not None:
+        return
+    work = asyncio.to_thread(_run_init_once)
+    if _INIT_TIMEOUT_S <= 0:
+        await work
+        return
+    try:
+        await asyncio.wait_for(work, timeout=_INIT_TIMEOUT_S)
+    except asyncio.TimeoutError as e:
+        # The worker thread can't be cancelled, but the event loop is now free and
+        # the caller gets a clear cause instead of a silent forever-hang.
+        raise RuntimeError(
+            f"mememo initialization exceeded {_INIT_TIMEOUT_S:.0f}s and was "
+            "abandoned. Likely a stalled first-run embedding-model download "
+            "(often a corporate TLS proxy) or a leaked sibling server process "
+            "holding the store. Restart Claude Code / the MCP server; raise "
+            "MEMEMO_INIT_TIMEOUT if the model is genuinely still downloading."
+        ) from e
 
 
 def _audit_log(tool: str) -> None:

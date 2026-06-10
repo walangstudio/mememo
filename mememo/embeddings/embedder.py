@@ -101,6 +101,21 @@ def _ensure_system_ca() -> None:
         _SYSTEM_CA_READY = True
 
 
+def _bound_hf_download_timeout() -> None:
+    """Cap HuggingFace download/etag requests so a stalled proxy fails fast.
+
+    huggingface_hub reads these per-request timeouts from the environment; set
+    them only when the user hasn't, so an explicit override still wins. Without a
+    bound a first-run download behind a TLS-intercepting proxy can stall for a
+    very long time with no signal. Tune with MEMEMO_HF_TIMEOUT (seconds).
+    """
+    import os
+
+    timeout = os.environ.get("MEMEMO_HF_TIMEOUT", "30").strip() or "30"
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", timeout)
+    os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", timeout)
+
+
 class Embedder:
     """
     Unified embedder supporting multiple models with device auto-detection.
@@ -176,6 +191,10 @@ class Embedder:
 
     def _load_model(self) -> None:
         """Load the embedding model."""
+        # Bound HuggingFace's download/etag request timeouts BEFORE importing
+        # sentence_transformers: huggingface_hub freezes these into module
+        # constants at import time, so setting the env afterward is a no-op.
+        _bound_hf_download_timeout()
         # Deferred import: sentence_transformers pulls torch (~seconds, cold).
         # Keep it out of module import so the MCP stdio handshake stays fast.
         from sentence_transformers import SentenceTransformer
@@ -210,6 +229,13 @@ class Embedder:
             # TLS proxy. Cached / offline loads never reach here, so the
             # process-wide SSL change is scoped to genuine first-run downloads.
             _ensure_system_ca()
+            logger.warning(
+                "Downloading embedding model %s (~%s MB) from HuggingFace — "
+                "first run only. If this stalls it is the download (commonly a TLS "
+                "proxy); it is bounded so it fails fast instead of hanging.",
+                model_info["name"],
+                model_info["size_mb"],
+            )
             self._model = SentenceTransformer(
                 model_info["name"],
                 device=self.device,

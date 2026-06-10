@@ -242,6 +242,16 @@ export MEMEMO_EMBEDDING_DEVICE="auto"  # or "cuda", "mps", "cpu"
 # stock certifi CA bundle.
 export MEMEMO_USE_SYSTEM_CA="1"
 
+# Hard ceiling (seconds) on first-call initialization — git detection + model /
+# vector-index load. Past this a tool call returns a readable error instead of
+# hanging forever (e.g. a stalled download or a leaked sibling server holding the
+# store). Set <= 0 to disable the bound.
+export MEMEMO_INIT_TIMEOUT="90"
+
+# Per-request timeout (seconds) for the first-run HuggingFace model download, so a
+# stalled fetch behind a proxy fails fast instead of stalling.
+export MEMEMO_HF_TIMEOUT="30"
+
 # Security settings
 export MEMEMO_SECRETS_DETECTION="true"
 export MEMEMO_AUTO_SANITIZE="false"
