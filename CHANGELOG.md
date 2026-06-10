@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.38.0] - 2026-06-10
+
+### Fixed
+- **First-call initialization can no longer hang the server forever.** `ensure_initialized`
+  held a blocking `threading.Lock` across the (synchronous) git detection + embedding-model /
+  vector-index load, so a single stalled init — a leaked sibling server holding the store, a wedged
+  git subprocess, or an unbounded first-run model download behind a TLS proxy — froze the event
+  loop and made *every* subsequent tool call hang silently at ~0% CPU. Init now runs in a worker
+  thread under a hard timeout (`MEMEMO_INIT_TIMEOUT`, default 90s): the loop stays responsive, and a
+  stall surfaces a readable error naming the likely cause instead of an infinite hang.
+- **First-run model download is bounded and loud.** The cache-miss download path now sets
+  `HF_HUB_DOWNLOAD_TIMEOUT` / `HF_HUB_ETAG_TIMEOUT` (tunable via `MEMEMO_HF_TIMEOUT`, default 30s)
+  and logs that a download is starting, so a stalled HuggingFace fetch fails fast with a clear
+  message rather than stalling indefinitely. 7 new tests.
+
 ## [0.37.0] - 2026-06-09
 
 ### Added
