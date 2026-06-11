@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.43.0] - 2026-06-11
+
+### Changed
+- **`index_repository` (MCP tool) is now non-blocking — it starts the index in the background and
+  returns immediately.** A full index is many seconds of CPU embedding; running it inline as one
+  MCP tool call held the caller's turn open the whole time, so the UI's elapsed-timer kept ticking
+  and the call read as a hang even though it was working. The tool now forks the index into a
+  detached `mememo index` process (`spawn_background_index`) and returns at once with a "started: N
+  files queued" message. Watch progress with `check_memory` — the repo's memory count climbs as it
+  embeds; the detached run's output (final summary + any errors) goes to `~/.mememo/logs/index.log`.
+  This supersedes v0.42.0's inline `Context.report_progress` streaming for the MCP tool (the client
+  wasn't surfacing it during a blocking call anyway); the blocking `index_repository` impl — used by
+  the CLI, hooks, and the detached process — keeps its progress/logging heartbeat. 4 new tests.
+
 ## [0.42.0] - 2026-06-11
 
 ### Added
