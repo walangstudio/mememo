@@ -11,6 +11,8 @@ Indexes repository with:
 
 import logging
 import os
+import subprocess
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from fnmatch import fnmatch
@@ -18,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..chunking import ChunkerFactory
+from ..chunking.language_detector import get_index_globs
 from ..chunking.ts_edges import EDGE_WALKERS
 from ..types.memory import CreateMemoryParams, MemoryRelationships
 from .schemas import IndexRepositoryParams, IndexRepositoryResponse
@@ -426,6 +429,103 @@ async def index_repository(
             files_skipped=0,
             duration_seconds=duration,
         )
+
+
+def spawn_background_index(
+    params: IndexRepositoryParams,
+    *,
+    log_dir: Path,
+    ignored_dirs: list[str] | None = None,
+    python_exe: str | None = None,
+) -> IndexRepositoryResponse:
+    """Spawn a detached ``mememo index`` and return immediately.
+
+    A full index is many seconds of CPU embedding; running it inline as one MCP
+    tool call holds the caller's turn open the whole time, which reads as a hang
+    (the UI timer keeps ticking). Instead we fork the index into a detached
+    process and return at once — progress is the per-repo count in ``check_memory``
+    climbing, and the child's stdout/stderr (final summary + any errors) lands in
+    ``<log_dir>/index.log``.
+    """
+    repo_path = Path(params.repo_path).resolve()
+    if not repo_path.is_dir():
+        return IndexRepositoryResponse(
+            success=False,
+            message=f"Repository path not found or not a directory: {params.repo_path}",
+            files_indexed=0,
+            chunks_created=0,
+            files_skipped=0,
+            duration_seconds=0.0,
+        )
+
+    skip = frozenset(ignored_dirs) if ignored_dirs else None
+    try:
+        n_files = len(_find_matching_files(repo_path, params.file_patterns, params.max_files, skip))
+    except Exception:
+        n_files = 0
+
+    argv = [
+        python_exe or sys.executable,
+        "-m",
+        "mememo",
+        "index",
+        str(repo_path),
+        "--max-files",
+        str(params.max_files),
+    ]
+    if not params.incremental:
+        argv.append("--full")
+    # Only forward patterns when the caller overrode the default set — otherwise
+    # the CLI's own default (the same get_index_globs list) applies.
+    if params.file_patterns and list(params.file_patterns) != list(get_index_globs()):
+        argv += ["--patterns", *params.file_patterns]
+
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "index.log"
+        # The child inherits its own copy of this handle at spawn time, so the
+        # parent closes its copy in the finally; the child keeps writing.
+        logf = open(log_path, "a", encoding="utf-8")
+        popen_kwargs: dict = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": logf,
+            "stderr": logf,
+            "cwd": str(repo_path),
+        }
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED | NEW_GROUP
+        else:
+            popen_kwargs["start_new_session"] = True
+        try:
+            proc = subprocess.Popen(argv, **popen_kwargs)
+        finally:
+            logf.close()
+    except OSError as e:
+        # Spawn or log-open failed (bad interpreter, permissions, …). Surface a
+        # clean error response instead of letting the MCP tool raise.
+        return IndexRepositoryResponse(
+            success=False,
+            message=f"Failed to start background index for '{repo_path.name}': {e}",
+            files_indexed=0,
+            chunks_created=0,
+            files_skipped=0,
+            duration_seconds=0.0,
+        )
+
+    mode = "incremental index" if params.incremental else "full re-index"
+    return IndexRepositoryResponse(
+        success=True,
+        message=(
+            f"Started {mode} of '{repo_path.name}' in the background (pid {proc.pid}): "
+            f"{n_files} files queued. This call does not block; watch progress with "
+            f"check_memory (the '{repo_path.name}' memory count climbs as it embeds). "
+            f"Full output in {log_path}."
+        ),
+        files_indexed=0,
+        chunks_created=0,
+        files_skipped=0,
+        duration_seconds=0.0,
+    )
 
 
 _DEFAULT_IGNORED_DIRS = frozenset(

@@ -10,7 +10,6 @@ All-Python code-aware memory server with:
 """
 
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -20,7 +19,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
 
-from fastmcp import Context, FastMCP
+from fastmcp import FastMCP
 
 # v0.6 MCP resources (T031)
 from . import resources as _resources
@@ -43,9 +42,6 @@ from .tools import (
 )
 from .tools import (
     end_session as end_session_impl,
-)
-from .tools import (
-    index_repository as index_repository_impl,
 )
 from .tools import (
     list_memories as list_memories_impl,
@@ -152,6 +148,7 @@ from .tools.graph_path import (
 from .tools.graph_path import (
     graph_path as graph_path_impl,
 )
+from .tools.index_repository import spawn_background_index
 from .tools.merge_branch import (
     MergeBranchParams,
     MergeBranchResponse,
@@ -650,9 +647,11 @@ async def delete_memory(params: DeleteMemoryParams) -> DeleteMemoryResponse:
 
 
 @mcp.tool()
-async def index_repository(params: IndexRepositoryParams, ctx: Context) -> IndexRepositoryResponse:
-    """Index a repo with AST-aware chunking (functions/classes/methods) across all
-    supported languages. Incremental by default; accepts glob file_patterns."""
+async def index_repository(params: IndexRepositoryParams) -> IndexRepositoryResponse:
+    """Start indexing a repo with AST-aware chunking (functions/classes/methods) across all
+    supported languages. Returns IMMEDIATELY — the index runs in a detached background
+    process so this call never blocks the turn on a multi-second embed. Watch progress with
+    check_memory (the repo's memory count climbs as it embeds). Incremental by default."""
     await ensure_initialized()
     _audit_log("index_repository")
     # Force full re-index if last snapshot is older than auto_reindex_age_minutes
@@ -667,17 +666,11 @@ async def index_repository(params: IndexRepositoryParams, ctx: Context) -> Index
                 )
                 params = params.model_copy(update={"incremental": False})
 
-    # Stream a heartbeat to the MCP client so a multi-second embed reads as
-    # progress, not a hang. Both calls are best-effort (a client may not request
-    # progress / logging); indexing must never fail because reporting did.
-    async def _progress(current: int, total: int, message: str) -> None:
-        with contextlib.suppress(Exception):
-            await ctx.report_progress(progress=current, total=total)
-        with contextlib.suppress(Exception):
-            await ctx.info(message)
-
-    return await index_repository_impl(
-        params, memory_manager, ignored_dirs=config.indexing.ignored_dirs, progress=_progress
+    # Fork the index into a detached process and return at once: a long inline
+    # embed would hold the caller's turn open the whole time and read as a hang.
+    log_dir = Path(config.storage.base_dir).parent / "logs"
+    return spawn_background_index(
+        params, log_dir=log_dir, ignored_dirs=config.indexing.ignored_dirs
     )
 
 
