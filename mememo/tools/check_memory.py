@@ -36,6 +36,15 @@ async def check_memory(
         # Get statistics from memory manager
         statistics = memory_manager.get_statistics()
 
+        # Surface leaked sibling servers (reconnect orphans contending for the
+        # store). Best-effort; never let process inspection fail the stats call.
+        try:
+            from ..single_instance import live_sibling_servers
+
+            siblings = live_sibling_servers()
+        except Exception:
+            siblings = []
+
         # Get git context if requested
         git_context = None
         if params.include_git_info:
@@ -48,11 +57,20 @@ async def check_memory(
             except Exception as e:
                 logger.warning(f"Failed to get git context: {e}")
 
+        message = "Memory statistics retrieved successfully"
+        if siblings:
+            pids = ", ".join(str(s.get("pid")) for s in siblings)
+            message += (
+                f" — WARNING: {len(siblings)} other mememo server(s) alive (pids {pids}) "
+                "contending for the store; they are leaked reconnect orphans."
+            )
+
         return CheckMemoryResponse(
             success=True,
-            message="Memory statistics retrieved successfully",
+            message=message,
             statistics=statistics,
             git_context=git_context,
+            sibling_servers=siblings,
         )
 
     except Exception as e:

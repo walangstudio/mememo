@@ -252,6 +252,13 @@ export MEMEMO_INIT_TIMEOUT="90"
 # stalled fetch behind a proxy fails fast instead of stalling.
 export MEMEMO_HF_TIMEOUT="30"
 
+# Single-instance guard: on startup the server reaps any OLDER mememo server
+# still running (a reconnect orphan whose stdin pipe stayed open), so leaked
+# servers can't pile up and contend for the store. Same-connection peers and
+# this server are never touched. Set to 1 to disable the reap (check_memory
+# still reports any contenders in `sibling_servers`).
+export MEMEMO_NO_REAP="0"
+
 # Security settings
 export MEMEMO_SECRETS_DETECTION="true"
 export MEMEMO_AUTO_SANITIZE="false"

@@ -283,6 +283,11 @@ class CheckMemoryResponse(BaseModel):
     message: str = Field(description="Success or error message")
     statistics: dict = Field(description="Memory statistics")
     git_context: dict | None = Field(default=None, description="Current git context")
+    sibling_servers: list[dict] = Field(
+        default_factory=list,
+        description="Other live mememo MCP-server processes contending for the store "
+        "(should be empty; a non-empty list means leaked reconnect orphans)",
+    )
 
 
 # ============================================================================

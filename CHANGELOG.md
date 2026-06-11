@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.40.0] - 2026-06-11
+
+### Fixed
+- **Reconnect orphans can no longer pile up and starve init.** On Windows especially, a Claude Code
+  `/mcp` reconnect spawns a fresh mememo server without reliably terminating the previous one — the
+  orphan's stdin pipe stays open, `mcp.run()` never sees EOF, and the process blocks forever. The
+  orphans accumulate and contend for the single `~/.mememo` store, which is what produced the
+  bounded-init error (v0.38.0) on reconnect. A new single-instance guard (`mememo/single_instance.py`)
+  records the live server's PID in `~/.mememo/server.pid`; on startup each new server scans live
+  processes and reaps every *older same-store* mememo server before taking over, so the pile can
+  never grow. The reap is doubly scoped to avoid killing the wrong process: by **age** (a
+  same-connection peer started within ~3s is spared, so the reap can't loop) and by **store** (a
+  server pointed at a different `MEMEMO_STORAGE_DIR` doesn't contend and is left alone). `mememo
+  serve` and the hook/CLI subcommands never match. Opt out of the terminate step with
+  `MEMEMO_NO_REAP=1`.
+
+### Changed
+- **`check_memory` now reports leaked sibling servers.** Its response gains `sibling_servers` (and a
+  warning in `message`) listing any other live mememo MCP-server processes contending for the store —
+  empty in the healthy case.
+- Added `psutil` as a runtime dependency (was dev-only) for the cross-platform process inspection the
+  guard needs. 19 new tests.
+
 ## [0.39.0] - 2026-06-10
 
 ### Changed

@@ -919,6 +919,12 @@ async def generate_wiki(params: WikiParams) -> WikiResponse:
 
 def run():
     """Run the FastMCP server."""
+    # Reap any leaked sibling server from a previous reconnect before we touch
+    # the store, so orphans can't pile up and starve init (see single_instance).
+    from . import single_instance
+
+    single_instance.claim_singleton(version=_VERSION)
+
     # Start the hook sidecar so `mememo capture|inject|pre-tool --hook` calls
     # from Claude Code don't each spawn a fresh ~3s python. Opt-out via env
     # so tests / scripts can suppress it.
