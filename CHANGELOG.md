@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.42.0] - 2026-06-11
+
+### Added
+- **Indexing now emits a progress heartbeat, so a long embed reads as progress, not a hang.**
+  Indexing a repo with a few large files spends most of its wall-clock in one blocking
+  embed per flush, and the only progress log fired every 100 *files* — so a 13-file /
+  ~800-chunk repo logged nothing for ~80s and looked frozen. `index_repository` now reports
+  at every meaningful step — a start line (`indexing N files (~M chunks to embed on cpu)`),
+  one heartbeat at the start of every embed batch (`embedding K chunks (… done, …s elapsed)`),
+  a graph-edge line, and a completion line with a phase breakdown (`embed Xs, graph Ys`).
+  Each is logged to `server.log` (an always-visible, advancing trail) and forwarded to the
+  MCP client via `Context.report_progress` + `ctx.info`, so a supporting client shows live
+  progress instead of a silent spinner. The reporting is best-effort and never fails the index.
+  1 new test.
+
 ## [0.41.0] - 2026-06-11
 
 ### Fixed
