@@ -82,8 +82,12 @@ def test_is_server_cmdline_matches_bare_module():
 
 
 def test_is_server_cmdline_matches_console_script():
-    assert si._is_server_cmdline(["C:\\venv\\Scripts\\mememo.exe"])
-    assert si._is_server_cmdline(["/venv/bin/mememo"])
+    # os.path.join keeps the path separator platform-correct (the real psutil
+    # cmdline uses the running platform's separator, and basename splits on it).
+    assert si._is_server_cmdline([os.path.join("venv", "Scripts", "mememo.exe")])
+    assert si._is_server_cmdline([os.path.join("venv", "bin", "mememo")])
+    assert si._is_server_cmdline(["mememo"])
+    assert si._is_server_cmdline(["mememo.exe"])
 
 
 def test_is_server_cmdline_rejects_hooks_and_subcommands():
