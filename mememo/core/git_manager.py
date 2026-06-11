@@ -33,6 +33,22 @@ AllowedGitCommand = Literal[
     "rev-parse", "branch", "config", "status", "diff", "log", "merge-base", "cat-file"
 ]
 
+# Hardened environment for every git invocation. mememo only ever runs local,
+# read-only git commands, so none of these helpers are needed — and each is a way
+# for git to spawn a long-lived grandchild (credential prompt, pager, fsmonitor
+# daemon) that inherits the captured stdout pipe and outlives `git` itself. When
+# that happens, subprocess.communicate() blocks forever draining the pipe and the
+# `timeout` never fires — which is exactly what froze the MCP server's first-call
+# init (a `rev-parse` stuck in communicate() for minutes past its 30s timeout).
+_GIT_SAFE_ENV = {
+    "GIT_TERMINAL_PROMPT": "0",  # fail instead of prompting for credentials
+    "GIT_OPTIONAL_LOCKS": "0",  # skip opportunistic index refresh / locks
+    "GIT_PAGER": "cat",  # never spawn a pager (log/diff)
+    "GCM_INTERACTIVE": "never",  # Git Credential Manager: no GUI/console prompt
+}
+# Per-invocation overrides that suppress daemon/helper grandchildren outright.
+_GIT_SAFE_FLAGS = ["-c", "core.fsmonitor=", "-c", "credential.helper="]
+
 
 class GitManager:
     """
@@ -66,14 +82,24 @@ class GitManager:
         if command not in ALLOWED_GIT_COMMANDS:
             raise ValueError(f"SECURITY: Git command '{command}' not allowed")
 
+        # `config` is a pure local key/value read-write that spawns no helper
+        # grandchildren, so it doesn't need the daemon-suppressing -c overrides —
+        # and skipping them avoids shadowing a `config --get core.fsmonitor` /
+        # `credential.helper` read with the override's empty value.
+        flags = [] if command == "config" else _GIT_SAFE_FLAGS
         try:
             result = subprocess.run(
-                ["git", command] + args,
+                ["git", *flags, command, *args],
                 cwd=cwd or os.getcwd(),
                 capture_output=True,
                 text=True,
                 timeout=30,
                 check=True,
+                # Detach from the parent's stdin (the MCP stdio pipe) so git can
+                # never block reading it, and harden the env so no interactive or
+                # daemon helper can spawn and wedge the captured pipe.
+                stdin=subprocess.DEVNULL,
+                env={**os.environ, **_GIT_SAFE_ENV},
             )
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:

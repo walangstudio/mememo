@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.41.0] - 2026-06-11
+
+### Fixed
+- **First-call init can no longer be wedged forever by a git subprocess — the real
+  root cause of the reconnect hang.** mememo runs git from inside the long-lived MCP
+  server, whose stdin is Claude Code's stdio pipe. `GitManager._exec_git` captured
+  git's stdout via a pipe but did not detach stdin or constrain git's environment, so
+  a git invocation could (a) inherit the MCP pipe as stdin and block, or (b) spawn a
+  long-lived helper — a credential prompt, a pager, or an `fsmonitor` daemon — that
+  outlived `git`, kept the captured stdout pipe open, and made `subprocess.communicate()`
+  block **past its own 30s timeout**. py-spy on a hung server caught exactly this: a
+  `rev-parse --git-common-dir` stuck in `communicate()` for minutes. Every git call now
+  runs with `stdin=subprocess.DEVNULL`, a hardened env (`GIT_TERMINAL_PROMPT=0`,
+  `GIT_OPTIONAL_LOCKS=0`, `GIT_PAGER=cat`, `GCM_INTERACTIVE=never`), and
+  `-c core.fsmonitor= -c credential.helper=` to suppress daemon/helper grandchildren.
+  All mememo git commands are local read-only operations, so none of these are needed.
+  The v0.38.0 bounded-init timeout still abandons a stuck init cleanly; this stops it
+  getting stuck in the first place (`config` is exempted from the `-c` overrides so it can't
+  shadow a real config read). 4 new tests.
+
 ## [0.40.0] - 2026-06-11
 
 ### Fixed
