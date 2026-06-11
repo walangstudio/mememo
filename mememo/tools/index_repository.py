@@ -12,6 +12,7 @@ Indexes repository with:
 import logging
 import os
 import time
+from collections.abc import Awaitable, Callable
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -25,6 +26,11 @@ if TYPE_CHECKING:
     from ..core.memory_manager import MemoryManager
 
 logger = logging.getLogger(__name__)
+
+# Optional progress sink: (current_chunks, total_estimate, human_message). Used to
+# emit a heartbeat during the long embedding phase so a caller (and the MCP client)
+# can tell "working" from "hung". Best-effort — never lets reporting break indexing.
+ProgressFn = Callable[[int, int, str], Awaitable[None]]
 
 # Languages that emit edges: Python (AST chunker) plus every tree-sitter walker
 # registered in ts_edges.EDGE_WALKERS. Informational now — chunk_file_with_edges
@@ -78,6 +84,7 @@ async def index_repository(
     params: IndexRepositoryParams,
     memory_manager: "MemoryManager",
     ignored_dirs: list[str] | None = None,
+    progress: ProgressFn | None = None,
 ) -> IndexRepositoryResponse:
     """
     Index a repository with code-aware chunking.
@@ -86,11 +93,30 @@ async def index_repository(
         params: Index parameters
         memory_manager: Memory manager instance
         ignored_dirs: Directory names to exclude from indexing
+        progress: Optional async sink for progress heartbeats (current, total, message).
 
     Returns:
         Index response with statistics
     """
     start_time = time.time()
+
+    # Total-chunk estimate, refined once the file count is known. Held in a
+    # one-element list so the nested _report (defined before discovery) can read
+    # the later value without a function-attribute hack.
+    est_total = [1]
+
+    async def _report(current: int, message: str) -> None:
+        """Log a heartbeat and forward it to the optional progress sink.
+
+        Always logs (so server.log is a clear, advancing trail even when no client
+        sink is attached); the sink is best-effort and never raised through.
+        """
+        logger.info("mememo index: %s", message)
+        if progress is not None:
+            try:
+                await progress(current, max(current, est_total[0]), message)
+            except Exception:
+                pass
 
     try:
         # Validate repo path
@@ -138,6 +164,17 @@ async def index_repository(
         # Flag a slow model/CPU combo up front (the usual "indexing hangs" cause).
         _warn_if_slow_embedding(memory_manager.embedder, len(files_to_index))
 
+        # Estimate the total chunk count so progress has a denominator. Coarse
+        # (refined as real chunks land), but enough to drive a bar and a "%".
+        est_chunks = max(len(files_to_index) * _EST_CHUNKS_PER_FILE, 1)
+        est_total[0] = est_chunks
+        if files_to_index:
+            await _report(
+                0,
+                f"indexing {len(files_to_index)} files from {repo_path.name} "
+                f"(~{est_chunks} chunks to embed on {getattr(memory_manager.embedder, 'device', '?')})",
+            )
+
         # Initialize chunker factory
         chunker_factory = ChunkerFactory()
 
@@ -172,6 +209,17 @@ async def index_repository(
             nonlocal chunks_created
             if not pending_params:
                 return
+            # Heartbeat at the start of every embed batch — this is where the wall
+            # clock goes (one blocking model.encode per flush), so without a line
+            # here a few-file/large-file repo looks frozen for the whole embed.
+            # Emitted before the snapshot so the snapshot+clear still immediately
+            # precede the embed await (the anti-duplicate invariant below).
+            await _report(
+                chunks_created,
+                f"embedding {len(pending_params)} chunks "
+                f"({chunks_created} done, {files_indexed}/{len(files_to_index)} files, "
+                f"{time.time() - start_time:.0f}s elapsed)",
+            )
             # Snapshot and clear *before* the await: if create_memories_batch
             # raises, the buffers are already empty, so a later flush can't
             # re-submit these chunks and create duplicates.
@@ -287,12 +335,17 @@ async def index_repository(
 
         await _flush()
 
-        duration = time.time() - start_time
+        embed_done = time.time()
+        duration = embed_done - start_time
         files_skipped = sum(skip_reasons.values())
 
         # v0.5 edge pass — resolve + persist the edges collected during the main
         # loop against the in-memory symbol table. The walk already happened once
         # per file above. Best-effort: log and continue on failure.
+        if all_raw_edges:
+            await _report(
+                chunks_created, f"resolving {len(all_raw_edges)} graph edges ({duration:.0f}s)"
+            )
         try:
             await _resolve_and_persist_edges(repo_path, memory_manager, all_raw_edges, symbols)
         except Exception as e:
@@ -337,10 +390,19 @@ async def index_repository(
         if merkle is not None:
             merkle.commit()
 
-        msg = f"Indexed {files_indexed} files ({chunks_created} chunks) in {duration:.2f}s"
+        total_duration = time.time() - start_time
+        # Everything after the embed phase — edge resolution + git bookkeeping —
+        # so the two parts sum to the total instead of leaving a gap.
+        post_embed_seconds = total_duration - duration
+        msg = (
+            f"Indexed {files_indexed} files ({chunks_created} chunks) in {total_duration:.2f}s "
+            f"(embed {duration:.0f}s, graph+commit {post_embed_seconds:.0f}s)"
+        )
         if skip_reasons:
             reason_parts = [f"{count} {reason}" for reason, count in sorted(skip_reasons.items())]
             msg += f" | Skipped: {', '.join(reason_parts)}"
+
+        await _report(chunks_created, msg)
 
         return IndexRepositoryResponse(
             success=True,
@@ -349,7 +411,7 @@ async def index_repository(
             chunks_created=chunks_created,
             files_skipped=files_skipped,
             skip_reasons=skip_reasons,
-            duration_seconds=duration,
+            duration_seconds=total_duration,
         )
 
     except Exception as e:

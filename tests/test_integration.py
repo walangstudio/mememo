@@ -532,6 +532,41 @@ async def test_index_batch_failure_aborts_without_merkle_commit(test_env):
 
 
 @pytest.mark.asyncio
+async def test_index_emits_progress_heartbeats(test_env):
+    """Indexing emits start + per-flush + completion heartbeats so a long embed
+    reads as progress, not a hang — the fix for 'it looks frozen for 80s'."""
+    from mememo.tools.index_repository import index_repository
+    from mememo.tools.schemas import IndexRepositoryParams
+
+    memory_manager = test_env
+    repo_path = Path(memory_manager.storage_manager.base_dir)
+    for i in range(3):
+        (repo_path / f"mod{i}.py").write_text(
+            f"def f{i}(x):\n    '''doc'''\n    return x + {i}\n\n"
+            f"class C{i}:\n    def m(self):\n        return f{i}(1)\n"
+        )
+
+    events: list[tuple[int, int, str]] = []
+
+    async def _rec(current: int, total: int, message: str) -> None:
+        events.append((current, total, message))
+
+    params = IndexRepositoryParams(repo_path=str(repo_path), incremental=False)
+    resp = await index_repository(params, memory_manager, progress=_rec)
+
+    assert resp.success
+    assert events, "expected at least one progress heartbeat"
+    currents = [c for c, _t, _m in events]
+    assert currents == sorted(currents), "progress current must be non-decreasing"
+    assert all(c <= t for c, t, _m in events), "current must never exceed total"
+    msgs = " | ".join(m.lower() for _c, _t, m in events)
+    assert "indexing" in msgs  # a clear start line
+    assert "embedding" in msgs  # the heartbeat that was missing during the embed
+    assert "indexed" in msgs  # a clear completion line
+    assert events[-1][0] == resp.chunks_created  # final event reflects the real count
+
+
+@pytest.mark.asyncio
 async def test_persistent_memory_types(test_env):
     """decision, analysis, conversation memories are never marked stale."""
     memory_manager = test_env

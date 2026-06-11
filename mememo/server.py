@@ -10,6 +10,7 @@ All-Python code-aware memory server with:
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -19,7 +20,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 # v0.6 MCP resources (T031)
 from . import resources as _resources
@@ -649,7 +650,7 @@ async def delete_memory(params: DeleteMemoryParams) -> DeleteMemoryResponse:
 
 
 @mcp.tool()
-async def index_repository(params: IndexRepositoryParams) -> IndexRepositoryResponse:
+async def index_repository(params: IndexRepositoryParams, ctx: Context) -> IndexRepositoryResponse:
     """Index a repo with AST-aware chunking (functions/classes/methods) across all
     supported languages. Incremental by default; accepts glob file_patterns."""
     await ensure_initialized()
@@ -665,8 +666,18 @@ async def index_repository(params: IndexRepositoryParams) -> IndexRepositoryResp
                     f"{config.indexing.auto_reindex_age_minutes}m, forcing full re-index"
                 )
                 params = params.model_copy(update={"incremental": False})
+
+    # Stream a heartbeat to the MCP client so a multi-second embed reads as
+    # progress, not a hang. Both calls are best-effort (a client may not request
+    # progress / logging); indexing must never fail because reporting did.
+    async def _progress(current: int, total: int, message: str) -> None:
+        with contextlib.suppress(Exception):
+            await ctx.report_progress(progress=current, total=total)
+        with contextlib.suppress(Exception):
+            await ctx.info(message)
+
     return await index_repository_impl(
-        params, memory_manager, ignored_dirs=config.indexing.ignored_dirs
+        params, memory_manager, ignored_dirs=config.indexing.ignored_dirs, progress=_progress
     )
 
 
