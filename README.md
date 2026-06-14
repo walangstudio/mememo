@@ -253,10 +253,12 @@ export MEMEMO_INIT_TIMEOUT="90"
 export MEMEMO_HF_TIMEOUT="30"
 
 # Single-instance guard: on startup the server reaps any OLDER mememo server
-# still running (a reconnect orphan whose stdin pipe stayed open), so leaked
-# servers can't pile up and contend for the store. Same-connection peers and
-# this server are never touched. Set to 1 to disable the reap (check_memory
-# still reports any contenders in `sibling_servers`).
+# from THE SAME Claude session still running (a reconnect orphan whose stdin
+# pipe stayed open), so leaked servers can't pile up and contend for the store.
+# Scoped by controlling client, so a DIFFERENT concurrent Claude session's live
+# server (same store, different window) is never touched; same-connection peers
+# and this server's own launcher are also spared. Set to 1 to disable the reap
+# (check_memory still reports same-session contenders in `sibling_servers`).
 export MEMEMO_NO_REAP="0"
 
 # Security settings

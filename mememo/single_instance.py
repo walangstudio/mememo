@@ -7,20 +7,26 @@ orphans pile up and contend for the single ``~/.mememo`` store, starving the new
 server's init (the bounded-init error from v0.38.0 is the visible symptom).
 
 This guard makes each new server, on startup, reap every *older* mememo server
-that targets the *same store* so the pile can never grow. Two scoping rules keep
-it from killing the wrong process:
+that belongs to the *same Claude session* so the pile can never grow. Three
+scoping rules keep it from killing the wrong process — above all a *different*
+concurrent Claude session's live server, which shares our store but is not ours
+to kill:
 
+* **Client** — the deciding rule. A ``/mcp`` reconnect re-spawns the server under
+  the *same* controlling client (the ``claude``/``node`` process that owns the
+  MCP stdio); a different window is a different client PID. We walk past the venv
+  launcher (also Python) to that nearest non-Python ancestor and reap only
+  servers that share ours. If we cannot resolve our own client we reap nothing —
+  a leaked orphan lingering is far cheaper than killing a live sibling session.
 * **Age** — a single connect can spawn two server processes milliseconds apart
-  (e.g. a venv interpreter and the global one). Only servers that started more
-  than a short same-connection window before us are reaped; a same-connection
-  peer's stdio pipe is live and killing it would loop.
+  (the venv launcher and the worker). Only servers older than a short
+  same-connection window are eligible, and our own ancestors are always spared,
+  so we never reap the launcher we are running under.
 * **Store** — a server pointed at a *different* ``MEMEMO_STORAGE_DIR`` doesn't
-  contend with us, so it's left alone. Only when we can positively confirm a
-  different store do we skip; an unreadable environment falls back to reaping
-  (same machine, almost certainly the same default store).
+  contend with us, so it's left alone even within our client.
 
 ``server.pid`` records the current server for diagnostics, and
-``live_sibling_servers()`` lets ``check_memory`` report same-store contenders.
+``live_sibling_servers()`` lets ``check_memory`` report same-session contenders.
 
 Opt out of the terminate step with ``MEMEMO_NO_REAP=1`` (the pidfile is still
 written and the sibling scan still runs; only the kill is skipped).
@@ -111,6 +117,72 @@ def _targets_my_store(proc, mine: str):
     return _resolve_store(env.get("MEMEMO_STORAGE_DIR")) == mine
 
 
+# Extra (non ``python*``-prefixed) process names that still belong to a mememo
+# launch chain and must be walked PAST to reach the real client (claude/node).
+_PY_LAUNCHER_NAMES = frozenset({"py", "py.exe", "pyw", "pyw.exe"})
+
+
+def _is_python_proc(name: str) -> bool:
+    """True for any interpreter/launcher in a mememo launch chain — the venv
+    launcher and the worker. Prefix match so versioned names (``python3.12``,
+    ``python3.13.exe``) and the bare/``.exe`` forms are all covered; the real
+    controlling client (``claude``/``node``/``Code``) never starts with ``python``."""
+    n = (name or "").lower()
+    return n.startswith("python") or n in _PY_LAUNCHER_NAMES
+
+
+def _proc(ps, pid):
+    with contextlib.suppress(Exception):
+        return ps.Process(pid)
+    return None
+
+
+def _client_pid(pid, ps):
+    """PID of the nearest non-Python ancestor — the MCP client (``claude``/``node``)
+    that spawned this server, walking past the venv launcher. ``None`` if the chain
+    can't be resolved (a dead or unreadable parent). Two servers share a Claude
+    session iff this returns the same PID for both."""
+    cur = _proc(ps, pid)
+    if cur is None:
+        return None
+    seen = {pid}
+    for _ in range(16):  # bounded — real launch chains are 2-3 deep
+        try:
+            parent = cur.parent()
+        except Exception:
+            return None
+        if parent is None or parent.pid in seen:
+            return None
+        seen.add(parent.pid)
+        try:
+            name = parent.name()
+        except Exception:
+            return None
+        if not _is_python_proc(name):
+            return parent.pid
+        cur = parent
+    return None
+
+
+def _ancestor_pids(pid, ps) -> set[int]:
+    """All ancestor PIDs of ``pid`` so we never reap a process we descend from
+    (most importantly the venv launcher that spawned us)."""
+    out: set[int] = set()
+    cur = _proc(ps, pid)
+    if cur is None:
+        return out
+    for _ in range(16):
+        try:
+            parent = cur.parent()
+        except Exception:
+            break
+        if parent is None or parent.pid in out:
+            break
+        out.add(parent.pid)
+        cur = parent
+    return out
+
+
 def _read(path: Path) -> dict | None:
     with contextlib.suppress(OSError, json.JSONDecodeError):
         return json.loads(path.read_text(encoding="utf-8"))
@@ -150,14 +222,16 @@ def _terminate(proc) -> bool:
     return True
 
 
-def reap_orphan_servers(own_create_time=None) -> int:
-    """Terminate every same-store mememo server that started before this one
+def reap_orphan_servers(own_create_time=None, own_client=None) -> int:
+    """Terminate every *same-session* mememo server that started before this one
     (minus the same-connection window). Returns the number reaped.
 
-    Iterating live processes (rather than trusting a recorded PID) makes this
-    robust to a connect spawning multiple server processes: each is matched by
-    its own live cmdline, so PID reuse can't mislead us and a leaked peer can't
-    survive just because it wasn't the one in the pidfile.
+    "Same session" = sharing our controlling client PID. A *different* concurrent
+    Claude session's server has a different client and is never touched, even
+    though it shares our store. Iterating live processes (rather than trusting a
+    recorded PID) makes this robust to a connect spawning multiple server
+    processes: each is matched by its own live cmdline, so PID reuse can't mislead
+    us and a leaked peer can't survive just because it wasn't in the pidfile.
     """
     ps = _psutil()
     if ps is None:
@@ -166,26 +240,36 @@ def reap_orphan_servers(own_create_time=None) -> int:
     if own_ct is None:
         # Without our own start time we can't tell an orphan from a live peer.
         return 0
-    mine = _my_store()
     me = os.getpid()
+    my_client = own_client if own_client is not None else _client_pid(me, ps)
+    if my_client is None:
+        # Can't establish our own controlling client → refuse to reap anything,
+        # rather than risk killing a different live session that shares our store.
+        return 0
+    my_ancestors = _ancestor_pids(me, ps)
+    mine = _my_store()
     reaped = 0
     for proc in ps.process_iter(["pid", "cmdline", "create_time"]):
         try:
             info = proc.info
             pid = info.get("pid")
-            if pid == me or pid is None:
-                continue
+            if pid is None or pid == me or pid in my_ancestors:
+                continue  # never reap ourselves or a process we descend from
             ct = info.get("create_time")
             if ct is None or (own_ct - ct) <= _SAME_CONNECT_WINDOW:
                 continue  # younger than us, or a same-connection peer
             if not _is_server_cmdline(info.get("cmdline") or []):
                 continue
+            if _client_pid(pid, ps) != my_client:
+                continue  # a different Claude session's live server — leave it alone
             if _targets_my_store(proc, mine) is False:
                 continue  # a different store — it doesn't contend with us
             if _terminate(proc):
                 reaped += 1
                 logger.warning(
-                    "reaped leaked mememo server pid=%d (orphaned by a previous reconnect)", pid
+                    "reaped leaked mememo server pid=%d "
+                    "(orphaned by a previous reconnect of this session)",
+                    pid,
                 )
         except Exception:
             # A process can vanish or deny access mid-iteration; never let one
@@ -211,31 +295,41 @@ def claim_singleton(version: str = "unknown") -> None:
         logger.exception("single-instance guard failed (continuing)")
 
 
-def live_sibling_servers() -> list[dict]:
-    """Other live same-store mememo MCP-server processes (excluding self).
+def live_sibling_servers(own_client=None) -> list[dict]:
+    """Other live *same-session* mememo MCP-server processes (excluding self and
+    our own launcher).
 
-    Returns ``[{"pid", "exe", "create_time"}, ...]`` — the contenders for our
-    store, for ``check_memory`` diagnostics. Empty when psutil is unavailable or
-    no siblings exist. A server pointed at a different store is excluded.
+    Returns ``[{"pid", "exe", "create_time"}, ...]`` — genuine contenders for our
+    store from this same Claude session (leaked reconnect orphans), for
+    ``check_memory`` diagnostics. Scoped to our controlling client, so a
+    *different* concurrent Claude session's server is not reported as a problem.
+    Empty when psutil is unavailable, our client can't be resolved, or none exist.
     """
-    me = os.getpid()
     ps = _psutil()
     if ps is None:
         return []
+    me = os.getpid()
+    my_client = own_client if own_client is not None else _client_pid(me, ps)
+    if my_client is None:
+        return []
+    my_ancestors = _ancestor_pids(me, ps)
     mine = _my_store()
     out: list[dict] = []
     for proc in ps.process_iter(["pid", "exe", "cmdline", "create_time"]):
         try:
             info = proc.info
-            if info.get("pid") == me:
+            pid = info.get("pid")
+            if pid is None or pid == me or pid in my_ancestors:
                 continue
             if not _is_server_cmdline(info.get("cmdline") or []):
+                continue
+            if _client_pid(pid, ps) != my_client:
                 continue
             if _targets_my_store(proc, mine) is False:
                 continue
             out.append(
                 {
-                    "pid": info.get("pid"),
+                    "pid": pid,
                     "exe": info.get("exe"),
                     "create_time": info.get("create_time"),
                 }
