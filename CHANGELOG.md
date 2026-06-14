@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.44.0] - 2026-06-14
+
+### Fixed
+- **The reconnect guard no longer kills other concurrent Claude sessions' servers — the
+  cause of "I have to reconnect mememo every session."** v0.40.0's reap matched any OLDER
+  `-m mememo` server on the same store and terminated it. But every Claude session shares
+  the default store, so starting (or reconnecting) a session in one window reaped the live
+  server of every other open window — which then showed disconnected, prompting a manual
+  `/mcp` reconnect, which reaped back, a ping-pong storm. It also took down each victim's
+  `hookd` daemon mid-prompt, so the `UserPromptSubmit` inject hook failed with a non-blocking,
+  no-stderr error. The reap is now scoped to the **same controlling client**: it walks past
+  the venv launcher to the nearest non-Python ancestor (the `claude`/`node` process that owns
+  the MCP stdio) and reaps only servers that share ours — a leaked reconnect orphan from *this*
+  session. A different session has a different client PID and is left alone, and if we can't
+  resolve our own client we reap nothing. Our own launcher (and any ancestor) is always spared.
+  `live_sibling_servers`/`check_memory` are scoped the same way, so concurrent sessions are no
+  longer reported as leaked orphans. Workaround for older builds: `MEMEMO_NO_REAP=1`. 7 new tests.
+
 ## [0.43.0] - 2026-06-11
 
 ### Changed
