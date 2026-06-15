@@ -1,8 +1,9 @@
 """Client side of the hook sidecar — see mememo/hookd.py.
 
-Reads ``~/.mememo/.daemon.json`` (or ``$MEMEMO_STORAGE_DIR/../.daemon.json``),
-POSTs the hook payload to the running MCP server, prints its captured
-stdout/stderr verbatim, and exits with the server-reported code.
+Scans the per-server ``.daemon*.json`` pointers in ``~/.mememo`` (or
+``$MEMEMO_STORAGE_DIR/..``), picks the live daemon launched from this hook's cwd,
+POSTs the hook payload to that MCP server, prints its captured stdout/stderr
+verbatim, and exits with the server-reported code.
 
 If anything about the daemon is unreachable (file missing, pid dead, port
 refused), raises :class:`DaemonUnavailableError` so the caller can fall back to the
@@ -24,9 +25,17 @@ class DaemonUnavailableError(RuntimeError):
     """Raised when the sidecar can't be reached and the caller should fall back."""
 
 
-def _discovery_path() -> Path:
+def _discovery_dir() -> Path:
     base = Path(os.environ.get("MEMEMO_STORAGE_DIR") or (Path.home() / ".mememo" / "data"))
-    return base.parent / ".daemon.json"
+    return base.parent
+
+
+def _candidate_discovery_files() -> list[Path]:
+    """Every published hookd pointer in the store dir.
+
+    Matches both the per-server ``.daemon.<pid>.json`` and the legacy single
+    ``.daemon.json`` (back-compat with a pre-upgrade server still running)."""
+    return sorted(_discovery_dir().glob(".daemon*.json"))
 
 
 def _pid_alive(pid: int) -> bool:
@@ -64,22 +73,53 @@ def _port_open(port: int, timeout: float = 0.4) -> bool:
         return False
 
 
-def _load_discovery() -> dict:
-    path = _discovery_path()
-    if not path.exists():
-        raise DaemonUnavailableError(f"no discovery file at {path}")
+def _read_discovery(path: Path) -> dict | None:
+    """Parse one discovery file; None if unreadable, malformed, missing required
+    keys, or pid/port aren't integers. A garbage file (truncated, or a foreign
+    schema with a string pid) must be skipped — never crash discovery for every
+    other daemon, which the caller only guards against via DaemonUnavailableError."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        raise DaemonUnavailableError(f"bad discovery file: {e}") from e
-    for key in ("pid", "port", "token"):
-        if key not in data:
-            raise DaemonUnavailableError(f"discovery file missing {key!r}")
-    if not _pid_alive(int(data["pid"])):
-        raise DaemonUnavailableError(f"daemon pid {data['pid']} not alive")
-    if not _port_open(int(data["port"])):
-        raise DaemonUnavailableError(f"daemon port {data['port']} not reachable")
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or not all(k in data for k in ("pid", "port", "token")):
+        return None
+    try:
+        data["pid"] = int(data["pid"])
+        data["port"] = int(data["port"])
+    except (TypeError, ValueError):
+        return None
     return data
+
+
+def _load_discovery() -> dict:
+    """Pick a live hookd to talk to.
+
+    Scans every ``.daemon*.json`` in the store dir, keeps the ones whose process is
+    alive and whose port answers, and prefers the daemon launched from the same cwd
+    as this hook process — that's the server holding our repo lane. Falls back to any
+    live daemon (the global lane is shared), else raises so the caller uses the slow
+    path.
+    """
+    files = _candidate_discovery_files()
+    if not files:
+        raise DaemonUnavailableError(f"no discovery file in {_discovery_dir()}")
+    my_cwd = os.path.normcase(os.getcwd())
+    live: list[dict] = []
+    for path in files:
+        data = _read_discovery(path)
+        if data is None:
+            continue
+        if not _pid_alive(data["pid"]):  # already coerced to int by _read_discovery
+            continue
+        if not _port_open(data["port"]):
+            continue
+        if os.path.normcase(str(data.get("cwd", ""))) == my_cwd:
+            return data  # exact repo-lane match — the server for this window
+        live.append(data)
+    if live:
+        return live[0]
+    raise DaemonUnavailableError(f"no live daemon among {len(files)} discovery file(s)")
 
 
 def run(hook_name: str, stdin_text: str | None = None) -> int:

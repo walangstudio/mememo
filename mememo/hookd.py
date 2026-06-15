@@ -86,10 +86,37 @@ def _default_hook_factories() -> dict[str, HookFactory]:
     return factories
 
 
-def _discovery_path() -> Path:
+def _discovery_dir() -> Path:
     base = Path(os.environ.get("MEMEMO_STORAGE_DIR") or (Path.home() / ".mememo" / "data"))
     base.parent.mkdir(parents=True, exist_ok=True)
-    return base.parent / ".daemon.json"
+    return base.parent
+
+
+def _discovery_path(pid: int | None = None) -> Path:
+    """Per-server discovery file ``.daemon.<pid>.json``.
+
+    Each MCP server publishes its OWN file so concurrent Claude windows that share
+    one store never clobber each other's hookd pointer. The old single
+    ``.daemon.json`` meant the last server to start hijacked every window's inject
+    hook (recalling the wrong repo lane), and its exit deleted the pointer the other
+    live windows were still using. The client picks the live file whose ``cwd``
+    matches its own, so each window's hook reaches the server holding its repo lane.
+    """
+    return _discovery_dir() / f".daemon.{os.getpid() if pid is None else pid}.json"
+
+
+def _sweep_dead_discovery(keep: Path) -> None:
+    """Best-effort removal of per-server discovery files whose process is gone (a
+    server killed without running its atexit). Never touches a live peer's file."""
+    from .hookclient import _pid_alive
+
+    for p in _discovery_dir().glob(".daemon*.json"):  # incl. a stale legacy .daemon.json
+        if p == keep:
+            continue
+        with contextlib.suppress(Exception):
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if not _pid_alive(int(data.get("pid", -1))):
+                p.unlink()
 
 
 def _write_discovery(path: Path, payload: dict) -> None:
@@ -210,8 +237,15 @@ def start(
             "port": port,
             "token": token,
             "version": version,
+            # Normalised launch cwd; the client routes by matching this so a window's
+            # inject hook reaches the server holding its repo lane (see _discovery_path).
+            "cwd": os.path.normcase(os.getcwd()),
         },
     )
+    # Drop pointers left by sibling servers that died without cleanup so the dir
+    # doesn't fill with stale files; never removes a live peer's pointer.
+    with contextlib.suppress(Exception):
+        _sweep_dead_discovery(keep=disc)
     logger.info("hookd listening on 127.0.0.1:%d (discovery: %s)", port, disc)
 
     def _shutdown() -> None:

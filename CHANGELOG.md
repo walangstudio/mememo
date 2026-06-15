@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.45.0] - 2026-06-15
+
+### Fixed
+- **The hook sidecar's discovery file is now per-server, so concurrent Claude windows on one
+  store stop clobbering each other's `hookd` pointer.** Every server published to a single
+  shared `~/.mememo/.daemon.json`, written unconditionally and **unlinked unconditionally on
+  exit**. With more than one window open on the default store that meant: the last server to
+  start hijacked *every* window's inject hook — so a window's `UserPromptSubmit` recalled the
+  wrong server's repo lane — and whichever server exited first deleted the pointer the others
+  were still using (a non-clean exit left a stale pointer behind). Each server now writes its
+  own `.daemon.<pid>.json` carrying its launch `cwd`; the client scans all of them, keeps the
+  live ones (pid alive + port reachable), and routes to the daemon launched from its own cwd —
+  the server holding its repo lane — falling back to any live daemon, then the slow path.
+  Startup sweeps pointers left by servers that died without cleanup; shutdown removes only our
+  own. The legacy single `.daemon.json` is still read for back-compat with a pre-upgrade server.
+  6 new tests.
+
 ## [0.44.0] - 2026-06-14
 
 ### Fixed
