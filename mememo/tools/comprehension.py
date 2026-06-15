@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from pydantic import BaseModel, Field
 
+from ..types import RelationType
 from ._repo_context import resolve_repo_branch
 
 if TYPE_CHECKING:
@@ -692,3 +693,449 @@ async def generate_wiki(
             message = f"Generated the wiki but could not write {str(dest)!r}: {exc}"
 
     return _resp(wiki=wiki, written_to=written, message=message)
+
+
+# --------------------------------------------------------------------------
+# explore — agentic multi-hop graph traversal toward a goal
+# --------------------------------------------------------------------------
+
+# Per-hop score falloff: a node two hops out is worth DECAY**2 of its seed, so
+# semantic seeds outrank distant nodes when the budget forces a cut.
+_EXPLORE_DECAY = 0.6
+_EXPLORE_TRACE_CAP = 40
+
+
+def _in_chunks(items, size):
+    items = list(items)
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
+def _node_meta(conn, mids) -> dict[str, tuple[str, str, str]]:
+    """memory id -> (file_path, class_name, function_name) for labels + citations."""
+    meta: dict[str, tuple[str, str, str]] = {}
+    for chunk in _in_chunks(mids, 400):
+        ph = ",".join("?" * len(chunk))
+        for r in conn.execute(
+            f"SELECT id, file_path, class_name, function_name FROM memories WHERE id IN ({ph})",
+            chunk,
+        ).fetchall():
+            meta[r["id"]] = (r["file_path"] or "", r["class_name"] or "", r["function_name"] or "")
+    return meta
+
+
+class ExploreHop(BaseModel):
+    source: str
+    type: str
+    target: str
+    depth: int
+
+
+class ExploreParams(BaseModel):
+    goal: str = Field(description="What to understand or trace through the codebase.")
+    repo_path: str | None = Field(
+        default=None, description="Repo path to detect repo_id/branch from. CWD if None."
+    )
+    repo_id: str | None = Field(default=None, description="Override repo_id (skips detection).")
+    branch: str | None = Field(default=None, description="Override branch (skips detection).")
+    max_hops: int = Field(
+        default=3, ge=1, le=6, description="How many edges deep to traverse from the seed nodes."
+    )
+    beam: int = Field(
+        default=6, ge=1, le=20, description="Seed count and how many new nodes to keep per hop."
+    )
+    max_nodes: int = Field(
+        default=40, ge=1, le=100, description="Total node budget for the explored subgraph."
+    )
+    edge_types: list[RelationType] | None = Field(
+        default=None, description="Restrict traversal to these edge types (default: all)."
+    )
+
+
+class ExploreResponse(BaseModel):
+    success: bool
+    goal: str
+    answer: str = ""
+    citations: list[AskCitation] = Field(default_factory=list)
+    trace: list[ExploreHop] = Field(default_factory=list)
+    nodes_visited: int = 0
+    hops: int = 0
+    truncated: bool = False
+    passthrough: bool = False
+    passthrough_prompt: str = ""
+    message: str = ""
+
+
+_EXPLORE_SYSTEM = (
+    "You explain how a codebase accomplishes something by reasoning over a multi-hop slice "
+    "of its call/dependency graph. Use ONLY the numbered code excerpts and the traversal "
+    "trace provided. Trace the path from the entry points to the goal, citing every claim "
+    "with the source number in square brackets, e.g. [2]. If the slice does not reach the "
+    "answer, say what's missing rather than guessing. Be concise and concrete."
+)
+
+
+async def explore(
+    params: ExploreParams,
+    memory_manager: MemoryManager,
+    llm_adapter: LLMAdapter,
+) -> ExploreResponse:
+    """Seed on the goal, beam-expand the graph multi-hop, synthesise from the slice."""
+    from ..diagrams import _label
+    from ..types.memory import SearchParams
+    from .generate_diagram import _read_source
+
+    repo_id, branch = await resolve_repo_branch(
+        params.repo_id, params.branch, params.repo_path, memory_manager
+    )
+    if not repo_id or not branch:
+        return ExploreResponse(
+            success=False,
+            goal=params.goal,
+            message=(
+                "Could not determine repo context. Pass repo_id and branch, or run from "
+                "inside the indexed repo."
+            ),
+        )
+
+    storage = memory_manager.storage_manager
+    conn = storage.conn
+
+    # Seed at the most goal-relevant chunks (semantic + lexical), then walk outward.
+    seeds = await memory_manager.search_similar(
+        SearchParams(
+            query=params.goal,
+            top_k=params.beam,
+            min_similarity=0.0,
+            hybrid=True,
+            repo_id=repo_id or None,
+            branch=branch or None,
+        )
+    )
+    if not seeds:
+        return ExploreResponse(
+            success=False,
+            goal=params.goal,
+            message=(
+                "No indexed code matched the goal. Index the repo first (index_repository), "
+                "then explore."
+            ),
+        )
+
+    scores: dict[str, float] = {}
+    for r in seeds:
+        scores[r.memory.id] = max(scores.get(r.memory.id, 0.0), float(r.similarity))
+    visited: set[str] = set(scores)
+    frontier: list[str] = list(scores)
+    type_filter = set(params.edge_types) if params.edge_types else None
+    raw_trace: list[tuple[str, str | None, str | None, str, int]] = []
+    seen_edges: set[tuple[str, str | None, str | None, str]] = set()
+    truncated = False
+    hops_done = 0
+
+    for hop in range(1, params.max_hops + 1):
+        if not frontier or len(visited) >= params.max_nodes:
+            break
+        hops_done = hop
+        cand: dict[str, float] = {}
+        edges: list[tuple[str, str | None, str | None, str]] = []
+        for ids in _in_chunks(frontier, 400):
+            ph = ",".join("?" * len(ids))
+            rows = conn.execute(
+                f"SELECT source_memory_id, target_memory_id, target_symbol, type "
+                f"FROM relations WHERE repo_id = ? AND branch = ? AND stale = 0 "
+                f"AND (source_memory_id IN ({ph}) OR target_memory_id IN ({ph}))",
+                (repo_id, branch, *ids, *ids),
+            ).fetchall()
+            for row in rows:
+                etype = row["type"]
+                if type_filter and etype not in type_filter:
+                    continue
+                src, tgt, sym = (
+                    row["source_memory_id"],
+                    row["target_memory_id"],
+                    row["target_symbol"],
+                )
+                edges.append((src, tgt, sym, etype))
+                # The "new" endpoint inherits a decayed share of its visited parent's score.
+                for node, parent in ((tgt, src), (src, tgt)):
+                    if node and node not in visited:
+                        base = scores.get(parent, 0.0)
+                        cand[node] = max(cand.get(node, 0.0), base * _EXPLORE_DECAY)
+        if not edges:
+            break
+        # Beam-prune the newly reached nodes by score, capped by the remaining budget.
+        ranked = sorted(cand.items(), key=lambda kv: kv[1], reverse=True)
+        # room is >= 1 here (the loop-top guard breaks once visited hits max_nodes);
+        # max(0, ...) keeps the slice well-defined if that invariant ever changes.
+        room = max(0, params.max_nodes - len(visited))
+        keep = ranked[: min(params.beam, room)]
+        if len(ranked) > len(keep):
+            truncated = True
+        for node, sc in keep:
+            scores[node] = max(scores.get(node, 0.0), sc)
+            visited.add(node)
+        for src, tgt, sym, etype in edges:
+            if len(raw_trace) >= _EXPLORE_TRACE_CAP:
+                truncated = True
+                break
+            key = (src, tgt, sym, etype)
+            if key in seen_edges:
+                continue
+            if src in visited and (tgt in visited or (tgt is None and sym)):
+                seen_edges.add(key)
+                raw_trace.append((src, tgt, sym, etype, hop))
+        frontier = [node for node, _ in keep]
+
+    # Goal re-rank: blend the graph score with a direct vector similarity so an
+    # on-target node deep in the slice still outranks a barely-relevant seed.
+    rerank = await memory_manager.search_similar(
+        SearchParams(
+            query=params.goal,
+            top_k=min(params.max_nodes, 100),
+            min_similarity=0.0,
+            hybrid=True,
+            repo_id=repo_id or None,
+            branch=branch or None,
+        )
+    )
+    vec = {r.memory.id: float(r.similarity) for r in rerank}
+    ranked_nodes = sorted(visited, key=lambda m: scores.get(m, 0.0) + vec.get(m, 0.0), reverse=True)
+
+    meta = _node_meta(conn, visited)
+
+    def _label_of(mid: str | None, sym: str | None = None) -> str:
+        if mid and mid in meta:
+            f, c, fn = meta[mid]
+            return _label(f, c, fn)
+        return sym or (mid[:8] if mid else "?")
+
+    citations: list[AskCitation] = []
+    blocks: list[str] = []
+    used = 0
+    for mid in ranked_nodes:
+        text, _lab = _read_source(storage, conn, mid)
+        text = (text or "").strip()
+        if not text:
+            continue
+        n = len(blocks) + 1
+        f, c, fn = meta.get(mid, ("", "", ""))
+        file = (f or "?").replace("\\", "/")
+        sym = f"{c}.{fn}" if c and fn else (fn or c or "")
+        block = (
+            f"\n[{n}] {file}"
+            + (f"  {sym}" if sym else "")
+            + "\n"
+            + text[:_PER_CHUNK_CHAR_CAP]
+            + "\n"
+        )
+        if blocks and used + len(block) > _ANSWER_CHAR_BUDGET:
+            truncated = True
+            break
+        citations.append(
+            AskCitation(
+                index=n,
+                file=file,
+                symbol=sym,
+                similarity=round(scores.get(mid, 0.0) + vec.get(mid, 0.0), 3),
+            )
+        )
+        blocks.append(block)
+        used += len(block)
+
+    hops = [
+        ExploreHop(source=_label_of(src), type=etype, target=_label_of(tgt, sym), depth=depth)
+        for src, tgt, sym, etype, depth in raw_trace
+    ]
+    trace_lines = "\n".join(f"{h.source} --{h.type}--> {h.target}" for h in hops)
+
+    user_prompt = (
+        f"Goal: {params.goal}\n\n"
+        f"=== Traversal (multi-hop graph slice, {len(visited)} nodes) ===\n"
+        f"{trace_lines or '(no edges from the seed nodes — the seeds are isolated)'}\n\n"
+        f"=== Sources ===\n{''.join(blocks)}\n\n"
+        "Explain how the code achieves the goal, citing sources as [n]."
+    )
+
+    def _resp(**kw) -> ExploreResponse:
+        return ExploreResponse(
+            success=True,
+            goal=params.goal,
+            citations=citations,
+            trace=hops,
+            nodes_visited=len(visited),
+            hops=hops_done,
+            truncated=truncated,
+            **kw,
+        )
+
+    if not blocks:
+        return _resp(
+            message="Explored the graph but no reached node had readable source to ground an answer."
+        )
+
+    if llm_adapter.is_passthrough():
+        return _resp(
+            passthrough=True,
+            passthrough_prompt=f"{_EXPLORE_SYSTEM}\n\n{user_prompt}",
+            message="Passthrough — no LLM configured. Answer from passthrough_prompt (host model).",
+        )
+
+    answer = await llm_adapter.complete(_EXPLORE_SYSTEM, user_prompt)
+    if not (answer or "").strip():
+        return _resp(
+            passthrough=True,
+            passthrough_prompt=f"{_EXPLORE_SYSTEM}\n\n{user_prompt}",
+            message="LLM returned no answer — falling back to passthrough.",
+        )
+    return _resp(answer=answer.strip())
+
+
+# --------------------------------------------------------------------------
+# project_prompt — synthesise a reusable project primer from the indexed repo
+# --------------------------------------------------------------------------
+
+_PROJECT_PROMPT_SOURCE_CAP = 1000
+_PROJECT_PROMPT_BUDGET = 11000
+
+
+class ProjectPromptParams(BaseModel):
+    repo_path: str | None = Field(
+        default=None,
+        description="Repo path to detect repo_id/branch from (and read README). CWD if None.",
+    )
+    repo_id: str | None = Field(default=None, description="Override repo_id (skips detection).")
+    branch: str | None = Field(default=None, description="Override branch (skips detection).")
+    focus: str | None = Field(
+        default=None,
+        description="Bias the primer toward an area or task, e.g. 'testing conventions'. None = general.",
+    )
+    depth: int = Field(
+        default=2, ge=1, le=4, description="Path-segment depth for subsystem grouping."
+    )
+    max_nodes: int = Field(default=40, ge=1, le=200, description="Subsystem cap for the facts.")
+    include_source: bool = Field(
+        default=False, description="Include a few core-API source excerpts in the grounding."
+    )
+
+
+class ProjectPromptResponse(BaseModel):
+    success: bool
+    repo_id: str = ""
+    branch: str = ""
+    prompt: str = ""
+    languages: dict[str, int] = Field(default_factory=dict)
+    key_symbols: list[str] = Field(default_factory=list)
+    truncated: bool = False
+    passthrough: bool = False
+    passthrough_prompt: str = ""
+    message: str = ""
+
+
+_PROJECT_PROMPT_SYSTEM = (
+    "You write a concise, reusable project primer — a system prompt that briefs an AI coding "
+    "agent BEFORE it works on this repository — using ONLY the provided structural facts, "
+    "README, and source excerpts. Write it in the imperative, addressed to the agent ('You are "
+    "working on ...'). Include, in order: one line on what the project is and its stack/"
+    "languages; the architecture in 2-4 bullets (the main subsystems and how they relate); the "
+    "key modules/symbols to know (the core API) and the likely entry points; and any "
+    "conventions that are evident from the structure. Be terse and concrete. Do NOT invent "
+    "components, files, behaviour, or conventions that are not in the grounding."
+)
+
+
+async def project_prompt(
+    params: ProjectPromptParams,
+    memory_manager: MemoryManager,
+    llm_adapter: LLMAdapter,
+) -> ProjectPromptResponse:
+    """Turn the indexed repo's facts into a ready-to-paste project/system primer."""
+    from .generate_diagram import _read_source
+
+    repo_id, branch = await resolve_repo_branch(
+        params.repo_id, params.branch, params.repo_path, memory_manager
+    )
+    if not repo_id or not branch:
+        return ProjectPromptResponse(
+            success=False,
+            repo_id=repo_id,
+            branch=branch,
+            message=(
+                "Could not determine repo context. Pass repo_id and branch, or run from "
+                "inside the indexed repo."
+            ),
+        )
+
+    storage = memory_manager.storage_manager
+    conn = storage.conn
+    facts = _gather_facts(conn, repo_id, branch, params.depth, params.max_nodes)
+    if facts is None:
+        return ProjectPromptResponse(
+            success=False,
+            repo_id=repo_id,
+            branch=branch,
+            message="No indexed code. Index the repo first (index_repository), then retry.",
+        )
+
+    truncated = facts.truncated
+    parts: list[str] = []
+    if params.repo_path:
+        try:
+            readme = (Path(params.repo_path) / "README.md").read_text(
+                encoding="utf-8", errors="replace"
+            )
+            parts.append("# README:\n" + readme[:2500])
+        except OSError:
+            pass  # no README / unreadable — degrade gracefully
+    parts.append(
+        "# Structural facts:\n"
+        + _overview_facts(facts.subsystems, facts.languages, facts.edge_counts, facts.key_symbols)
+    )
+
+    if params.include_source:
+        used = sum(len(p) for p in parts)
+        blocks: list[str] = []
+        for mid in facts.key_symbol_ids:
+            text, label = _read_source(storage, conn, mid)
+            if not text:
+                continue
+            block = f"\n## {label}\n{text[:_PROJECT_PROMPT_SOURCE_CAP]}\n"
+            if blocks and used + len(block) > _PROJECT_PROMPT_BUDGET:
+                truncated = True
+                break
+            blocks.append(block)
+            used += len(block)
+        if blocks:
+            parts.append("\n# Core API source excerpts:")
+            parts.extend(blocks)
+
+    focus_line = f"\nFocus the primer on: {params.focus}\n" if params.focus else ""
+    user_prompt = f"Write the project primer.{focus_line}\n=== Grounding ===\n{''.join(parts)}"
+
+    def _resp(**kw) -> ProjectPromptResponse:
+        return ProjectPromptResponse(
+            success=True,
+            repo_id=repo_id,
+            branch=branch,
+            languages=facts.languages,
+            key_symbols=facts.key_symbols,
+            truncated=truncated,
+            **kw,
+        )
+
+    prompt = f"{_PROJECT_PROMPT_SYSTEM}\n\n{user_prompt}"
+    if llm_adapter.is_passthrough():
+        return _resp(
+            passthrough=True,
+            passthrough_prompt=prompt,
+            message="Passthrough — no LLM configured. Write the primer from passthrough_prompt (host model).",
+        )
+
+    out = await llm_adapter.complete(_PROJECT_PROMPT_SYSTEM, user_prompt)
+    if not (out or "").strip():
+        return _resp(
+            passthrough=True,
+            passthrough_prompt=prompt,
+            message="LLM returned no primer — falling back to passthrough.",
+        )
+    return _resp(prompt=out.strip())

@@ -6,6 +6,7 @@ is tested against a real seeded StorageManager (raw graph, no model).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -14,11 +15,15 @@ from mememo.core.llm_adapter import LLMAdapter
 from mememo.core.storage_manager import StorageManager
 from mememo.tools.comprehension import (
     AskParams,
+    ExploreParams,
     OverviewParams,
+    ProjectPromptParams,
     WikiParams,
     ask,
+    explore,
     generate_wiki,
     overview,
+    project_prompt,
 )
 from mememo.types.memory import (
     BranchContext,
@@ -359,6 +364,187 @@ async def test_wiki_empty_returns_failure(tmp_path: Path):
     empty = StorageManager(base_dir=tmp_path / "empty2")
     resp = await generate_wiki(
         WikiParams(repo_id=REPO, branch=BRANCH),
+        _FakeMMStore(empty),
+        _passthrough_adapter(),
+    )
+    assert resp.success is False
+    assert "index" in resp.message.lower()
+
+
+# ---------- explore ---------------------------------------------------------
+
+
+def _seed_chain(storage: StorageManager) -> None:
+    """handler -CALLS-> helper <-CALLS- run, with readable source blobs on disk."""
+    storage.conn.executemany(
+        "INSERT INTO memories (id, repo_id, branch_name, content_type, "
+        "  file_path, function_name, class_name, language, chunk_type, "
+        "  checksum, content_ref, token_count, created_at, updated_at, stale) "
+        "VALUES (?, ?, ?, 'code_snippet', ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 0)",
+        [
+            ("c-fn", REPO, BRANCH, "web/c.py", "handler", None, "python", "function", "c1", "rc"),
+            ("b-fn", REPO, BRANCH, "core/b.py", "helper", None, "python", "function", "c2", "rb"),
+            ("a-run", REPO, BRANCH, "core/a.py", "run", "Engine", "python", "method", "c3", "ra"),
+        ],
+    )
+    storage.conn.executemany(
+        "INSERT INTO relations (id, repo_id, branch, source_memory_id, "
+        "  target_memory_id, target_symbol, type, confidence, created_at_sha, stale) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'EXTRACTED', ?, 0)",
+        [
+            ("e1", REPO, BRANCH, "c-fn", "b-fn", None, "CALLS", SHA),
+            ("e2", REPO, BRANCH, "a-run", "b-fn", None, "CALLS", SHA),
+        ],
+    )
+    storage.conn.commit()
+    for ref, text in (
+        ("rc", "def handler(req): return helper(req)"),
+        ("rb", "def helper(req): return Engine().run(req)"),
+        ("ra", "def run(self, req): ..."),
+    ):
+        (storage.base_dir / ref).write_text(json.dumps({"text": text}), encoding="utf-8")
+
+
+def _result(mid: str, sim: float) -> SearchResult:
+    """A SearchResult whose memory.id matches a seeded store id (explore reads .id/.similarity)."""
+    return SearchResult(
+        memory=_mem("", "x.py", (1, 2), fn="x").model_copy(update={"id": mid}), similarity=sim
+    )
+
+
+class _FakeMMExplore:
+    """Stub exposing storage_manager (traversal) + a two-call search_similar (seed, rerank)."""
+
+    def __init__(self, storage, seed, rerank=None):
+        self.storage_manager = storage
+        self._seed = seed
+        self._rerank = seed if rerank is None else rerank
+        self._calls = 0
+
+    async def search_similar(self, params):
+        self._calls += 1
+        return self._seed if self._calls == 1 else self._rerank
+
+
+@pytest.fixture()
+def chain_store(tmp_path: Path) -> StorageManager:
+    s = StorageManager(base_dir=tmp_path / "estore")
+    _seed_chain(s)
+    return s
+
+
+@pytest.mark.asyncio
+async def test_explore_walks_multihop_and_builds_trace(chain_store: StorageManager):
+    mm = _FakeMMExplore(
+        chain_store,
+        seed=[_result("c-fn", 0.5)],  # seed at the handler
+        rerank=[_result("b-fn", 0.6), _result("a-run", 0.55), _result("c-fn", 0.2)],
+    )
+    resp = await explore(
+        ExploreParams(goal="how is a request handled", repo_id=REPO, branch=BRANCH, max_hops=3),
+        mm,
+        _passthrough_adapter(),
+    )
+    assert resp.success and resp.passthrough
+    # Reached all three nodes via two hops from the seed.
+    assert resp.nodes_visited == 3
+    files = {c.file for c in resp.citations}
+    assert {"web/c.py", "core/b.py", "core/a.py"} <= files
+    # The trace records the CALLS edges, de-duplicated.
+    assert resp.trace and all(h.type == "CALLS" for h in resp.trace)
+    assert len({(h.source, h.target) for h in resp.trace}) == len(resp.trace)
+    assert "--CALLS-->" in resp.passthrough_prompt
+    assert "how is a request handled" in resp.passthrough_prompt
+    assert "Traversal" in resp.passthrough_prompt
+
+
+@pytest.mark.asyncio
+async def test_explore_edge_type_filter_blocks_traversal(chain_store: StorageManager):
+    # Only IMPORTS allowed, but the chain is all CALLS -> no hops, just the seed.
+    mm = _FakeMMExplore(chain_store, seed=[_result("c-fn", 0.5)])
+    resp = await explore(
+        ExploreParams(goal="x", repo_id=REPO, branch=BRANCH, edge_types=["IMPORTS"]),
+        mm,
+        _passthrough_adapter(),
+    )
+    assert resp.success
+    assert resp.nodes_visited == 1 and resp.trace == []
+
+
+@pytest.mark.asyncio
+async def test_explore_no_seed_returns_failure(chain_store: StorageManager):
+    resp = await explore(
+        ExploreParams(goal="nothing matches", repo_id=REPO, branch=BRANCH),
+        _FakeMMExplore(chain_store, seed=[]),
+        _passthrough_adapter(),
+    )
+    assert resp.success is False
+    assert "index" in resp.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_explore_no_repo_context_returns_failure():
+    resp = await explore(
+        ExploreParams(goal="x"),
+        _FakeMMExplore(None, seed=[]),
+        _passthrough_adapter(),
+    )
+    assert resp.success is False
+    assert "repo context" in resp.message.lower()
+
+
+# ---------- project_prompt --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_project_prompt_passthrough_has_facts(store: StorageManager):
+    resp = await project_prompt(
+        ProjectPromptParams(repo_id=REPO, branch=BRANCH, focus="testing conventions"),
+        _FakeMMStore(store),
+        _passthrough_adapter(),
+    )
+    assert resp.success and resp.passthrough
+    assert resp.languages.get("python") == 4
+    assert any("helper" in s for s in resp.key_symbols)
+    assert "Structural facts" in resp.passthrough_prompt
+    assert "primer" in resp.passthrough_prompt.lower()
+    assert "Focus the primer on: testing conventions" in resp.passthrough_prompt
+
+
+@pytest.mark.asyncio
+async def test_project_prompt_with_llm_returns_prompt(store: StorageManager):
+    class _Stub:
+        def is_passthrough(self):
+            return False
+
+        async def complete(self, system, user):
+            return "You are working on X."
+
+    resp = await project_prompt(
+        ProjectPromptParams(repo_id=REPO, branch=BRANCH),
+        _FakeMMStore(store),
+        _Stub(),
+    )
+    assert resp.success and not resp.passthrough
+    assert resp.prompt == "You are working on X."
+
+
+@pytest.mark.asyncio
+async def test_project_prompt_no_repo_context_returns_failure():
+    resp = await project_prompt(
+        ProjectPromptParams(),
+        _FakeMMStore(None),
+        _passthrough_adapter(),
+    )
+    assert resp.success is False
+    assert "repo context" in resp.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_project_prompt_empty_returns_failure(tmp_path: Path):
+    empty = StorageManager(base_dir=tmp_path / "empty3")
+    resp = await project_prompt(
+        ProjectPromptParams(repo_id=REPO, branch=BRANCH),
         _FakeMMStore(empty),
         _passthrough_adapter(),
     )
