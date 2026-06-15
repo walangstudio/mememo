@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import time
 from pathlib import Path
@@ -44,9 +45,9 @@ def daemon(tmp_path: Path):
 
 def test_round_trip_captures_stdout_stderr_and_exitcode(daemon, monkeypatch):
     monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(daemon["disc"].parent / "data"))
-    # hookclient._discovery_path() derives ~/.mememo/.daemon.json from MEMEMO_STORAGE_DIR's
-    # parent; the fixture's discovery file was placed at tmp_path/.daemon.json,
-    # so point MEMEMO_STORAGE_DIR at tmp_path/data so .parent matches.
+    # hookclient scans MEMEMO_STORAGE_DIR's parent for .daemon*.json; the fixture's
+    # discovery file was placed at tmp_path/.daemon.json, so point MEMEMO_STORAGE_DIR
+    # at tmp_path/data so .parent matches.
     rc = hookclient.run("echo", stdin_text="hello-payload")
     assert rc == 0
     # stdout/stderr were forwarded by the client to the test process; capsys
@@ -70,6 +71,116 @@ def test_dead_pid_in_discovery_falls_back(monkeypatch, tmp_path):
     )
     with pytest.raises(hookclient.DaemonUnavailableError):
         hookclient.run("echo", stdin_text="x")
+
+
+def test_discovery_path_is_per_pid():
+    """Each server publishes its OWN .daemon.<pid>.json so concurrent windows on
+    one store never clobber each other's pointer."""
+    assert hookd._discovery_path().name == f".daemon.{os.getpid()}.json"
+    assert hookd._discovery_path(123).name == ".daemon.123.json"
+
+
+def test_client_prefers_cwd_matching_daemon(monkeypatch, tmp_path):
+    """With several live daemons on one store, the client routes to the one launched
+    from this hook's cwd (its repo lane)."""
+    monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(hookclient, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(hookclient, "_port_open", lambda port, timeout=0.4: True)
+
+    mine = os.path.normcase(os.getcwd())
+    (tmp_path / ".daemon.111.json").write_text(
+        json.dumps({"pid": 111, "port": 5001, "token": "a", "cwd": r"X:\other\repo"}),
+        encoding="utf-8",
+    )
+    (tmp_path / ".daemon.222.json").write_text(
+        json.dumps({"pid": 222, "port": 5002, "token": "b", "cwd": mine}),
+        encoding="utf-8",
+    )
+    info = hookclient._load_discovery()
+    assert info["port"] == 5002, "should pick the daemon whose cwd matches ours"
+
+
+def test_client_falls_back_to_any_live_when_no_cwd_match(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(hookclient, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(hookclient, "_port_open", lambda port, timeout=0.4: True)
+
+    (tmp_path / ".daemon.111.json").write_text(
+        json.dumps({"pid": 111, "port": 5001, "token": "a", "cwd": r"X:\a"}),
+        encoding="utf-8",
+    )
+    info = hookclient._load_discovery()
+    assert info["port"] == 5001, "no cwd match -> still use a live daemon (global lane)"
+
+
+def test_client_skips_dead_and_unreachable_daemons(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(tmp_path / "data"))
+    # 111 dead, 222 alive-but-port-closed -> no usable daemon.
+    monkeypatch.setattr(hookclient, "_pid_alive", lambda pid: pid != 111)
+    monkeypatch.setattr(hookclient, "_port_open", lambda port, timeout=0.4: False)
+    (tmp_path / ".daemon.111.json").write_text(
+        json.dumps({"pid": 111, "port": 5001, "token": "a"}), encoding="utf-8"
+    )
+    (tmp_path / ".daemon.222.json").write_text(
+        json.dumps({"pid": 222, "port": 5002, "token": "b"}), encoding="utf-8"
+    )
+    with pytest.raises(hookclient.DaemonUnavailableError):
+        hookclient._load_discovery()
+
+
+def test_shutdown_removes_only_own_discovery_file(monkeypatch, tmp_path):
+    """A window closing must not delete a live peer window's pointer."""
+    monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(tmp_path / "data"))
+    _, _, shutdown = hookd.start(factories={"echo": _echo_hook}, version="test")
+    own = hookd._discovery_path()
+    assert own.exists()
+    peer = tmp_path / ".daemon.999999.json"  # created after start -> not swept
+    peer.write_text(json.dumps({"pid": 999999, "port": 1, "token": "x"}), encoding="utf-8")
+    shutdown()
+    assert not own.exists(), "own pointer should be removed on shutdown"
+    assert peer.exists(), "a peer's pointer must survive our shutdown"
+
+
+def test_start_sweeps_dead_peer_discovery(monkeypatch, tmp_path):
+    """Startup clears pointers left by servers that died without cleanup, but keeps
+    our own."""
+    monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(tmp_path / "data"))
+    dead = tmp_path / ".daemon.999999.json"
+    dead.write_text(json.dumps({"pid": 999999, "port": 1, "token": "x"}), encoding="utf-8")
+    _, _, shutdown = hookd.start(factories={"echo": _echo_hook}, version="test")
+    try:
+        assert not dead.exists(), "dead peer pointer should be swept at start"
+        assert hookd._discovery_path().exists(), "our own pointer must remain"
+    finally:
+        shutdown()
+
+
+def test_client_skips_malformed_discovery_file(monkeypatch, tmp_path):
+    """A garbage file (non-int pid) must be skipped, not crash discovery for the
+    other daemons — the caller only catches DaemonUnavailableError, so an escaping
+    ValueError would break the inject hook for every window."""
+    monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(hookclient, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(hookclient, "_port_open", lambda port, timeout=0.4: True)
+    (tmp_path / ".daemon.111.json").write_text(
+        json.dumps({"pid": "not-an-int", "port": 5001, "token": "a"}), encoding="utf-8"
+    )
+    (tmp_path / ".daemon.222.json").write_text(
+        json.dumps({"pid": 222, "port": 5002, "token": "b", "cwd": os.path.normcase(os.getcwd())}),
+        encoding="utf-8",
+    )
+    info = hookclient._load_discovery()
+    assert info["port"] == 5002, "malformed file skipped; valid cwd-match still chosen"
+
+
+def test_client_malformed_only_raises_daemon_unavailable(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEMEMO_STORAGE_DIR", str(tmp_path / "data"))
+    (tmp_path / ".daemon.111.json").write_text("{ truncated", encoding="utf-8")
+    (tmp_path / ".daemon.222.json").write_text(
+        json.dumps({"pid": "x", "port": "y", "token": "z"}), encoding="utf-8"
+    )
+    with pytest.raises(hookclient.DaemonUnavailableError):
+        hookclient._load_discovery()
 
 
 def test_bad_token_rejected(daemon, monkeypatch):
