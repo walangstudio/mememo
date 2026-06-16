@@ -992,6 +992,12 @@ def run():
         except Exception:
             # Daemon is an optimisation; never block MCP boot on a failure here.
             logger.exception("hookd: failed to start sidecar (continuing without it)")
+    # Drop tool groups the deployment opted out of (MEMEMO_TOOLS /
+    # MEMEMO_DISABLE_TOOLS) so their schemas don't cost tokens every turn.
+    from .tool_groups import apply_tool_filter
+
+    apply_tool_filter(mcp)
+
     logger.info("mememo v%s ready, serving MCP on stdio", _VERSION)
     mcp.run()
 
