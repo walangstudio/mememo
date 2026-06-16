@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.47.0] - 2026-06-16
+
+### Added
+- **Doc-comment extraction for every tree-sitter language.** Previously only Python docstrings were
+  captured (via the AST); the tree-sitter walkers (TS/JS/Go/Rust/Java/C/C++/C#/Kotlin/Ruby/PHP/Swift/
+  Scala) emitted chunks with an empty `docstring` because the doc comment lives *outside* the
+  definition node. A single post-pass (`attach_doc_comments` in `mememo/chunking/ts_edges.py`) now
+  fills `Chunk.docstring` from the comment bound to each definition: `/** … */` / `/*! … */` blocks
+  (Javadoc/JSDoc/KDoc/PHPDoc/Scaladoc/Doxygen), `///` and `//!` lines (Rust/C# XML/Swift/Doxygen),
+  godoc `//` blocks, and RDoc `#` blocks. Handles attributes/annotations between the comment and the
+  declaration, Go type docs, Ruby's wrapper-node placement, and per-grammar newline differences in
+  comment spans; build directives (`//go:…`) and magic comments are excluded.
+- **Doc comments are now lexically searchable.** The FTS index folds a memory's `docstring` into its
+  indexed text, so a symbol surfaces by its documentation, not just its code body. No effect on
+  non-code memories (their docstring is `None`).
+- 12 new tests (`tests/test_doc_comments.py`).
+
 ## [0.46.0] - 2026-06-16
 
 ### Added

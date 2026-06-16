@@ -42,6 +42,215 @@ def _flatten_member_expression(node, code_bytes: bytes) -> str:
     return _text(node, code_bytes)
 
 
+# --- doc-comment extraction --------------------------------------------------
+# Populate Chunk.docstring for tree-sitter languages from the doc comment
+# immediately preceding a definition. Python is handled by its own AST chunker;
+# tree-sitter doc comments live OUTSIDE the definition node (a preceding
+# sibling), so the walkers never capture them. A single post-pass over the
+# parsed tree fills the field without touching any per-language walker.
+#
+# Recognised forms (by comment text, so it works regardless of the grammar's
+# node-type name): ``/** ... */`` and ``/*! ... */`` blocks (Javadoc / JSDoc /
+# KDoc / PHPDoc / Scaladoc / Doxygen), ``///`` and ``//!`` lines (Rust / C# XML
+# / Swift / Doxygen), plain ``//`` blocks for Go (godoc) and ``#`` blocks for
+# Ruby (RDoc).
+
+# Definition nodes a chunk's start line is keyed by (Go types are handled
+# separately, via their inner type_spec line).
+_DEF_NODE_TYPES = frozenset(
+    {
+        "function_declaration",
+        "function_definition",
+        "function_item",
+        "method_definition",
+        "method_declaration",
+        "constructor_declaration",
+        "local_function_statement",
+        "protocol_function_declaration",
+        "method",
+        "singleton_method",
+        "class_declaration",
+        "class_definition",
+        "class_specifier",
+        "struct_specifier",
+        "struct_item",
+        "enum_item",
+        "trait_item",
+        "interface_declaration",
+        "enum_declaration",
+        "struct_declaration",
+        "record_declaration",
+        "object_declaration",
+        "object_definition",
+        "trait_definition",
+        "protocol_declaration",
+        "class",
+        "module",
+    }
+)
+
+# Nodes that may sit between a doc comment and its definition (attributes,
+# annotations, modifiers, decorators) — scanned past when looking upward.
+_DOC_SKIP_TYPES = frozenset(
+    {
+        "attribute_item",
+        "attribute_list",
+        "attribute_group",
+        "attribute",
+        "annotation",
+        "marker_annotation",
+        "modifiers",
+        "decorator",
+    }
+)
+
+
+def _clean_doc_comment(texts: list[str], language: str) -> str | None:
+    """Strip comment markers from contiguous preceding comments, returning the
+    doc body — or None when none of them is a doc-style comment."""
+    out: list[str] = []
+    saw_doc = False
+    for raw in texts:
+        s = raw.strip()
+        if s.startswith("/**") or s.startswith("/*!"):
+            saw_doc = True
+            body = s[3:]
+            if body.endswith("*/"):
+                body = body[:-2]
+            for ln in body.splitlines():
+                ln = ln.strip()
+                if ln.startswith("*"):
+                    ln = ln[1:].lstrip()
+                out.append(ln)
+        elif s.startswith("///") or s.startswith("//!"):
+            saw_doc = True
+            out.append(s[3:].strip())
+        elif language == "go" and s.startswith("//"):
+            if s.startswith("//go:"):  # build/embed directive, not documentation
+                continue
+            saw_doc = True
+            out.append(s[2:].strip())
+        elif language == "ruby" and s.startswith("#"):
+            if s.startswith("#!"):  # shebang
+                continue
+            body = s.lstrip("#").strip()
+            low = body.lower()
+            if low.startswith(("frozen_string_literal:", "encoding:", "coding:", "warn_indent:")):
+                continue  # magic comment, not documentation
+            saw_doc = True
+            out.append(body)
+        # plain ``/* */`` (single star) and plain ``//`` in non-Go languages are
+        # ordinary comments, not documentation — ignored.
+    if not saw_doc:
+        return None
+    cleaned = "\n".join(out).strip()
+    return cleaned or None
+
+
+def _last_row(node) -> int:
+    """The last source row the node visually occupies. tree-sitter end points
+    are exclusive, so a node ending at column 0 (some grammars roll a line
+    comment's end past the trailing newline) really ends on the previous row."""
+    er = node.end_point[0]
+    return er - 1 if node.end_point[1] == 0 else er
+
+
+def _scan_prev_comments(node, code_bytes: bytes, language: str) -> str | None:
+    """Doc comment among ``node``'s preceding siblings (scanning past attributes
+    and annotations), or None. The comment must sit on the line directly above —
+    a blank-line gap detaches it, matching how the language's own doc tooling
+    binds a comment to the next declaration."""
+    comments = []
+    above = node.start_point[0]
+    prev = node.prev_sibling
+    while prev is not None:
+        ptype = prev.type
+        if ptype in _DOC_SKIP_TYPES:
+            above = prev.start_point[0]
+            prev = prev.prev_sibling
+            continue
+        if ptype.endswith("comment"):
+            if _last_row(prev) != above - 1:  # not on the line directly above
+                break
+            comments.append(prev)
+            above = prev.start_point[0]
+            prev = prev.prev_sibling
+            continue
+        break
+    if not comments:
+        return None
+    comments.reverse()
+    return _clean_doc_comment([_text(c, code_bytes) for c in comments], language)
+
+
+def _doc_comment_before(node, code_bytes: bytes, language: str) -> str | None:
+    """The doc comment bound to ``node``. Scans its preceding siblings, then —
+    when the node has no preceding sibling — hops up through same-line wrapper
+    parents (e.g. Ruby's ``body_statement``, where a method's leading ``#``
+    comment is a sibling of the wrapper, not the method)."""
+    cur = node
+    for _ in range(3):
+        doc = _scan_prev_comments(cur, code_bytes, language)
+        if doc is not None:
+            return doc
+        parent = cur.parent
+        if parent is None or cur.prev_sibling is not None:
+            return None
+        if parent.start_point[0] != cur.start_point[0]:
+            return None
+        cur = parent
+    return None
+
+
+def _collect_doc_map(tree, code_bytes: bytes, language: str) -> dict[int, str]:
+    """Map ``start_line -> doc text`` for every documented definition in the tree."""
+    out: dict[int, str] = {}
+
+    def walk(node) -> None:
+        for ch in node.children:
+            if language == "go" and ch.type == "type_declaration":
+                # godoc binds the comment to ``type``; the chunk is keyed by the
+                # inner type_spec line, so map the doc onto that line. A grouped
+                # ``type ( A ...; B ... )`` block holds several specs: each takes
+                # its own preceding comment, and the first also falls back to the
+                # block-level godoc above ``type``.
+                decl_doc = _doc_comment_before(ch, code_bytes, language)
+                first = True
+                for spec in ch.children:
+                    if spec.type != "type_spec":
+                        continue
+                    doc = _doc_comment_before(spec, code_bytes, language) or (
+                        decl_doc if first else None
+                    )
+                    first = False
+                    if doc:
+                        out.setdefault(spec.start_point[0] + 1, doc)
+            elif ch.type in _DEF_NODE_TYPES:
+                doc = _doc_comment_before(ch, code_bytes, language)
+                if doc:
+                    out.setdefault(ch.start_point[0] + 1, doc)
+            walk(ch)
+
+    walk(tree.root_node)
+    return out
+
+
+def attach_doc_comments(chunks: list[Chunk], tree, code_bytes: bytes, language: str) -> None:
+    """Fill ``chunk.docstring`` for function/method/class chunks from the doc
+    comment preceding each definition. Only sets the field when it is unset, so
+    a chunker that already extracted a docstring keeps it. Mutates ``chunks``."""
+    docmap = _collect_doc_map(tree, code_bytes, language)
+    if not docmap:
+        return
+    for c in chunks:
+        if (
+            c.docstring is None
+            and c.chunk_type in ("function", "method", "class")
+            and c.start_line in docmap
+        ):
+            c.docstring = docmap[c.start_line]
+
+
 # Class-field node types across the grammars we extract attributes from, and
 # the nested-type nodes whose own fields must NOT be pulled into the outer class.
 _FIELD_NODE_TYPES = frozenset(

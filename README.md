@@ -80,7 +80,7 @@ Set `MEMEMO_SMART_CONTEXT_ENABLED=false` to revert to the legacy fixed-budget be
 | Swift | `.swift` | Tree-sitter | Classes, structs, protocols, methods |
 | Scala | `.scala` | Tree-sitter | Classes, traits, objects, methods |
 
-All tree-sitter languages emit the typed-edge graph (CALLS / EXTENDS / IMPLEMENTS / IMPORTS / USES) that powers semantic recall, call graphs, and diagrams.
+All tree-sitter languages emit the typed-edge graph (CALLS / EXTENDS / IMPLEMENTS / IMPORTS / USES) that powers semantic recall, call graphs, and diagrams. Doc comments are extracted for every language — `/** … */` (Javadoc/JSDoc/KDoc/PHPDoc/Scaladoc/Doxygen), `///` and `//!` lines (Rust/C#/Swift/Doxygen), godoc `//` blocks, and RDoc `#` blocks — and folded into the lexical index so a symbol is searchable by its documentation, not just its code.
 
 ### Diagrams
 
