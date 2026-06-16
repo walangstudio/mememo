@@ -296,7 +296,7 @@ class TreeSitterChunker(BaseChunker):
         """
         from .base_chunker import RawEdge
         from .python_ast_chunker import file_path_to_module
-        from .ts_edges import EDGE_WALKERS
+        from .ts_edges import EDGE_WALKERS, attach_doc_comments
 
         if language is None:
             from .language_detector import detect_language
@@ -314,9 +314,11 @@ class TreeSitterChunker(BaseChunker):
 
         walker = EDGE_WALKERS.get(language)
         if walker is not None:
-            return walker(tree, code_bytes, module, file_path, language)
+            chunks, edges = walker(tree, code_bytes, module, file_path, language)
+            attach_doc_comments(chunks, tree, code_bytes, language)
+            return chunks, edges
 
-        # No walker registered yet: chunk without edges.
+        # No walker registered yet: chunk without edges (chunk() attaches docs).
         chunks = self.chunk(code, file_path, language)
         edges: list[RawEdge] = []
         return chunks, edges
@@ -376,6 +378,10 @@ class TreeSitterChunker(BaseChunker):
             chunk = self._extract_node(node, code, capture_name, language, file_path)
             if chunk:
                 chunks.append(chunk)
+
+        from .ts_edges import attach_doc_comments
+
+        attach_doc_comments(chunks, tree, bytes(code, "utf-8"), language)
 
         logger.debug(f"Tree-sitter extracted {len(chunks)} chunks from {file_path}")
         return chunks

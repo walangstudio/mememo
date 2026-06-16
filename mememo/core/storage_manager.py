@@ -347,6 +347,8 @@ class StorageManager:
             try:
                 blob = json.loads((self.base_dir / row["content_ref"]).read_text(encoding="utf-8"))
                 text = blob.get("text") or ""
+                if blob.get("docstring"):  # fold the docstring in, as save_memory does
+                    text = f"{text}\n{blob['docstring']}"
             except (OSError, json.JSONDecodeError):
                 text = ""
             cursor.execute(
@@ -555,10 +557,16 @@ class StorageManager:
 
             # FTS over content body so /memories?q= matches decision/doc/context
             # text, not just file/fn/class metadata. The AFTER DELETE trigger
-            # keeps it in sync on the way out.
+            # keeps it in sync on the way out. The docstring is appended so doc
+            # comments (extracted for every language) are lexically searchable
+            # even though they live outside the chunk body; it's None for
+            # non-code memories, so they index their text unchanged.
+            fts_text = memory.content.text or ""
+            if memory.content.docstring:
+                fts_text = f"{fts_text}\n{memory.content.docstring}"
             cursor.execute(
                 "INSERT INTO memories_fts (memory_id, content) VALUES (?, ?)",
-                (memory.id, memory.content.text or ""),
+                (memory.id, fts_text),
             )
 
             self.conn.commit()
