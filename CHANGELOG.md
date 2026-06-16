@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.46.0] - 2026-06-16
+
+### Added
+- **`explore` — agentic multi-hop graph traversal (MCP tool).** Seeds on a natural-language
+  goal with hybrid recall, then beam-expands the call/dependency graph several hops (reusing the
+  `relations` edges), re-ranks the reached slice by goal relevance, and synthesises an answer with
+  a traversal trace and numbered `[n]` citations. Fills the last comprehension gap vs
+  DeepWiki/Understand-Anything: unlike `ask` (single-hop recall) or `graph_neighbors` (mechanical
+  BFS from a known node), `explore` walks *toward* a goal. Passthrough-first — with no LLM provider
+  it returns `passthrough_prompt` + the trace + citations for the host model to answer.
+- **`project_prompt` — synthesise a reusable project primer (MCP tool).** Turns the indexed repo's
+  facts (subsystems, core API by edge-degree, languages, entry points, README) into a ready-to-paste
+  project/system prompt that briefs an AI coding agent before it works on the repo. `focus` biases it
+  toward an area; passthrough-first like the other comprehension tools.
+- Tool count 30 → 32; both live in `mememo/tools/comprehension.py`. 9 new tests.
+
 ## [0.45.0] - 2026-06-15
 
 ### Fixed

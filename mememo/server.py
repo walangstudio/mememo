@@ -81,8 +81,12 @@ from .tools import (
 from .tools.comprehension import (
     AskParams,
     AskResponse,
+    ExploreParams,
+    ExploreResponse,
     OverviewParams,
     OverviewResponse,
+    ProjectPromptParams,
+    ProjectPromptResponse,
     WikiParams,
     WikiResponse,
 )
@@ -90,10 +94,16 @@ from .tools.comprehension import (
     ask as ask_impl,
 )
 from .tools.comprehension import (
+    explore as explore_impl,
+)
+from .tools.comprehension import (
     generate_wiki as generate_wiki_impl,
 )
 from .tools.comprehension import (
     overview as overview_impl,
+)
+from .tools.comprehension import (
+    project_prompt as project_prompt_impl,
 )
 from .tools.curate_skills import (
     curate_skills as curate_skills_impl,
@@ -919,6 +929,31 @@ async def generate_wiki(params: WikiParams) -> WikiResponse:
     await ensure_initialized()
     _audit_log("generate_wiki")
     return await generate_wiki_impl(params, memory_manager, llm_adapter)
+
+
+@mcp.tool()
+async def explore(params: ExploreParams) -> ExploreResponse:
+    """Agentic multi-hop exploration: seed on a goal with hybrid recall, then beam-expand
+    the call/dependency graph several hops (reusing the relations edges), re-rank the
+    reached slice by goal relevance, and synthesise an answer with a traversal trace and
+    numbered [n] citations. Unlike ask (single-hop recall) or graph_neighbors (mechanical
+    BFS from a known node), explore walks toward a goal. Passthrough-first — with no LLM
+    provider returns passthrough_prompt + the trace + citations for the host to answer."""
+    await ensure_initialized()
+    _audit_log("explore")
+    return await explore_impl(params, memory_manager, llm_adapter)
+
+
+@mcp.tool()
+async def project_prompt(params: ProjectPromptParams) -> ProjectPromptResponse:
+    """Synthesise a reusable project primer (a system prompt) from the indexed repo: what
+    it is and its stack, the architecture, the core API / key modules, entry points, and
+    evident conventions — ready to paste into a CLAUDE.md or an agent's system prompt. Pass
+    focus to bias it toward an area. Passthrough-first — with no LLM provider returns
+    passthrough_prompt + the structural facts for the host model to write the primer."""
+    await ensure_initialized()
+    _audit_log("project_prompt")
+    return await project_prompt_impl(params, memory_manager, llm_adapter)
 
 
 def run():
