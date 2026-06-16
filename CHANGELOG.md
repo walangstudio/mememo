@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.48.0] - 2026-06-16
+
+### Added
+- **`enrich_docstrings` — write doc comments for undocumented symbols (MCP tool).** Scans the
+  indexed function/method/class symbols, reads each one's content blob to tell documented from
+  undocumented (using the docstring field now populated for every language in v0.47.0), reports
+  documentation coverage, and hands the undocumented symbols' source to the model to write a doc
+  comment for each in the language's conventional format (Python docstring, Javadoc/JSDoc `/** */`,
+  rustdoc `///`, godoc `//`, …), ready to paste above the definition. `scope`/`language` narrow the
+  set; bounded blob scan + prompt budget. Passthrough-first like the other comprehension tools —
+  with no LLM provider it returns `passthrough_prompt` + the symbol list for the host model.
+- Tool count 32 → 33; lives in `mememo/tools/comprehension.py`. 5 new tests.
+
 ## [0.47.0] - 2026-06-16
 
 ### Added

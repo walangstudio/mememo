@@ -1123,7 +1123,7 @@ fallback and can be re-imported via `import-md` if needed.
 
 ```
 mememo/
-├── server.py              # FastMCP server (32 MCP tools + 6 resources)
+├── server.py              # FastMCP server (33 MCP tools + 6 resources)
 ├── cli.py                 # Hook CLI (capture --hook, inject --hook)
 ├── core/                  # Core managers
 │   ├── memory_manager.py  # Orchestrates all memory ops
