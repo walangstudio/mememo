@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.49.0] - 2026-06-16
+
+### Added
+- **Tool-group switch to shrink the exposed MCP surface.** Every registered tool's schema is sent
+  to the model on every turn, so 33 tools is a standing token cost whether or not you use them all.
+  The 33 tools are now grouped — `core` (memory store/recall/session), `index` (code index + graph +
+  git time-travel), `diagrams`, `comprehension` (ask/overview/wiki/explore/project_prompt/
+  enrich_docstrings), `skills` — and a deployment can expose only what it needs: `MEMEMO_TOOLS`
+  allowlists groups (e.g. `core,index`), `MEMEMO_DISABLE_TOOLS` drops them (e.g. `skills,diagrams`).
+  Unset = all groups (back-compat); a typo'd/empty result falls back to all so the server is never
+  left with no tools. Disabled tools are removed at startup (`mememo/tool_groups.py`). 10 new tests,
+  including a drift guard that every `@mcp.tool()` is grouped.
+
 ## [0.48.0] - 2026-06-16
 
 ### Added

@@ -237,6 +237,14 @@ export MEMEMO_EMBEDDING_MODEL="minilm"  # or "qwen3" / "gemma"
 # Device (default: auto-detect)
 export MEMEMO_EMBEDDING_DEVICE="auto"  # or "cuda", "mps", "cpu"
 
+# Tool groups (default: all 33 tools exposed). Every tool's schema costs tokens
+# on every turn, so expose only the groups you use. Groups: core (memory
+# store/recall/session), index (code index + graph + git time-travel), diagrams,
+# comprehension (ask/overview/wiki/explore/project_prompt/enrich_docstrings),
+# skills. Allowlist with MEMEMO_TOOLS, or drop groups with MEMEMO_DISABLE_TOOLS.
+export MEMEMO_TOOLS="core,index"          # expose ONLY these groups
+export MEMEMO_DISABLE_TOOLS="skills,diagrams"  # or keep all but these
+
 # Route the first-run model download through the OS trust store (default: on)
 # so it works behind a TLS-intercepting corporate proxy. Set to 0 to keep the
 # stock certifi CA bundle.
