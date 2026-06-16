@@ -81,6 +81,8 @@ from .tools import (
 from .tools.comprehension import (
     AskParams,
     AskResponse,
+    EnrichParams,
+    EnrichResponse,
     ExploreParams,
     ExploreResponse,
     OverviewParams,
@@ -92,6 +94,9 @@ from .tools.comprehension import (
 )
 from .tools.comprehension import (
     ask as ask_impl,
+)
+from .tools.comprehension import (
+    enrich_docstrings as enrich_docstrings_impl,
 )
 from .tools.comprehension import (
     explore as explore_impl,
@@ -954,6 +959,18 @@ async def project_prompt(params: ProjectPromptParams) -> ProjectPromptResponse:
     await ensure_initialized()
     _audit_log("project_prompt")
     return await project_prompt_impl(params, memory_manager, llm_adapter)
+
+
+@mcp.tool()
+async def enrich_docstrings(params: EnrichParams) -> EnrichResponse:
+    """Find indexed function/method/class symbols that lack a doc comment and write one for
+    each in the language's conventional format (Python docstring, Javadoc/JSDoc `/** */`,
+    rustdoc `///`, godoc `//`, etc.), ready to paste above the definition. Reports current
+    documentation coverage; scope/language narrow the set. Passthrough-first — with no LLM
+    provider returns passthrough_prompt + the symbol source for the host model to write."""
+    await ensure_initialized()
+    _audit_log("enrich_docstrings")
+    return await enrich_docstrings_impl(params, memory_manager, llm_adapter)
 
 
 def run():

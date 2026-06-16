@@ -1139,3 +1139,226 @@ async def project_prompt(
             message="LLM returned no primer — falling back to passthrough.",
         )
     return _resp(prompt=out.strip())
+
+
+# --------------------------------------------------------------------------
+# enrich_docstrings — write doc comments for undocumented symbols
+# --------------------------------------------------------------------------
+
+# Bounds: cap blob reads per call, per-symbol source in the prompt, and the
+# total source budget so the prompt stays in one cache-friendly request.
+_ENRICH_MAX_SCAN = 2000
+_ENRICH_SOURCE_CAP = 1200
+_ENRICH_CHAR_BUDGET = 12000
+
+_ENRICH_SYSTEM = (
+    "You write clear, idiomatic doc comments for undocumented code symbols. For each "
+    "numbered symbol, write a doc comment in that language's conventional format — a "
+    "Python triple-quoted docstring, Javadoc/JSDoc/KDoc/PHPDoc `/** */`, rustdoc `///`, "
+    "godoc `//`, etc. State what it does, its parameters, and what it returns — concise "
+    "and concrete; do not restate the code or pad. Output each as `[n] <symbol>` followed "
+    "by the doc comment block, ready to paste directly above the definition."
+)
+
+
+class UndocumentedSymbol(BaseModel):
+    index: int
+    file: str
+    symbol: str
+    language: str = ""
+
+
+class EnrichParams(BaseModel):
+    repo_path: str | None = Field(
+        default=None, description="Repo path to detect repo_id/branch from. CWD if None."
+    )
+    repo_id: str | None = Field(default=None, description="Override repo_id (skips detection).")
+    branch: str | None = Field(default=None, description="Override branch (skips detection).")
+    scope: str | None = Field(
+        default=None,
+        description="Limit to file paths containing this substring (e.g. 'auth/'). None = whole repo.",
+    )
+    language: str | None = Field(
+        default=None, description="Limit to one language, e.g. 'rust'. None = all."
+    )
+    max_symbols: int = Field(
+        default=15,
+        ge=1,
+        le=60,
+        description="How many undocumented symbols to write doc comments for.",
+    )
+
+
+class EnrichResponse(BaseModel):
+    success: bool
+    repo_id: str = ""
+    branch: str = ""
+    documented: int = 0
+    undocumented: int = 0
+    coverage: float = 0.0
+    scanned: int = 0
+    unreadable: int = 0
+    scan_truncated: bool = False
+    symbols: list[UndocumentedSymbol] = Field(default_factory=list)
+    answer: str = ""
+    truncated: bool = False
+    passthrough: bool = False
+    passthrough_prompt: str = ""
+    message: str = ""
+
+
+def _symbol_name(row) -> str:
+    cn, fn = row["class_name"], row["function_name"]
+    if cn and fn:
+        return f"{cn}.{fn}"
+    return fn or cn or "(anonymous)"
+
+
+async def enrich_docstrings(
+    params: EnrichParams,
+    memory_manager: MemoryManager,
+    llm_adapter: LLMAdapter,
+) -> EnrichResponse:
+    import json
+
+    repo_id, branch = await resolve_repo_branch(
+        params.repo_id, params.branch, params.repo_path, memory_manager
+    )
+    if not repo_id or not branch:
+        return EnrichResponse(
+            success=False,
+            repo_id=repo_id,
+            branch=branch,
+            message=(
+                "Could not determine repo context. Pass repo_id and branch, or run from "
+                "inside the indexed repo."
+            ),
+        )
+
+    storage = memory_manager.storage_manager
+    conn = storage.conn
+    # Methods are stored as chunk_type='function' (StorageManager._infer_chunk_type
+    # derives type from function_name), so 'function' already covers them.
+    sql = (
+        "SELECT id, file_path, class_name, function_name, language, content_ref "
+        "FROM memories WHERE repo_id = ? AND branch_name = ? AND stale = 0 "
+        "AND content_type = 'code_snippet' AND chunk_type IN ('function', 'class')"
+    )
+    args: list = [repo_id, branch]
+    if params.language:
+        sql += " AND language = ?"
+        args.append(params.language)
+    if params.scope:
+        sql += " AND file_path LIKE ?"
+        args.append(f"%{params.scope}%")
+    # +1 over the scan cap so we can tell whether more symbols went unscanned.
+    sql += " ORDER BY file_path, class_name, function_name LIMIT ?"
+    args.append(_ENRICH_MAX_SCAN + 1)
+
+    try:
+        rows = conn.execute(sql, args).fetchall()
+    except sqlite3.OperationalError as exc:
+        logger.debug("enrich_docstrings query failed: %s", exc)
+        rows = []
+
+    scan_truncated = len(rows) > _ENRICH_MAX_SCAN
+    rows = rows[:_ENRICH_MAX_SCAN]
+    if not rows:
+        return EnrichResponse(
+            success=False,
+            repo_id=repo_id,
+            branch=branch,
+            message=(
+                "No indexed function/method/class symbols matched. Index the repo first "
+                "(index_repository)."
+            ),
+        )
+
+    documented = 0
+    unreadable = 0
+    undoc: list[tuple] = []  # (row, source_text) for symbols with no docstring
+    for row in rows:
+        try:
+            blob = json.loads((storage.base_dir / row["content_ref"]).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            unreadable += 1
+            continue
+        if (blob.get("docstring") or "").strip():
+            documented += 1
+        else:
+            undoc.append((row, blob.get("text") or ""))
+
+    scanned = documented + len(undoc)
+    if scanned == 0:
+        # Rows matched but every content blob was unreadable — report that rather
+        # than the misleading "everything is already documented".
+        return EnrichResponse(
+            success=False,
+            repo_id=repo_id,
+            branch=branch,
+            unreadable=unreadable,
+            scan_truncated=scan_truncated,
+            message=f"Matched {len(rows)} symbol(s) but none had readable content blobs.",
+        )
+    coverage = round(documented / scanned, 3)
+
+    symbols: list[UndocumentedSymbol] = []
+    blocks: list[str] = []
+    used = 0
+    truncated = len(undoc) > params.max_symbols
+    for row, text in undoc[: params.max_symbols]:
+        n = len(blocks) + 1
+        file = (row["file_path"] or "?").replace("\\", "/")
+        sym = _symbol_name(row)
+        lang = row["language"] or ""
+        block = f"\n[{n}] {file}  {sym}" + (f"  ({lang})" if lang else "") + "\n"
+        block += text.strip()[:_ENRICH_SOURCE_CAP] + "\n"
+        if blocks and used + len(block) > _ENRICH_CHAR_BUDGET:
+            truncated = True
+            break
+        symbols.append(UndocumentedSymbol(index=n, file=file, symbol=sym, language=lang))
+        blocks.append(block)
+        used += len(block)
+
+    resp = EnrichResponse(
+        success=True,
+        repo_id=repo_id,
+        branch=branch,
+        documented=documented,
+        undocumented=len(undoc),
+        coverage=coverage,
+        scanned=scanned,
+        unreadable=unreadable,
+        scan_truncated=scan_truncated,
+        symbols=symbols,
+        truncated=truncated,
+    )
+
+    if not symbols:
+        resp.message = "Every scanned symbol already has a doc comment — nothing to enrich."
+        return resp
+
+    user_prompt = (
+        f"Write a doc comment for each undocumented symbol below "
+        f"(current coverage: {documented}/{scanned}).\n\n"
+        f"=== Undocumented symbols ===\n{''.join(blocks)}\n\n"
+        "Return one doc comment per symbol, labelled [n], in the language's conventional format."
+    )
+
+    if llm_adapter.is_passthrough():
+        resp.passthrough = True
+        resp.passthrough_prompt = f"{_ENRICH_SYSTEM}\n\n{user_prompt}"
+        resp.message = (
+            "Passthrough — no LLM configured. Generate the doc comments from "
+            "passthrough_prompt (host model)."
+        )
+        return resp
+
+    answer = await llm_adapter.complete(_ENRICH_SYSTEM, user_prompt)
+    if not (answer or "").strip():
+        resp.passthrough = True
+        resp.passthrough_prompt = f"{_ENRICH_SYSTEM}\n\n{user_prompt}"
+        resp.message = "LLM returned no output — falling back to passthrough."
+        return resp
+    resp.answer = answer.strip()
+    return resp
