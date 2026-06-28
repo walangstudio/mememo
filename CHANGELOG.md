@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.50.0] - 2026-06-28
+
+### Fixed
+- **Cold-boot MCP disconnect when several Claude windows start at once.** On a freshly-booted PC,
+  the first window(s) showed mememo disconnected while a later one connected. Root cause: the
+  single-instance guard's `claim_singleton()` ran *synchronously before* `mcp.run()`, doing a full
+  `psutil` process scan with per-process `environ()` reads (~1s warm, much worse on a cold disk).
+  Stacked on the cold module import and several windows contending for the disk at once, that pushed
+  the time-to-handshake past Claude Code's MCP startup timeout, so the window was marked disconnected
+  and respawned (boot-time restart churn). The reap is best-effort cleanup that nothing waits on, so
+  it now runs in a daemon thread, off the path to serving the handshake (`mememo/server.py`). The
+  spawn is guarded so thread exhaustion degrades to skipping the reap instead of crashing startup.
+  Also recommend raising Claude Code's `MCP_TIMEOUT` (e.g. 90000ms) for cold-boot headroom.
+
 ## [0.49.0] - 2026-06-16
 
 ### Added

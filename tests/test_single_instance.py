@@ -367,3 +367,52 @@ def test_live_sibling_servers_reports_same_session_only(monkeypatch):
 def test_live_sibling_servers_empty_without_psutil(monkeypatch):
     monkeypatch.setattr(si, "_psutil", lambda: None)
     assert si.live_sibling_servers() == []
+
+
+def test_run_backgrounds_claim_singleton(monkeypatch):
+    """run() must reach mcp.run() without waiting for the reap scan, on a daemon
+    thread. A slow scan on the handshake path is what caused the cold-boot
+    disconnect; if claim_singleton ever goes synchronous again this must fail.
+
+    Guard, not tautology: claim blocks on `proceed` (set only in finally, after
+    the asserts), so a synchronous run() would block inside claim and never reach
+    them; `captured` would also stay empty (no thread spawned). The asserts only
+    pass when the reap was handed to a live daemon thread that run() did not join.
+    """
+    import threading
+
+    from mememo import server
+
+    started = threading.Event()
+    proceed = threading.Event()
+
+    def slow_claim(*a, **k):
+        started.set()
+        proceed.wait(timeout=5)
+
+    captured = {}
+    real_thread = threading.Thread
+
+    def capture_thread(*a, **k):
+        t = real_thread(*a, **k)
+        captured["t"] = t
+        return t
+
+    ran = threading.Event()
+    monkeypatch.setattr(si, "claim_singleton", slow_claim)
+    monkeypatch.setenv("MEMEMO_NO_HOOK_DAEMON", "1")
+    monkeypatch.setattr(server.threading, "Thread", capture_thread)
+    monkeypatch.setattr(server.mcp, "run", ran.set)
+
+    try:
+        server.run()  # returns immediately only if the reap is backgrounded
+        assert ran.is_set()  # reached mcp.run() ...
+        assert started.wait(timeout=2)  # ... reap actually started ...
+        assert "t" in captured, "claim_singleton ran synchronously, not threaded"
+        t = captured["t"]
+        assert t.daemon is True  # ... as a daemon (won't block process exit) ...
+        assert t.is_alive()  # ... and run() did NOT wait for it to finish
+    finally:
+        proceed.set()
+        if "t" in captured:
+            captured["t"].join(timeout=5)
