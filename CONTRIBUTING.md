@@ -172,3 +172,7 @@ We are committed to providing a welcoming and inclusive environment for all cont
 ## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.
+
+## Contribution policy
+
+This project uses a trusted-contributor model: changes land through pull requests reviewed by a member of the **contributors** team, and external PRs are reviewed at the maintainers' discretion and may be closed. Open an issue before a PR. AI assistance is allowed, but you must understand and test every line — low-effort or AI-generated "slop" PRs are closed on sight; disclose AI use in the PR. Report security issues privately (see [SECURITY.md](SECURITY.md)), never in a public issue.
