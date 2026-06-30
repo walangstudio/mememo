@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mememo": {
+      "command": "mememo",
+      "args": [],
+      "env": {}
+    }
+  }
+}
