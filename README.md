@@ -145,6 +145,21 @@ Unlike general-purpose AI memory solutions, mememo is **purpose-built for code**
 
 **Prerequisites**: Python 3.10+
 
+### Claude Code Plugin
+
+```
+/plugin install mememo@walangstudio
+```
+
+The plugin ships the MCP server entry. It still needs the `mememo` package on
+your `PATH` (the plugin cannot bundle a Python environment — and the base
+install pulls heavy deps including `torch` and `sentence-transformers`), so
+install it once before enabling the plugin:
+
+```bash
+pip install mememo    # or: pip install -e . from a clone
+```
+
 ### Quick Install
 
 ```bash

@@ -975,11 +975,24 @@ async def enrich_docstrings(params: EnrichParams) -> EnrichResponse:
 
 def run():
     """Run the FastMCP server."""
-    # Reap any leaked sibling server from a previous reconnect before we touch
-    # the store, so orphans can't pile up and starve init (see single_instance).
+    # Reap any leaked sibling server from a previous reconnect (see
+    # single_instance). Run it in a daemon thread so the psutil process scan and
+    # per-process environ() reads (~1s warm, worse on a cold disk) stay OFF the
+    # path to mcp.run(). Run synchronously, that delay blew Claude Code's MCP
+    # startup timeout when several windows start at once on a cold disk, and the
+    # window got marked disconnected. The reap is best-effort; nothing waits on
+    # it. start() can raise on thread exhaustion (the contended boot it targets),
+    # so guard it like the hookd start below rather than crash the handshake.
     from . import single_instance
 
-    single_instance.claim_singleton(version=_VERSION)
+    try:
+        threading.Thread(
+            target=single_instance.claim_singleton,
+            kwargs={"version": _VERSION},
+            daemon=True,
+        ).start()
+    except Exception:
+        logger.exception("single-instance: could not start reap thread (continuing)")
 
     # Start the hook sidecar so `mememo capture|inject|pre-tool --hook` calls
     # from Claude Code don't each spawn a fresh ~3s python. Opt-out via env
