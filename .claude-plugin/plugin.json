@@ -1,7 +1,7 @@
 {
   "name": "mememo",
   "description": "Code-aware memory MCP server: store/recall memories, index repos, semantic code search, typed call/import graph (CALLS/IMPORTS/EXTENDS across 14 languages), and comprehension tools (ask with citations, overview, generate_wiki). Private, local, torch-backed embeddings. Requires the `mememo` package installed first: `pip install mememo` (pulls torch + sentence-transformers — heavy download on first run).",
-  "version": "0.50.0",
+  "version": "0.50.1",
   "author": {
     "name": "scr1p7k177y",
     "email": "scriptkitty@walang.studio"

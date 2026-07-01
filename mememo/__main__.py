@@ -672,14 +672,31 @@ def main() -> None:
         if hook_name in ("capture", "inject", "pre-tool", "session-start"):
             # Try the sidecar in the running MCP server first (sub-100ms vs ~3s
             # cold). Falls through to the slow path on any daemon trouble.
+            #
+            # `inject` is read-only: on a daemon timeout we re-read the prompt and
+            # recompute in-process. But hookclient.run drains stdin before it can
+            # raise, so capture the payload up front and feed BOTH paths. The
+            # side-effecting hooks (capture/session-start) deliberately do NOT
+            # preserve stdin — their daemon handler keeps running after we
+            # disconnect and commits, so a fed fallback would double-write.
+            hook_stdin = sys.stdin.read() if hook_name == "inject" else None
+            # Only inject (UserPromptSubmit, every prompt, watchdog-bounded) gets the
+            # short 6s daemon budget. capture/session-start/pre-tool keep the original
+            # 30s wait so this change stays scoped to the inject hang and does not push
+            # those (still un-watchdogged) hooks onto their cold fallback sooner.
+            daemon_timeout = None if hook_name == "inject" else 30.0
             if os.environ.get("MEMEMO_NO_HOOK_CLIENT") != "1":
                 try:
                     from .hookclient import DaemonUnavailableError
                     from .hookclient import run as _hook_run
 
-                    sys.exit(_hook_run(hook_name))
+                    sys.exit(_hook_run(hook_name, stdin_text=hook_stdin, timeout=daemon_timeout))
                 except DaemonUnavailableError:
                     pass  # fall through to in-process init
+            if hook_name == "inject":
+                import io
+
+                sys.stdin = io.StringIO(hook_stdin or "")
             if hook_name == "capture":
                 from .cli import run_capture
 

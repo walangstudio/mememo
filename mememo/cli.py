@@ -7,6 +7,7 @@ CLI commands for passive Claude Code hooks.
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -526,8 +527,53 @@ def run_distill():
     cmd_distill()  # sync: no event loop needed (no awaits)
 
 
+def _on_inject_deadline() -> None:
+    """Hard deadline for the inject hook: emit a no-op continue and kill the
+    throwaway hook process. A native model load can't be cancelled cooperatively
+    (asyncio.wait_for won't interrupt it), so os._exit is the only reliable way to
+    guarantee a UserPromptSubmit hook is never held past budget."""
+    sys.stdout.write(json.dumps({"continue": True}) + "\n")
+    sys.stdout.flush()
+    os._exit(0)
+
+
 def run_inject():
-    asyncio.run(cmd_inject())
+    """UserPromptSubmit hook entrypoint — best-effort, never blocks the prompt.
+
+    The in-process cold path (embedder load + recall) is normally ~2-3s but can
+    stall for tens of seconds under contention (a busy sibling daemon, disk, git),
+    and a native model load can't be interrupted cooperatively. A watchdog thread
+    hard-exits this throwaway hook process once the budget elapses, injecting
+    nothing. Configurable via MEMEMO_INJECT_BUDGET_S.
+
+    The watchdog assumes the stalled work releases the GIL periodically (the
+    torch/sentence-transformers load and faiss/sqlite I/O do — verified: a 60s
+    contended load is cut to the budget). A pathological pure-Python/GIL-holding
+    C loop would starve the watchdog thread, but that is not mememo's cold path.
+    """
+    import threading
+
+    from .hookclient import bounded_float_env
+
+    # Capped so daemon-timeout (<=10s) + this (<=12s) stays under Claude Code's 30s kill.
+    budget = bounded_float_env("MEMEMO_INJECT_BUDGET_S", 10.0, 12.0)
+
+    done = threading.Event()
+    completed = False
+
+    def _watchdog() -> None:
+        # ponytail: a sub-microsecond boundary race (cmd_inject finishing at ~exactly
+        # budget) could still double-emit; the `completed` check shrinks it and it's
+        # fail-open anyway — worst case is one skipped injection, never a hang.
+        if not done.wait(budget) and not completed:
+            _on_inject_deadline()
+
+    threading.Thread(target=_watchdog, daemon=True).start()
+    try:
+        asyncio.run(cmd_inject())
+        completed = True
+    finally:
+        done.set()
 
 
 # --- session-start hook (Wave 1B) -------------------------------------------

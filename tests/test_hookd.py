@@ -342,3 +342,110 @@ def test_hook_exception_returns_nonzero_with_stderr(daemon, monkeypatch):
         assert "kaboom" in payload["stderr"]
     finally:
         shutdown()
+
+
+# --- hook budget: a UserPromptSubmit hook must never approach the 30s kill ----
+
+
+def _fake_resp(payload: dict):
+    class _R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps(payload).encode("utf-8")
+
+    return _R()
+
+
+def test_hook_daemon_timeout_defaults_short(monkeypatch):
+    """A discovered-but-busy daemon must not consume the whole 30s hook budget."""
+    monkeypatch.delenv("MEMEMO_HOOK_DAEMON_TIMEOUT_S", raising=False)
+    monkeypatch.setattr(hookclient, "_load_discovery", lambda: {"pid": 1, "port": 9, "token": "t"})
+    seen: dict = {}
+
+    def _urlopen(req, timeout=None):
+        seen["timeout"] = timeout
+        return _fake_resp({"stdout": "", "stderr": "", "exitcode": 0})
+
+    monkeypatch.setattr(hookclient.urllib.request, "urlopen", _urlopen)
+    hookclient.run("inject", stdin_text="x")
+    # 6s (not the old hardcoded 30) so a busy daemon leaves time to fall back
+    assert seen["timeout"] == 6.0
+
+
+def test_hook_daemon_timeout_env_override(monkeypatch):
+    monkeypatch.setenv("MEMEMO_HOOK_DAEMON_TIMEOUT_S", "2.5")
+    monkeypatch.setattr(hookclient, "_load_discovery", lambda: {"pid": 1, "port": 9, "token": "t"})
+    seen: dict = {}
+
+    def _urlopen(req, timeout=None):
+        seen["timeout"] = timeout
+        return _fake_resp({"stdout": "", "stderr": "", "exitcode": 0})
+
+    monkeypatch.setattr(hookclient.urllib.request, "urlopen", _urlopen)
+    hookclient.run("inject", stdin_text="x")
+    assert seen["timeout"] == 2.5
+
+
+def test_bounded_float_env_rejects_junk_and_clamps(monkeypatch):
+    """Hook budgets are safety limits: inf/nan/negative/zero/garbage must fall back
+    to the default (not defeat or crash the timeout), and a huge value is clamped
+    so no single wait exceeds Claude Code's ~30s hook kill."""
+    from mememo.hookclient import bounded_float_env
+
+    monkeypatch.delenv("X_BUDGET", raising=False)
+    assert bounded_float_env("X_BUDGET", 6.0, 10.0) == 6.0  # unset -> default
+    for bad in ("inf", "-inf", "nan", "-1", "0", "junk", ""):
+        monkeypatch.setenv("X_BUDGET", bad)
+        assert bounded_float_env("X_BUDGET", 6.0, 10.0) == 6.0, bad
+    monkeypatch.setenv("X_BUDGET", "25")
+    assert bounded_float_env("X_BUDGET", 6.0, 10.0) == 10.0  # clamped to max
+    monkeypatch.setenv("X_BUDGET", "3.5")
+    assert bounded_float_env("X_BUDGET", 6.0, 10.0) == 3.5  # valid passes through
+
+
+def test_run_inject_watchdog_fires_on_stall(monkeypatch):
+    """A stalled in-process cold path trips the watchdog (which hard-exits in prod
+    via os._exit) so the hook never approaches Claude Code's 30s kill. The deadline
+    action is patched here so it doesn't take pytest down with it."""
+    import asyncio as _asyncio
+    import threading as _threading
+
+    from mememo import cli
+
+    fired = _threading.Event()
+    release = _threading.Event()
+
+    def _fake_deadline():
+        fired.set()
+        release.set()  # let the fake cmd_inject finish so asyncio.run returns
+
+    monkeypatch.setattr(cli, "_on_inject_deadline", _fake_deadline)
+
+    async def _stall(*_a, **_k):
+        # ~4s cap so a regressed watchdog (never fires -> release never set) makes
+        # the assert below FAIL cleanly instead of hanging pytest forever.
+        for _ in range(200):
+            if release.is_set():
+                return
+            await _asyncio.sleep(0.02)
+
+    monkeypatch.setattr(cli, "cmd_inject", _stall)
+    monkeypatch.setenv("MEMEMO_INJECT_BUDGET_S", "0.1")
+    cli.run_inject()
+    assert fired.is_set()
+
+
+def test_on_inject_deadline_writes_continue_and_exits(monkeypatch, capsys):
+    """The production deadline action emits a no-op continue and hard-exits 0."""
+    from mememo import cli
+
+    exited: dict = {}
+    monkeypatch.setattr(cli.os, "_exit", lambda code: exited.update(code=code))
+    cli._on_inject_deadline()
+    assert json.loads(capsys.readouterr().out) == {"continue": True}
+    assert exited["code"] == 0
