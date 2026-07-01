@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.50.1] - 2026-07-01
+
+### Fixed
+- **`inject` UserPromptSubmit hook could hit Claude Code's 30s timeout.** Two unbounded waits let a
+  degraded state block the prompt. The daemon-sidecar POST used a 30s socket timeout, so a
+  discovered-but-*busy* MCP server (mid-index, event loop blocked) consumed the whole hook budget
+  before the fallback ran. And the in-process fallback cold-loaded the embedder with no cap — a
+  native model load can't be cancelled cooperatively (`asyncio.wait_for` doesn't interrupt it), so it
+  ran 60s+ under contention. The daemon POST now uses a short `MEMEMO_HOOK_DAEMON_TIMEOUT_S` (6s)
+  budget (`mememo/hookclient.py`), and `run_inject` runs the cold path under a watchdog thread that
+  hard-exits the throwaway hook process after `MEMEMO_INJECT_BUDGET_S` (10s), emitting a no-op
+  `{"continue": true}` (`mememo/cli.py`). Worst case is now ~16s, well under the 30s kill; a healthy
+  warm daemon still answers in sub-100ms. The underlying trigger (a busy/duplicate daemon not
+  answering hook POSTs promptly) is unchanged — this makes the hook resilient to it.
+- **Hardened the inject-hook budget against edge cases (from an xhigh review of the fix above).**
+  The shorter daemon timeout now preserves stdin so the in-process fallback re-reads the prompt
+  instead of silently injecting nothing (the daemon client had drained the one-shot pipe before
+  raising); the side-effecting `capture`/`session-start` hooks deliberately keep the old
+  no-stdin-replay behavior so a timed-out-but-still-running daemon handler can't double-write.
+  `MEMEMO_HOOK_DAEMON_TIMEOUT_S` and `MEMEMO_INJECT_BUDGET_S` now reject `inf`/`nan`/negative/garbage
+  (which previously defeated the watchdog or crashed the hook with an uncaught `ValueError`) and clamp
+  to a max, so the two sequential waits can never be configured past the 30s kill.
+
 ## [0.50.0] - 2026-06-28
 
 ### Fixed

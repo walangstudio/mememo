@@ -13,6 +13,7 @@ slow path (``await initialize_mememo()`` in this process).
 from __future__ import annotations
 
 import json
+import math
 import os
 import socket
 import sys
@@ -23,6 +24,24 @@ from pathlib import Path
 
 class DaemonUnavailableError(RuntimeError):
     """Raised when the sidecar can't be reached and the caller should fall back."""
+
+
+def bounded_float_env(name: str, default: float, maximum: float) -> float:
+    """Parse a positive, finite float from ``$name``; fall back to ``default`` on
+    junk (empty, non-numeric, ``inf``, ``nan``, ``<= 0``) and clamp to ``maximum``.
+
+    These env values are hook *safety* budgets: an operator typo like ``inf`` /
+    ``nan`` / ``-1`` must not defeat the timeout it configures (``done.wait(inf)``
+    raises, ``urlopen(timeout=-1)`` raises, both escaping the hook), and no single
+    wait may be set past Claude Code's ~30s hook kill.
+    """
+    try:
+        v = float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(v) or v <= 0:
+        return default
+    return min(v, maximum)
 
 
 def _discovery_dir() -> Path:
@@ -122,12 +141,19 @@ def _load_discovery() -> dict:
     raise DaemonUnavailableError(f"no live daemon among {len(files)} discovery file(s)")
 
 
-def run(hook_name: str, stdin_text: str | None = None) -> int:
+def run(hook_name: str, stdin_text: str | None = None, timeout: float | None = None) -> int:
     """Send the hook to the running daemon and pipe the response back.
 
     Returns the server-reported exit code. Raises :class:`DaemonUnavailableError`
-    if the daemon can't be reached.
+    if the daemon can't be reached *or doesn't answer within ``timeout`` seconds*.
+
+    A discovered-but-busy daemon (mid-index, event loop blocked) must not consume
+    the caller's whole hook budget — Claude Code kills a UserPromptSubmit hook at
+    30s. Default is a short ``MEMEMO_HOOK_DAEMON_TIMEOUT_S`` (6s) so the caller can
+    fall back to the in-process path with time to spare.
     """
+    if timeout is None:
+        timeout = bounded_float_env("MEMEMO_HOOK_DAEMON_TIMEOUT_S", 6.0, 10.0)
     info = _load_discovery()
     body = (stdin_text if stdin_text is not None else sys.stdin.read()).encode("utf-8")
     req = urllib.request.Request(
@@ -141,7 +167,7 @@ def run(hook_name: str, stdin_text: str | None = None) -> int:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise DaemonUnavailableError(f"daemon call failed: {e}") from e
