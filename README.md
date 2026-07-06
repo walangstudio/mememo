@@ -852,6 +852,7 @@ Refuses to bind to anything other than `127.0.0.1` / `localhost`. The MCP server
 | `python -m mememo merge-branch --repo-path <p> --source <b> --target <b>` | CLI shim over the `merge_branch` MCP tool — invoked by the post-merge hook |
 | `python -m mememo sync-commits --repo-path <p>` | CLI shim over the `sync_commits` MCP tool — invoked by the post-commit hook |
 | `python -m mememo capture --hook` / `inject --hook` / `pre-tool --hook` | Hook entry points consumed by Claude Code |
+| `python -m mememo hookd [--idle-exit-s 7200]` | Standalone hook daemon; hooks autospawn it when no MCP server's sidecar is reachable (`MEMEMO_HOOKD_AUTOSPAWN=0` to disable) |
 | `python -m mememo session-start --hook` | SessionStart hook: recall memories at session open (see [SessionStart hook](#sessionstart-hook)) |
 | `python -m mememo import-md <dir> [--repo <path>] [--dry-run]` | Ingest existing markdown memory files (see [Importing existing memories](#importing-existing-memories)) |
 | `python -m mememo reindex-identity [--dry-run]` | Recompute repo IDs via the live resolver; move FAISS dirs to match |

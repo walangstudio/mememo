@@ -493,7 +493,9 @@ def spawn_background_index(
             "cwd": str(repo_path),
         }
         if sys.platform == "win32":
-            popen_kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED | NEW_GROUP
+            # CREATE_NO_WINDOW | NEW_GROUP — not DETACHED: a console-less parent
+            # makes each git.exe child pop a visible cmd window.
+            popen_kwargs["creationflags"] = 0x08000000 | 0x00000200
         else:
             popen_kwargs["start_new_session"] = True
         try:

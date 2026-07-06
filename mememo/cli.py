@@ -246,7 +246,8 @@ async def cmd_capture() -> None:
                     top_k=5,
                     min_similarity=cfg.hook.capture_dedup_similarity,
                     include_stale=False,
-                )
+                ),
+                cwd=hook_data.get("cwd") or None,
             )
             if dedup_results:
                 existing_summaries = [
@@ -259,7 +260,9 @@ async def cmd_capture() -> None:
         except Exception as e:
             print(f"mememo capture: dedup search failed: {e}", file=sys.stderr)
 
-    params = CaptureParams(text=text)
+    # Payload cwd, not ambient: under a shared standalone hookd the process cwd
+    # is the daemon's launch dir — captures must land in the caller's repo lane.
+    params = CaptureParams(text=text, repo_path=hook_data.get("cwd") or None)
     result = await capture_impl(
         params, srv.memory_manager, srv.llm_adapter, existing_summaries=existing_summaries
     )
@@ -365,6 +368,9 @@ async def cmd_inject() -> None:
             include_stale=False,
             hybrid=True,
         ),
+        # The payload cwd, not the ambient one: under hookd the process cwd is
+        # the daemon's launch dir, which is the wrong lane for every other window.
+        cwd=hook_data.get("cwd") or None,
         include_global=cfg.hook.inject_global_lane,
     )
 
@@ -482,7 +488,8 @@ async def cmd_pre_tool() -> None:
         import mememo.server as srv
 
         results = await srv.memory_manager.search_similar(
-            SearchParams(query=query, top_k=10, min_similarity=0.4, include_stale=False)
+            SearchParams(query=query, top_k=10, min_similarity=0.4, include_stale=False),
+            cwd=hook_data.get("cwd") or None,
         )
         return _build_pre_tool_block(results, _PRE_TOOL_MAX_MEMORIES, _PRE_TOOL_MAX_TOKENS)
 
