@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.51.0] - 2026-07-06
+
+### Added
+- **Standalone hook daemon + autospawn (`mememo hookd`).** hookd previously only existed inside a
+  connected MCP server, so whenever no Claude session had one (MCP connect timeout, no session
+  open), every hook invocation machine-wide paid the full ~10s cold init — over a thousand cold
+  inits/day observed, which itself saturated CPU at session start and caused the 60s MCP
+  `initialize` timeouts. Now, when a hook finds no live daemon, it spawns one detached
+  (`_spawn_hookd_once`, throttled by a `.hookd.spawn.lock` with a 120s staleness window, skipped
+  when a live daemon is merely busy) and the read-only hooks (`inject`, `pre-tool`) answer
+  `{"continue": true}` immediately instead of burning a doomed cold init (inject's 10s watchdog
+  fired before a contended cold recall could finish, so the cold path injected nothing anyway).
+  Side-effecting hooks (`capture`, `session-start`) still run the cold path. The daemon exits after
+  `MEMEMO_HOOKD_IDLE_EXIT_S` (default 7200s) without requests; disable autospawn with
+  `MEMEMO_HOOKD_AUTOSPAWN=0`. Warm inject measured at ~0.5s end-to-end (was 10s + nothing injected).
+
+### Fixed
+- **Embedding models are now cached under `~/.mememo/models` (override: `MEMEMO_MODEL_CACHE_DIR`),
+  immune to HF cache eviction.** The shared HuggingFace cache ships a `CACHEDIR.TAG`, which
+  disk-cleanup tools honor by deleting it. When the MiniLM dir got evicted there, every cache-only
+  load failed and each cold hook attempted a silent ~90MB re-download — killing inject/pre-tool
+  everywhere and wedging a daemon behind the download (pid alive, port not accepting; hooks then
+  burned their daemon budget against the zombie every call). Load ladder: mememo-owned cache →
+  shared HF cache (a hit is copied into the pinned dir, so pre-0.51 installs gain the immunity
+  without a re-download; refs-referenced snapshots only, dangling symlinks from a half-evicted
+  cache skipped) → download persisted into the pinned dir. The pinned location is fixed (not
+  derived from `MEMEMO_STORAGE_DIR`) so all storage configurations share one copy; if the dir
+  can't be created the ladder degrades to the shared-HF-cache-only pre-0.51 behavior, and a
+  pinned-cache miss is logged before falling through.
+- **Hooks served by a shared daemon now use the caller's repo lane, not the daemon's.**
+  `cmd_inject`/`cmd_pre_tool`/`cmd_capture` ignored the hook payload's `cwd` and used the daemon
+  process's ambient lane; correct for the per-window MCP-embedded hookd, wrong for a standalone
+  daemon serving several windows (captures filed into the wrong repo, recalls missing the right
+  one).
+- **hookd serializes hook dispatch.** The hook handlers swap the process-global `sys.stdin` and
+  redirect the process-global stdout/stderr; concurrent POSTs (routine for a shared standalone
+  daemon) could feed one window's payload into another's hook. One hook runs at a time; a blocked
+  client falls back to its bounded cold path as before.
+- **No more flashing console windows from background mememo processes.** Detached spawns
+  (standalone hookd, background indexer, session-start background work) used `DETACHED_PROCESS`,
+  so every `git.exe` the console-less child ran popped a new visible cmd window. They now use
+  `CREATE_NO_WINDOW` — a hidden console the children inherit silently.
+- **Standalone-daemon robustness (from review):** `MEMEMO_HOOKD_IDLE_EXIT_S` is parsed with the
+  bounded env parser (junk/0/`inf` degrade to the 7200s default instead of crashing a DEVNULL'd
+  detached process or making it exit instantly); a pre-init single-instance pid claim makes the
+  spawn-throttle race harmless (a losing racer costs one Python startup, never a duplicate torch
+  load); the idle-exit clock only counts authenticated hook requests (a local port prober can't
+  keep the daemon resident); daemon stderr goes to `~/.mememo/logs/hookd-spawn.log` instead of
+  DEVNULL so a daemon that can never come up fails visibly.
+
 ## [0.50.1] - 2026-07-01
 
 ### Fixed

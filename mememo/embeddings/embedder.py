@@ -7,6 +7,8 @@ Provides local, offline embedding generation with multiple model support.
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -15,6 +17,77 @@ if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
+
+
+def _model_cache_dir() -> str | None:
+    """Mememo-owned model cache (``~/.mememo/models``, or ``MEMEMO_MODEL_CACHE_DIR``).
+
+    The shared HuggingFace cache is fair game for disk-cleanup tools (it ships a
+    CACHEDIR.TAG); when the model dir got evicted there, every hook's cache-only
+    load failed and each cold path tried a ~90 MB re-download — silently killing
+    inject/pre-tool and wedging daemons behind proxies. Models loaded through
+    mememo persist here instead, out of reach of external cache eviction. A fixed
+    location (not derived from MEMEMO_STORAGE_DIR) so every storage configuration
+    on the machine shares one copy.
+
+    Returns None when the dir can't be created (read-only home/locked-down
+    share) — callers then degrade to the shared HF cache, the pre-0.51 behavior.
+    """
+    d = Path(os.environ.get("MEMEMO_MODEL_CACHE_DIR") or (Path.home() / ".mememo" / "models"))
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.warning(f"model cache dir {d} unavailable ({e}); using the shared HF cache only")
+        return None
+    return str(d)
+
+
+def _persist_to_pinned(model_name: str, cache_dir: str) -> None:
+    """Best-effort copy of a shared-HF-cache model into the pinned dir.
+
+    Gives pre-existing installs (model only in ``~/.cache/huggingface``) the
+    eviction immunity without a re-download. Copies to a temp dir and renames so
+    a crash can't leave a half-copied model that the pinned cache-only load
+    would then try to use.
+    """
+    import shutil
+    import tempfile
+
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+
+        src = Path(HF_HUB_CACHE) / ("models--" + model_name.replace("/", "--"))
+        dst = Path(cache_dir) / src.name
+        if not src.is_dir() or dst.is_dir():
+            return
+        tmp = Path(tempfile.mkdtemp(dir=cache_dir))
+        try:
+            # Copy refs + only the snapshots refs point at (stale snapshots in a
+            # half-evicted cache hold dangling symlinks). Manual copy2 walk, not
+            # copytree: copy2 resolves the HF cache's relative snapshot symlinks
+            # into real content (copytree trips over them on Windows), which
+            # also makes the blobs/ dir redundant. Per-file FileNotFoundError
+            # (dangling symlink) is skipped — the pinned load then fails once,
+            # logged, and the ladder falls back to the shared cache.
+            work = tmp / src.name
+            (work / "refs").mkdir(parents=True)
+            for ref in (src / "refs").iterdir():
+                shutil.copy2(ref, work / "refs" / ref.name)
+                sha = ref.read_text(encoding="utf-8").strip()
+                for root, _dirs, files in os.walk(src / "snapshots" / sha):
+                    rel = os.path.relpath(root, src)
+                    (work / rel).mkdir(parents=True, exist_ok=True)
+                    for f in files:
+                        try:
+                            shutil.copy2(os.path.join(root, f), work / rel / f)
+                        except FileNotFoundError:
+                            pass
+            work.rename(dst)
+            logger.info(f"pinned {model_name} into {cache_dir}")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    except Exception as e:
+        logger.debug(f"could not pin {model_name} into {cache_dir}: {e}")
 
 
 # Model registry.
@@ -211,35 +284,56 @@ class Embedder:
 
         # Load model with device. Try cache-only first: a cached model must not
         # trigger a network adapter-config probe (huggingface_hub + httpx raise
-        # "client has been closed" on that path). Fall back to a real download
-        # only when the model isn't cached yet.
-        try:
-            self._model = SentenceTransformer(
-                model_info["name"],
-                device=self.device,
-                local_files_only=True,
-            )
-        except Exception as e:
-            logger.warning(
-                f"Cache-only load failed ({type(e).__name__}: {e}); "
-                f"falling back to download for {model_info['name']}"
-            )
-            # Only now, when a network download is actually required, route SSL
-            # through the OS trust store so the download works behind a corporate
-            # TLS proxy. Cached / offline loads never reach here, so the
-            # process-wide SSL change is scoped to genuine first-run downloads.
-            _ensure_system_ca()
-            logger.warning(
-                "Downloading embedding model %s (~%s MB) from HuggingFace — "
-                "first run only. If this stalls it is the download (commonly a TLS "
-                "proxy); it is bounded so it fails fast instead of hanging.",
-                model_info["name"],
-                model_info["size_mb"],
-            )
-            self._model = SentenceTransformer(
-                model_info["name"],
-                device=self.device,
-            )
+        # "client has been closed" on that path). Ladder: mememo-owned cache
+        # (immune to external cleanup of ~/.cache/huggingface) → shared HF cache
+        # (persisting a hit into the pinned dir, so pre-0.51 installs gain the
+        # immunity without a re-download) → real download into the pinned dir.
+        cache_dir = _model_cache_dir()
+        self._model = None
+        if cache_dir is not None:
+            try:
+                self._model = SentenceTransformer(
+                    model_info["name"],
+                    device=self.device,
+                    cache_folder=cache_dir,
+                    local_files_only=True,
+                )
+            except Exception as e:
+                logger.info(
+                    f"pinned-cache load missed ({type(e).__name__}: {e}); "
+                    "trying the shared HF cache"
+                )
+        if self._model is None:
+            try:
+                self._model = SentenceTransformer(
+                    model_info["name"],
+                    device=self.device,
+                    local_files_only=True,
+                )
+                if cache_dir is not None:
+                    _persist_to_pinned(model_info["name"], cache_dir)
+            except Exception as e:
+                logger.warning(
+                    f"Cache-only load failed ({type(e).__name__}: {e}); "
+                    f"falling back to download for {model_info['name']}"
+                )
+                # Only now, when a network download is actually required, route SSL
+                # through the OS trust store so the download works behind a corporate
+                # TLS proxy. Cached / offline loads never reach here, so the
+                # process-wide SSL change is scoped to genuine first-run downloads.
+                _ensure_system_ca()
+                logger.warning(
+                    "Downloading embedding model %s (~%s MB) from HuggingFace — "
+                    "first run only. If this stalls it is the download (commonly a TLS "
+                    "proxy); it is bounded so it fails fast instead of hanging.",
+                    model_info["name"],
+                    model_info["size_mb"],
+                )
+                self._model = SentenceTransformer(
+                    model_info["name"],
+                    device=self.device,
+                    **({"cache_folder": cache_dir} if cache_dir is not None else {}),
+                )
 
         self._dimension = self._model.get_sentence_embedding_dimension()
         logger.info(f"Model loaded successfully. Dimension: {self._dimension}")

@@ -33,12 +33,27 @@ import secrets
 import socket
 import sys
 import threading
+import time
 from collections.abc import Awaitable, Callable
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Monotonic timestamp of the most recent hook request; lets the standalone
+# daemon (``mememo hookd``) exit after a long idle instead of holding the
+# loaded model resident forever.
+_last_request = time.monotonic()
+
+
+def seconds_since_last_request() -> float:
+    return time.monotonic() - _last_request
+
+
+# Hook handlers mutate process-global state (sys.stdin swap, stdout/stderr
+# redirect) — one hook may run at a time.
+_dispatch_lock = threading.Lock()
 
 
 # Hook name -> coroutine factory. Each factory accepts (stdin_text: str) and returns
@@ -163,6 +178,11 @@ def _make_handler(
                 self._reject(HTTPStatus.NOT_FOUND, f"unknown hook: {name}")
                 return
 
+            # Stamp only authenticated, well-formed hook requests: a stray local
+            # port prober must not keep the standalone daemon's idle-exit at bay.
+            global _last_request
+            _last_request = time.monotonic()
+
             length = int(self.headers.get("Content-Length") or 0)
             stdin_text = self.rfile.read(length).decode("utf-8") if length else ""
 
@@ -172,9 +192,13 @@ def _make_handler(
             try:
                 # Each request gets its own loop in this handler thread; the hook
                 # coroutine reuses the MCP server's already-initialised globals
-                # (memory_manager, llm_adapter) — which are thread-safe for the
-                # read-mostly access patterns these hooks have.
+                # (memory_manager, llm_adapter). Dispatch is serialized: the hook
+                # factories swap the process-global sys.stdin and redirect the
+                # process-global stdout/stderr, so concurrent handler threads
+                # (routine for the shared standalone daemon) would cross-feed one
+                # window's payload into another's hook.
                 with (
+                    _dispatch_lock,
                     contextlib.redirect_stdout(out_buf),
                     contextlib.redirect_stderr(err_buf),
                 ):

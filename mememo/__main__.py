@@ -15,6 +15,7 @@ Usage:
     python -m mememo import-md <dir> [--repo <path>] [--dry-run]
     python -m mememo reindex-identity [--dry-run]
     python -m mememo serve [--port 5757]
+    python -m mememo hookd [--idle-exit-s 7200]  # standalone hook daemon
 """
 
 from __future__ import annotations
@@ -57,6 +58,155 @@ def _cmd_install_git_hooks(args: list[str]) -> int:
         if pre.get("status") == "error":
             ok = False
     return 0 if ok else 1
+
+
+def _spawn_lock_path():
+    from .hookclient import _discovery_dir
+
+    return _discovery_dir() / ".hookd.spawn.lock"
+
+
+def _standalone_claim_path():
+    from .hookclient import _discovery_dir
+
+    return _discovery_dir() / ".hookd.standalone.pid"
+
+
+def _claim_standalone() -> bool:
+    """Single-instance guard for the standalone daemon.
+
+    The spawn-lock throttle is racy (two hooks can both judge it stale and both
+    Popen); this claim runs pre-init so the losing racer costs one Python
+    startup, never a duplicate torch load. A dead claimant's file is reclaimed.
+    """
+    from .hookclient import _pid_alive
+
+    claim = _standalone_claim_path()
+    for _ in range(2):
+        try:
+            fd = os.open(str(claim), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return True
+        except OSError:
+            try:
+                pid = int(claim.read_text(encoding="utf-8").strip() or "-1")
+            except (OSError, ValueError):
+                pid = -1
+            if _pid_alive(pid):
+                return False
+            try:
+                claim.unlink()  # stale claim from a crashed daemon
+            except OSError:
+                return False
+    return False
+
+
+def _cmd_hookd(args: list[str]) -> int:
+    """Standalone hook daemon: initialize once, serve hook POSTs, exit when idle.
+
+    Spawned detached by `_spawn_hookd_once` when a hook finds no live daemon —
+    e.g. no Claude session has a connected mememo MCP server (whose in-process
+    hookd normally serves this role). Without it every hook invocation pays the
+    full cold init (~10s: torch import + model load), which is both the per-hook
+    latency tax and the CPU-contention source behind MCP connect timeouts.
+    """
+    import argparse
+    import asyncio
+    import contextlib
+
+    from .hookclient import bounded_float_env
+
+    ap = argparse.ArgumentParser(prog="mememo hookd")
+    ap.add_argument(
+        "--idle-exit-s",
+        type=float,
+        # bounded_float_env, not bare float(): env junk ('2h', '', 'inf', 0)
+        # must degrade to the default, not crash a DEVNULL'd detached process
+        # or make it exit the idle loop instantly.
+        default=bounded_float_env("MEMEMO_HOOKD_IDLE_EXIT_S", 7200.0, 86400.0),
+        help="exit after this many seconds without a hook request (default 7200, max 86400)",
+    )
+    ns = ap.parse_args(args)
+
+    if not _claim_standalone():
+        return 0  # another standalone daemon is already up (or booting)
+
+    async def _run() -> None:
+        from .server import ensure_initialized
+
+        await ensure_initialized()
+        from . import hookd
+
+        hookd.start(version=__version__)
+        # Ready — release the spawn throttle so a crash before this point is
+        # recovered by the lock's staleness window rather than blocking forever.
+        with contextlib.suppress(OSError):
+            _spawn_lock_path().unlink()
+        while hookd.seconds_since_last_request() < ns.idle_exit_s:
+            await asyncio.sleep(60)
+
+    try:
+        asyncio.run(_run())
+    finally:
+        with contextlib.suppress(OSError):
+            _standalone_claim_path().unlink()
+    return 0
+
+
+def _spawn_hookd_once() -> bool:
+    """Launch a detached standalone daemon so the NEXT hook is warm.
+
+    Returns True when a daemon spawn is in flight (just spawned, or a fresh
+    lock says a sibling hook already spawned one). Never raises.
+    """
+    if os.environ.get("MEMEMO_HOOKD_AUTOSPAWN", "1") != "1":
+        return False
+    import contextlib
+    import time
+
+    from .hookclient import DaemonUnavailableError, _load_discovery
+
+    # A live daemon that was merely busy must not trigger a duplicate spawn.
+    # A wedged one (pid alive, port not answering) fails _load_discovery and
+    # is correctly replaced.
+    with contextlib.suppress(DaemonUnavailableError):
+        _load_discovery()
+        return False
+
+    lock = _spawn_lock_path()
+    try:
+        if time.time() - lock.stat().st_mtime < 120.0:
+            return True  # a sibling's spawn is in flight
+        lock.unlink()  # stale: daemon died before ready
+    except OSError:
+        pass
+    try:
+        fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+    except OSError:
+        return True  # lost the creation race; sibling spawn in flight
+
+    from .commands.session_start import _spawn_detached
+
+    # Daemon stderr goes to a log file, not DEVNULL: a daemon that can never
+    # come up (broken install, bad env) would otherwise fail invisibly forever
+    # while hooks keep fast-exiting.
+    log = None
+    with contextlib.suppress(OSError):
+        logdir = lock.parent / "logs"
+        logdir.mkdir(parents=True, exist_ok=True)
+        log = open(logdir / "hookd-spawn.log", "ab")  # noqa: SIM115 - handed to Popen
+    try:
+        _spawn_detached([sys.executable, "-m", "mememo", "hookd"], stderr=log)
+        return True
+    except OSError:
+        with contextlib.suppress(OSError):
+            lock.unlink()
+        return False
+    finally:
+        if log is not None:
+            log.close()
 
 
 def _cmd_serve(args: list[str]) -> int:
@@ -638,6 +788,7 @@ def _cmd_import_skills(args: list[str]) -> int:
 _SUBCOMMANDS = {
     "install-git-hooks": _cmd_install_git_hooks,
     "serve": _cmd_serve,
+    "hookd": _cmd_hookd,
     "index": _cmd_index,
     "diagram": _cmd_diagram,
     "render": _cmd_render,
@@ -692,7 +843,18 @@ def main() -> None:
 
                     sys.exit(_hook_run(hook_name, stdin_text=hook_stdin, timeout=daemon_timeout))
                 except DaemonUnavailableError:
-                    pass  # fall through to in-process init
+                    # No reachable daemon: spawn a detached standalone one so the
+                    # NEXT hook is warm. The read-only hooks answer empty now —
+                    # their cold path is budget-killed anyway (inject's ~10s
+                    # watchdog fires before a contended cold recall finishes,
+                    # pre-tool skips at 1.5s), so running it is a pure CPU tax.
+                    # Side-effecting hooks (capture/session-start) still run the
+                    # cold path: their work must not be dropped.
+                    if _spawn_hookd_once() and hook_name in ("inject", "pre-tool"):
+                        import json
+
+                        sys.stdout.write(json.dumps({"continue": True}) + "\n")
+                        return
             if hook_name == "inject":
                 import io
 

@@ -97,18 +97,21 @@ async def cmd_session_start() -> None:
     )
 
 
-def _spawn_detached(argv: list[str]) -> None:
+def _spawn_detached(argv: list[str], stderr=None) -> None:
     """Start a process that outlives this short-lived hook process."""
     import subprocess
 
     kwargs: dict = {
         "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
+        "stderr": stderr if stderr is not None else subprocess.DEVNULL,
         "stdin": subprocess.DEVNULL,
     }
     if sys.platform == "win32":
-        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-        kwargs["creationflags"] = 0x00000008 | 0x00000200
+        # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP. NOT DETACHED_PROCESS: a
+        # console-less parent makes every console child (git.exe per hook
+        # request) pop a NEW VISIBLE cmd window; a hidden console is inherited
+        # silently.
+        kwargs["creationflags"] = 0x08000000 | 0x00000200
     else:
         kwargs["start_new_session"] = True
     subprocess.Popen(argv, **kwargs)

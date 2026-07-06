@@ -401,6 +401,10 @@ def test_run_backgrounds_claim_singleton(monkeypatch):
     ran = threading.Event()
     monkeypatch.setattr(si, "claim_singleton", slow_claim)
     monkeypatch.setenv("MEMEMO_NO_HOOK_DAEMON", "1")
+    # run() applies the ambient tool-group filter to the module-global mcp; an
+    # operator's MEMEMO_TOOLS would strip tools for every later test (drift test).
+    monkeypatch.delenv("MEMEMO_TOOLS", raising=False)
+    monkeypatch.delenv("MEMEMO_DISABLE_TOOLS", raising=False)
     monkeypatch.setattr(server.threading, "Thread", capture_thread)
     monkeypatch.setattr(server.mcp, "run", ran.set)
 
