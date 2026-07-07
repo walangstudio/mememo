@@ -42,11 +42,7 @@ clients (Cursor, Windsurf, Cline, etc.) see [Installation](#-installation).
 
 ### Passive Hooks (Claude Code)
 
-mememo integrates with Claude Code hooks to make memory fully automatic:
-
-**Stop hook** — fires asynchronously after every Claude response. Reads the conversation transcript, extracts memorable facts via LLM, and stores them. No `capture` call needed.
-
-**UserPromptSubmit hook** — fires synchronously before Claude processes each message. Runs a semantic search against your memory store and injects relevant results as a system message, within a configurable token budget (800 tokens by default). Nothing is injected if no results exceed the similarity threshold.
+mememo integrates with Claude Code hooks to make memory fully automatic: `UserPromptSubmit` (recall + inject), `PreToolUse` (related memories alongside Grep/Glob/Bash), `SessionStart` (recall at session open), and `Stop` (auto-capture memorable facts via LLM, plus opt-in skill distillation).
 
 See [hooks/README.md](hooks/README.md) for setup instructions.
 
@@ -342,11 +338,11 @@ export MEMEMO_SKILL_INJECTION_ENABLED="true"
 export MEMEMO_SKILL_TOKEN_BUDGET="200"
 
 # Autonomous skill distillation (self-learning loop, default: OFF).
-# When on, a separate SYNC Stop hook (hooks/distill.sh -> `mememo distill --hook`)
+# When on, a separate SYNC Stop hook (`mememo distill --hook`, see hooks/hooks.json)
 # asks the model to save a reusable skill after a session that used >= MIN_TOOLS
-# tool calls. Intrusive (adds a turn) so opt-in; requires registering the sync
-# Stop hook (see hooks/hooks.json — it must NOT be async or decision:block is
-# ignored). SCAN_LINES is how many transcript tail lines are scanned to count tools.
+# tool calls. Intrusive (adds a turn) so opt-in; must NOT be async or
+# decision:block is ignored. SCAN_LINES is how many transcript tail lines are
+# scanned to count tools.
 export MEMEMO_HOOK_SKILL_DISTILL="false"
 export MEMEMO_HOOK_SKILL_DISTILL_MIN_TOOLS="5"
 export MEMEMO_HOOK_SKILL_DISTILL_SCAN_LINES="5000"
@@ -440,14 +436,7 @@ Verify it's registered: `claude mcp list`
 
 #### Step 3 (Claude Code only): Enable passive hooks
 
-Copy `hooks/hooks.json` into your Claude Code hooks config and replace the path placeholder:
-
-```bash
-# Update the path in hooks.json
-sed -i 's|/path/to/mememo|/absolute/path/to/mememo|g' hooks/hooks.json
-```
-
-Then merge the contents into `~/.claude/settings.json` under the `hooks` key. See [hooks/README.md](hooks/README.md) for full instructions including Windows setup.
+Merge the contents of `hooks/hooks.json` into `~/.claude/settings.json` under the `hooks` key — no path substitution needed, it invokes the `mememo` command directly. See [hooks/README.md](hooks/README.md) for details.
 
 #### Cursor (auto-configure)
 
@@ -1166,11 +1155,7 @@ mememo/
 ├── tools/                 # MCP tool implementations
 ├── types/                 # Pydantic models (config, memory)
 ├── utils/                 # Token counter, secrets detector, hashing
-└── hooks/                 # Claude Code passive hook scripts
-    ├── stop.sh            # Stop hook wrapper
-    ├── user-prompt.sh     # UserPromptSubmit hook wrapper
-    ├── hooks.json         # Hook config template
-    └── README.md          # Hook setup instructions
+└── hooks/                 # Git-hook + PreToolUse installer templates (see repo-root hooks/ for the Claude Code plugin hooks)
 ```
 
 ## 📊 Performance

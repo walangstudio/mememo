@@ -1,16 +1,12 @@
 {
   "hooks": {
-    "Stop": [
+    "PreToolUse": [
       {
+        "matcher": "Grep|Glob|Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "bash /path/to/mememo/hooks/stop.sh",
-            "async": true
-          },
-          {
-            "type": "command",
-            "command": "bash /path/to/mememo/hooks/distill.sh"
+            "command": "mememo pre-tool --hook"
           }
         ]
       }
@@ -20,7 +16,32 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash /path/to/mememo/hooks/user-prompt.sh"
+            "command": "mememo inject --hook"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mememo session-start --hook"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mememo capture --hook",
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "mememo distill --hook"
           }
         ]
       }
