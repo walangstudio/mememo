@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.51.1] - 2026-07-06
+
+### Fixed
+- **The Claude Code plugin's `hooks/hooks.json` was non-functional as packaged.** It shipped a literal unresolved
+  placeholder path (`bash /path/to/mememo/hooks/stop.sh`) instead of a real path, and its wrapper scripts assumed a
+  POSIX `.venv/bin/activate` layout with no Windows equivalent: a plugin install (which only clones source, no
+  venv) would fall through to a bare `python -m mememo`, requiring a global Python with mememo importable rather
+  than the plugin's own documented requirement (a `mememo` console-script on `PATH`, e.g. via `pip install mememo`
+  or `uv tool install`). It was also missing `PreToolUse` and `SessionStart` entirely; only `Stop` and
+  `UserPromptSubmit` were wired. `hooks.json` now invokes the bare `mememo <name> --hook` command directly (same
+  pattern `.mcp.json` already used) for all four hooks; the now-dead wrapper scripts (`stop.sh`, `user-prompt.sh`,
+  `distill.sh`) are removed. This also simplifies the manual (non-plugin) hook-registration path in
+  `hooks/README.md`, no more `sed`-replacing a path placeholder. Verified end-to-end via `uv tool install` (the
+  isolated-tool-venv install path the plugin's own docs recommend): all four hooks and the bare MCP server
+  entrypoint work correctly with no path configuration.
+- **The programmatic hook installer (`mememo install-git-hooks --with-pretool`) wrote the same non-portable
+  `python -m mememo` command form** into a target repo's `.claude/settings.json`, reintroducing the exact
+  PATH-assumption bug through a second door. Switched to the bare `mememo pre-tool --hook` /
+  `mememo session-start --hook` form, matching `hooks.json`.
+- Removed `mememo/hooks/pre-tool.sh`, a leftover wrapper of the same broken design (`python -m mememo`, POSIX-only,
+  unreferenced by any code path).
+
 ## [0.51.0] - 2026-07-06
 
 ### Added

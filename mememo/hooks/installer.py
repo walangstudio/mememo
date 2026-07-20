@@ -78,7 +78,7 @@ def register_claude_pretool_hook(repo_path: str, force: bool = False) -> dict:
 
     mememo_entry = {
         "matcher": "Grep|Glob|Bash",
-        "hooks": [{"type": "command", "command": "python -m mememo pre-tool --hook"}],
+        "hooks": [{"type": "command", "command": "mememo pre-tool --hook"}],
     }
 
     # Detect an existing mememo entry by scanning the command strings.
@@ -138,7 +138,7 @@ def register_claude_session_start_hook(repo_path: str, force: bool = False) -> d
         "hooks": [
             {
                 "type": "command",
-                "command": "python -m mememo session-start --hook",
+                "command": "mememo session-start --hook",
                 "async": True,
             }
         ]
