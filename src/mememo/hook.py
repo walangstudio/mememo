@@ -72,6 +72,11 @@ def _log(line):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1:  # CLI mode: same fast interpreter path the hooks use, no .exe shim
+        from mememo import cli
+
+        cli.main(sys.argv[1:])
+        sys.exit(0)
     try:
         main()
     except BaseException as e:  # never block the agent

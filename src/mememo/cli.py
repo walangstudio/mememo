@@ -113,11 +113,7 @@ def cmd_restore(a):
 
 
 def hook_command():
-    py = sys.executable
-    pyw = os.path.join(os.path.dirname(py), "pythonw.exe")
-    if os.name == "nt" and os.path.exists(pyw):
-        py = pyw
-    return f'"{py}" -I -S "{os.path.join(os.path.dirname(os.path.abspath(__file__)), "hook.py")}"'
+    return search.cli_command().replace(search.base_python(), search.base_python(windowed=True), 1)
 
 
 def hooks_config():

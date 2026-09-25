@@ -1,6 +1,8 @@
 """Query building, BM25 ranking, and the injected blocks. Stdlib only (hook path)."""
 
+import os
 import re
+import sys
 
 from . import store
 
@@ -117,15 +119,28 @@ def recall_block(hits, budget=BUDGET_CHARS):
 
 
 PROTOCOL = """Persistent memory is mememo (it replaces auto memory; MEMORY.md is not used). Current lane: {lane}.
-Relevant memories are injected automatically per prompt inside <mememo-recall>. Explicit lookup: `mememo search "<query>"`; full file or card: `mememo show <card id or path>`.
+Relevant memories are injected automatically per prompt inside <mememo-recall>. Explicit lookup: `{cmd} search "<query>"`; full file or card: `{cmd} show <card id or path>`.
 Save durable knowledge (user corrections, preferences, decisions, non-obvious outcomes, project state) with Bash:
-  mememo add --type feedback|user|project|reference --topic <slug> --claim "<one factual sentence>" --body "<verbatim details: exact commands, paths, versions, why>" [--lane global|here] [--supersedes <card id>] [--src <file or commit>]
+  {cmd} add --type feedback|user|project|reference --topic <slug> --claim "<one factual sentence>" --body "<verbatim details: exact commands, paths, versions, why>" [--lane global|here] [--supersedes <card id>] [--src <file or commit>]
 The body records only what was actually said or observed (quote the user; exact values); never add steps, rules or details nobody stated.
-Before adding, `mememo search` for it; if an existing card states an older version of the fact, pass --supersedes <its id> and copy every still-true fact from the old card into the new body (a superseded card is hidden from recall). Use --lane global for user-wide rules, here for this project. Never delete memory files. Never store secrets."""
+Before adding, run search for it; if an existing card states an older version of the fact, pass --supersedes <its id> and copy every still-true fact from the old card into the new body (a superseded card is hidden from recall). Use --lane global for user-wide rules, here for this project. Never delete memory files. Never store secrets."""
+
+
+def base_python(windowed=False):
+    """The real interpreter, not a venv redirector or .exe shim (each adds 100 ms to seconds on Windows)."""
+    exe = getattr(sys, "_base_executable", None) or sys.executable
+    d = os.path.dirname(exe)
+    name = ("pythonw.exe" if windowed else "python.exe") if os.name == "nt" else os.path.basename(exe)
+    return os.path.join(d, name).replace("\\", "/") if os.path.exists(os.path.join(d, name)) else exe
+
+
+def cli_command():
+    hook = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hook.py").replace("\\", "/")
+    return f'"{base_python()}" -I -S "{hook}"'
 
 
 def digest(con, lane, budget=8000):
-    head = f"<mememo>\n{PROTOCOL.format(lane=lane)}\nMemory index (rules first, then this lane, then recent):"
+    head = f"<mememo>\n{PROTOCOL.format(lane=lane, cmd=cli_command())}\nMemory index (rules first, then this lane, then recent):"
     rows = con.execute(
         "select path, lane, type, description from files order by"
         " case when type in ('feedback','user') then 0 when lane=? then 1 else 2 end, mtime desc",

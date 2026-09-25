@@ -102,7 +102,7 @@ def test_hook_envelope_and_fail_open(home):
     store.add_card("global", "ci", "feedback", "Run cargo clippy before every push", "user rule")
     start = run_hook({"hook_event_name": "SessionStart", "source": "startup", "cwd": str(home)}, env)
     assert start["hookSpecificOutput"]["hookEventName"] == "SessionStart"
-    assert "mememo add" in start["hookSpecificOutput"]["additionalContext"]
+    assert 'hook.py" add --type' in start["hookSpecificOutput"]["additionalContext"]
     out = run_hook(
         {
             "hook_event_name": "UserPromptSubmit",
@@ -221,3 +221,17 @@ def test_compound_question_recalls_both_facts():
     q = "What database engine, version and port does lighthouse staging use, and which region does production deploy to?"
     claims = " ".join(h["claim"] for h in search.search(con, q))
     assert "eu-west-2" in claims and "port 7000" in claims
+
+
+def test_hook_file_doubles_as_cli(home):
+    env = {**os.environ, "MEMEMO_HOME": str(home)}
+    hook = os.path.join(SRC, "mememo", "hook.py")
+    r = subprocess.run(
+        [sys.executable, "-I", "-S", hook, "add", "--claim", "CLI via hook path works"],
+        capture_output=True,
+        env=env,
+        timeout=30,
+    )
+    assert r.returncode == 0 and b"saved m-" in r.stdout
+    bad = subprocess.run([sys.executable, "-I", "-S", hook, "show", "m-nope"], capture_output=True, env=env, timeout=30)
+    assert bad.returncode != 0
