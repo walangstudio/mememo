@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mememo"
-version = "1.0.0a1"
+version = "2.0.0"
 description = "Unlimited, fast, local memory for coding agents. Replaces Claude Code's MEMORY.md."
 readme = "README.md"
 requires-python = ">=3.10"

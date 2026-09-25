@@ -1,6 +1,8 @@
-# mememo
+# mememo 2.0
 
 Unlimited, fast, local memory for coding agents. Replaces Claude Code's `MEMORY.md`, which only loads the first 200 lines / 25KB and shares one file per launch directory.
+
+> mememo 2.0 is a rewrite. The 1.x code-aware memory MCP server (code graph, embeddings, comprehension tools) is archived at [walangstudio/mememo-code](https://github.com/walangstudio/mememo-code).
 
 - **Never forgets.** Markdown files are the source of truth. Edits are snapshotted to `history/`, superseded and deleted facts stay searchable (`--all`) and restorable.
 - **No hallucinated recall.** Memories are stored verbatim, never summarized. Every recalled note carries its card id, date and path, and the block tells the model to say "don't know" when memory is silent.
@@ -30,12 +32,12 @@ Layout under `~/.mememo` (`MEMEMO_HOME`): `memory/global/`, `memory/repos/<owner
 ## Install
 
 ```
-uv tool install mememo
+uv tool install git+https://github.com/walangstudio/mememo
 mememo import ~/.claude/projects/<project>/memory   # optional: bring existing Claude memory
 mememo install                                       # hooks into ~/.claude/settings.json, autoMemoryEnabled=false
 ```
 
-`install` backs up the settings file and calls the interpreter directly (`pythonw.exe -I -S .../hook.py`).
+`install` backs up the settings file and wires hooks to the base interpreter directly (`pythonw.exe -I -S .../hook.py`). The injected save protocol gives the agent the same fast path for CLI calls (`python.exe -I -S .../hook.py add ...`); the `mememo` launcher works for humans but can take seconds per call on Windows.
 
 ## Commands
 
