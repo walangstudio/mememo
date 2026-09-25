@@ -2,7 +2,7 @@
 
 Unlimited, fast, local memory for coding agents. Replaces Claude Code's `MEMORY.md`, which only loads the first 200 lines / 25KB and shares one file per launch directory.
 
-> mememo 2.0 is a rewrite. The 1.x code-aware memory MCP server (code graph, embeddings, comprehension tools) is archived at [walangstudio/mememo-code](https://github.com/walangstudio/mememo-code).
+> mememo 2.0 is a rewrite. The 1.x code-aware memory MCP server (code graph, embeddings, comprehension tools) is archived at [walangstudio/mememo-v1](https://github.com/walangstudio/mememo-v1).
 
 - **Never forgets.** Markdown files are the source of truth. Edits are snapshotted to `history/`, superseded and deleted facts stay searchable (`--all`) and restorable.
 - **No hallucinated recall.** Memories are stored verbatim, never summarized. Every recalled note carries its card id, date and path, and the block tells the model to say "don't know" when memory is silent.

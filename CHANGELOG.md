@@ -2,7 +2,7 @@
 
 ## 2.0.0 - 2026-09-25
 
-mememo 2.0: greenfield rewrite as a MEMORY.md replacement. mememo 1.x (code-aware memory MCP, code graph, embeddings) is archived at [walangstudio/mememo-code](https://github.com/walangstudio/mememo-code).
+mememo 2.0: greenfield rewrite as a MEMORY.md replacement. mememo 1.x (code-aware memory MCP, code graph, embeddings) is archived at [walangstudio/mememo-v1](https://github.com/walangstudio/mememo-v1).
 
 - Markdown cards as source of truth, SQLite FTS5 index, history snapshots, supersede links.
 - Claude Code hooks: SessionStart digest, per-prompt recall with relevance gate and session dedupe, async Stop sweep.

@@ -1,5 +1,7 @@
 # mememo v2 plan
 
+> Naming (2026-09-25, later): the old repo is archived as `walangstudio/mememo-v1` (local `mememo-v1`, data `~/.mememo-v1`). `mememo-code` is reserved for a from-scratch code-indexing rewrite. Mentions of `mememo-code` below refer to the archive.
+
 Greenfield. Generic, local-first, unlimited, never-forgetting memory for AI coding agents. First job: replace Claude Code auto memory (MEMORY.md). The old repo lives on as `F:\opt\projs\ai\claude\mememo-code` (code indexing, optional). Planned 2026-09-25 by Fable (plan mode).
 
 ## Requirements (priority order)
