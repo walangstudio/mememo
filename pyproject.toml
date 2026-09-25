@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mememo"
+version = "1.0.0a1"
+description = "Unlimited, fast, local memory for coding agents. Replaces Claude Code's MEMORY.md."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "black"]
+
+[project.scripts]
+mememo = "mememo.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mememo"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 120
+target-version = ["py310"]

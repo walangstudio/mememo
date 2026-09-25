@@ -175,3 +175,34 @@ CI (ubuntu + windows): ruff, black --check, pytest, eval gate, Windows hook benc
 11. Org rights for `gh repo rename`: assumed.
 12. Frontmatter parser handles two-level shape only: fallback to first body line.
 13. settings.json env contains an API key: installer never logs settings.
+
+## 12. Revision 2026-09-25: research + trial results (supersedes conflicting items above)
+
+Research (LongMemEval ICLR 2025, HaluMem, MemDelta, ConvoMem): extracted facts / summaries lose information and add hallucinations; verbatim text + good retrieval matches or beats Mem0/Zep-style extraction. Decision: store verbatim cards, add an agent-written claim line as the index key, never summarize the body.
+
+Card format (claim is the heading, meta line under it):
+
+```
+## <one factual sentence>
+id: m-<hex> | date: YYYY-MM-DD | supersedes: m-<hex> | src: <file or commit>
+<verbatim body: quotes, exact commands, paths, versions>
+```
+
+Changes vs sections 1-10:
+- Write path: agent saves with `mememo add` (Bash), not free-form Write/Edit, so ids/dates/format are deterministic. Protocol: search first; supersede with `--supersedes` and carry forward every still-true fact; body records only what was said.
+- History: file snapshots in `history/<path>/<stamp>-<sha8>.md`, not a versions table. Removed/edited-away chunks stay in the index with `current=0` and are searchable with `--all`.
+- Relevance gate: inject only if >= 3 query terms match, or coverage >= 0.6, or coverage >= 0.4 with BM25 >= 12. Tuned on the real corpus; the ">= 3 terms" clause came from a compound-question trial failure.
+- Hook launch: `pythonw.exe -I -S <abs>/hook.py`. Measured entry-point `.exe` shim: p50 1.06 s, p95 14.1 s (likely why old mememo "failed to start").
+
+Measured (real 55-file corpus): normal queries hit@5 1.00, MRR 0.96; buried hit@5 1.00; unrelated prompts injecting noise 1/8; query p50 5 ms; hook spawn p50 110-180 ms, p95 150-410 ms across runs (machine noise); SessionStart p50 120-160 ms.
+
+E2E trials with `claude -p`, isolated settings + MEMEMO_HOME, auto memory off, no tools allowed for recall:
+| trial | result |
+|---|---|
+| nonce recall | exact, 0 tool calls |
+| unknown fact (staging port never stored) | "I don't know", no invention |
+| superseded fact (region us-east-1 -> eu-west-2) | eu-west-2, notes the move |
+| buried fact in 37KB file | correct |
+| save then recall in a new session | saved via `mememo add` after a search; recalled |
+| update via agent (5433 -> 6543 -> 7000) | superseded correctly; after protocol fix, carried "Postgres 16" forward |
+Fixes found by trials: body embellishment (protocol now: record only what was said); supersede dropped a still-true fact (protocol now: carry forward).
