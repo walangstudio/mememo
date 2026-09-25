@@ -120,7 +120,7 @@ def recall_block(hits, budget=BUDGET_CHARS):
 
 PROTOCOL = """Persistent memory is mememo (it replaces auto memory; MEMORY.md is not used). Current lane: {lane}.
 Relevant memories are injected automatically per prompt inside <mememo-recall>. Explicit lookup: `{cmd} search "<query>"`; full file or card: `{cmd} show <card id or path>`.
-Save durable knowledge (user corrections, preferences, decisions, non-obvious outcomes, project state) with Bash:
+Save durable knowledge (user corrections, preferences, decisions, non-obvious outcomes, project state) with Bash (in PowerShell prefix the command with `& `):
   {cmd} add --type feedback|user|project|reference --topic <slug> --claim "<one factual sentence>" --body "<verbatim details: exact commands, paths, versions, why>" [--lane global|here] [--supersedes <card id>] [--src <file or commit>]
 The body records only what was actually said or observed (quote the user; exact values); never add steps, rules or details nobody stated.
 Before adding, run search for it; if an existing card states an older version of the fact, pass --supersedes <its id> and copy every still-true fact from the old card into the new body (a superseded card is hidden from recall). Use --lane global for user-wide rules, here for this project. Never delete memory files. Never store secrets."""

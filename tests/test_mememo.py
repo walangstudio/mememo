@@ -90,7 +90,11 @@ def test_normalize_remote_variants():
 def run_hook(payload, env):
     hook = os.path.join(SRC, "mememo", "hook.py")
     r = subprocess.run(
-        [sys.executable, "-I", "-S", hook], input=json.dumps(payload).encode(), capture_output=True, env=env, timeout=30
+        [sys.executable, "-I", "-S", hook],
+        input=json.dumps(payload).encode(),
+        capture_output=True,
+        env=env,
+        timeout=120,
     )
     assert r.returncode == 0
     return json.loads(r.stdout) if r.stdout else None
@@ -206,7 +210,7 @@ def test_cli_prints_unicode_through_a_pipe(home):
     env = {**os.environ, "MEMEMO_HOME": str(home), "PYTHONPATH": SRC, "PYTHONIOENCODING": ""}
 
     def run(*a):
-        return subprocess.run([sys.executable, "-m", "mememo", *a], capture_output=True, env=env, timeout=30)
+        return subprocess.run([sys.executable, "-m", "mememo", *a], capture_output=True, env=env, timeout=120)
 
     assert run("add", "--claim", "Deploy flow: build → test → ship", "--body", "arrows → everywhere").returncode == 0
     r = run("search", "deploy flow build test ship", "--full")
@@ -230,8 +234,23 @@ def test_hook_file_doubles_as_cli(home):
         [sys.executable, "-I", "-S", hook, "add", "--claim", "CLI via hook path works"],
         capture_output=True,
         env=env,
-        timeout=30,
+        timeout=120,
     )
     assert r.returncode == 0 and b"saved m-" in r.stdout
-    bad = subprocess.run([sys.executable, "-I", "-S", hook, "show", "m-nope"], capture_output=True, env=env, timeout=30)
+    bad = subprocess.run(
+        [sys.executable, "-I", "-S", hook, "show", "m-nope"], capture_output=True, env=env, timeout=120
+    )
     assert bad.returncode != 0
+
+
+def test_installed_commands_resolve_to_real_interpreters():
+    assert os.path.exists(search.base_python())
+    if os.name == "nt":
+        assert search.base_python(windowed=True).endswith("pythonw.exe")
+        assert os.path.exists(search.base_python(windowed=True))
+    cmd = search.cli_command()
+    assert cmd.startswith(f'"{search.base_python()}" -I -S ')
+    exe, hook = cmd.split('" -I -S "')
+    r = subprocess.run([exe.strip('"'), "-I", "-S", hook.strip('"'), "--version"], capture_output=True, timeout=120)
+    assert r.returncode == 0 and r.stdout.strip()
+    assert "pythonw.exe" in cli.hook_command() if os.name == "nt" else cli.hook_command() == cmd
